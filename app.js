@@ -120,6 +120,8 @@ let authenticatedCoachId = "";
 let authenticatedCoachAccess = "";
 let currentStudentAccess = "";
 let coachEditorDirty = false;
+let studentEntriesDirty = false;
+let loadedStudentProgramId = "";
 let lastCloudSyncAt = 0;
 
 function getAppMode() {
@@ -1148,8 +1150,14 @@ async function init() {
     return;
   }
 
-  refreshCoachWorkspace();
-  refreshStudentWorkspace();
+  if (APP_MODE === "coach") {
+    refreshCoachWorkspace();
+  } else if (APP_MODE === "student") {
+    refreshStudentWorkspace();
+  } else {
+    refreshCoachWorkspace();
+    refreshStudentWorkspace();
+  }
   if (APP_MODE === "coach" && !authenticatedCoachId) {
     const coachAccessFromUrl = new URLSearchParams(window.location.search).get("coach")
       || new URLSearchParams(window.location.search).get("token")
@@ -1164,7 +1172,7 @@ async function init() {
     markCoachUsed(getCurrentCoach()?.id || "");
   }
   if (currentStudentId) {
-    loadStudentProgram({ silent: true });
+    loadStudentProgram({ silent: true, preserveIfDirty: true });
   }
   if (APP_MODE === "coach") {
     syncCoachAccessUI();
@@ -1353,6 +1361,14 @@ function bindEvents() {
   els.studentViewCardButton.addEventListener("click", () => setStudentViewMode("card"));
   els.studentViewTableButton.addEventListener("click", () => setStudentViewMode("table"));
 
+  const markStudentEntriesDirty = () => {
+    if (!loadedStudentEntries.length) {
+      return;
+    }
+    studentEntriesDirty = true;
+    captureStudentEntryDraftsFromDom();
+  };
+
   [els.programCode, els.programDate, els.coachName, els.programNotes].forEach((input) => {
     input.addEventListener("input", () => {
       setCoachEditorDirty(true);
@@ -1405,6 +1421,10 @@ function bindEvents() {
   els.submittedList?.addEventListener("click", handleTodayStudentListAction);
   els.pendingList?.addEventListener("click", handleTodayStudentListAction);
   els.coachStudentLinks?.addEventListener("click", handleCoachStudentLinkAction);
+  els.studentProgramBody?.addEventListener("input", markStudentEntriesDirty);
+  els.studentProgramBody?.addEventListener("change", markStudentEntriesDirty);
+  els.studentCardList?.addEventListener("input", markStudentEntriesDirty);
+  els.studentCardList?.addEventListener("change", markStudentEntriesDirty);
   els.coachStudentRoster?.addEventListener("click", handleCoachStudentRosterAction);
   els.coachRoster?.addEventListener("click", handleCoachRosterAction);
   els.coachStudentLinkName?.addEventListener("input", renderCoachStudentLinks);
@@ -1564,14 +1584,75 @@ function hydrateSession() {
 }
 
 function persistSession() {
-  localStorage.setItem(SESSION_KEY, JSON.stringify({
-    authenticatedCoachId,
-    authenticatedCoachAccess,
-    currentStudentId,
-    currentStudentAccess,
-    coachViewMode,
-    studentViewMode
-  }));
+  let existing = {};
+  try {
+    existing = JSON.parse(localStorage.getItem(SESSION_KEY) || "{}");
+  } catch {
+    existing = {};
+  }
+
+  const nextSession = {
+    authenticatedCoachId: APP_MODE === "coach"
+      ? String(authenticatedCoachId || "")
+      : String(existing.authenticatedCoachId || ""),
+    authenticatedCoachAccess: APP_MODE === "coach"
+      ? String(authenticatedCoachAccess || "")
+      : String(existing.authenticatedCoachAccess || ""),
+    currentStudentId: APP_MODE === "student"
+      ? String(currentStudentId || "")
+      : String(existing.currentStudentId || ""),
+    currentStudentAccess: APP_MODE === "student"
+      ? String(currentStudentAccess || "")
+      : String(existing.currentStudentAccess || ""),
+    coachViewMode: APP_MODE === "coach"
+      ? coachViewMode
+      : String(existing.coachViewMode || coachViewMode),
+    studentViewMode: APP_MODE === "student"
+      ? studentViewMode
+      : String(existing.studentViewMode || studentViewMode)
+  };
+
+  localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
+}
+
+function captureStudentEntryDraftsFromDom() {
+  if (!loadedStudentEntries.length) {
+    return;
+  }
+
+  loadedStudentEntries = loadedStudentEntries.map((entry, index) => {
+    const nextEntry = { ...entry };
+    const actualWeightInput = getActiveEntryField(index, "actualWeight");
+    const actualSetsInput = getActiveEntryField(index, "actualSets");
+    const actualRepsInput = getActiveEntryField(index, "actualReps");
+    const noteInput = getActiveEntryField(index, "studentNote");
+
+    if (actualWeightInput) nextEntry.actualWeight = actualWeightInput.value;
+    if (actualSetsInput) nextEntry.actualSets = actualSetsInput.value;
+    if (actualRepsInput) nextEntry.actualReps = actualRepsInput.value;
+    if (noteInput) nextEntry.studentNote = noteInput.value;
+
+    return nextEntry;
+  });
+}
+
+function updateModeAccessInUrl(mode, accessValue) {
+  const value = String(accessValue || "").trim();
+  const url = new URL(window.location.href);
+  ["code", "token", "coach", "student"].forEach((key) => url.searchParams.delete(key));
+  if (mode === "coach" && value) {
+    url.searchParams.set("code", value);
+  }
+  if (mode === "student" && value) {
+    url.searchParams.set("code", value);
+  }
+  window.history.replaceState({}, "", url.toString());
+}
+
+function clearModeAccessInUrl() {
+  const url = new URL(window.location.href);
+  ["code", "token", "coach", "student"].forEach((key) => url.searchParams.delete(key));
+  window.history.replaceState({}, "", url.toString());
 }
 
 function switchMainPanel(panelId) {
@@ -1709,8 +1790,15 @@ function handleStorageSync(event) {
 
   if (APP_MODE === "admin") {
     refreshAdminWorkspace();
+  } else if (APP_MODE === "coach") {
+    refreshCoachWorkspace({ preserveEditor: coachEditorDirty });
+  } else if (APP_MODE === "student") {
+    refreshStudentWorkspace();
+    if (currentStudentId) {
+      loadStudentProgram({ silent: true, preserveIfDirty: true });
+    }
   } else {
-    refreshCoachWorkspace({ preserveEditor: APP_MODE === "coach" && coachEditorDirty });
+    refreshCoachWorkspace({ preserveEditor: coachEditorDirty });
     refreshStudentWorkspace();
   }
 
@@ -1787,7 +1875,7 @@ async function syncCloudWorkspaceOnActivate() {
       const payload = await callCloudApi("bootstrapStudent", { studentId: currentStudentId });
       applyCloudPayloadToState(payload);
       refreshStudentWorkspace();
-      loadStudentProgram({ silent: true });
+      loadStudentProgram({ silent: true, preserveIfDirty: true });
     }
   } catch (error) {
     console.warn("Cloud workspace sync failed:", error);
@@ -2500,6 +2588,7 @@ function resetCoachAccess() {
   authenticatedCoachAccess = "";
   setCoachEditorDirty(false);
   persistSession();
+  clearModeAccessInUrl();
   if (els.coachAccessCode) {
     els.coachAccessCode.value = "";
   }
@@ -2573,6 +2662,7 @@ async function confirmCoachAccess() {
   if (!matchedCoach) {
     authenticatedCoachAccess = "";
     persistSession();
+    clearModeAccessInUrl();
     renderCoachSummary();
     window.alert("找不到這組教練代碼，請重新確認後再試一次。");
     return false;
@@ -2605,6 +2695,7 @@ async function confirmCoachAccess() {
   setCoachEditorDirty(false);
   refreshCoachWorkspace();
   persistSession();
+  updateModeAccessInUrl("coach", authenticatedCoachAccess);
   return true;
 }
 
@@ -2626,6 +2717,7 @@ async function confirmStudentAccess() {
   if (!matchedStudent) {
     currentStudentAccess = "";
     persistSession();
+    clearModeAccessInUrl();
     els.studentProgramStatus.textContent = "\u8eab\u4efd\u672a\u78ba\u8a8d";
     els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</td></tr>`;
     els.studentCardList.innerHTML = `<div class="empty-card">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</div>`;
@@ -2640,6 +2732,7 @@ async function confirmStudentAccess() {
     currentStudentId = "";
     currentStudentAccess = "";
     persistSession();
+    clearModeAccessInUrl();
     window.alert("\u9019\u4f4d\u5b78\u751f\u5e33\u865f\u76ee\u524d\u5df2\u505c\u7528\uff0c\u8acb\u806f\u7d61\u6559\u7df4\u3002");
     return false;
   }
@@ -2668,6 +2761,7 @@ async function confirmStudentAccess() {
   renderStudentHistory();
   syncStudentAccessUI();
   persistSession();
+  updateModeAccessInUrl("student", currentStudentAccess);
   return true;
 }
 
@@ -2680,7 +2774,7 @@ async function confirmStudentAccessAndLoadProgram() {
 }
 
 function loadStudentProgram(options = {}) {
-  const { silent = false } = options;
+  const { silent = false, preserveIfDirty = false } = options;
   const program = getSelectedStudentProgram();
   const student = getSelectedStudent();
 
@@ -2700,6 +2794,22 @@ function loadStudentProgram(options = {}) {
     return;
   }
 
+  const nextProgramId = String(program.id || "");
+  if (
+    preserveIfDirty &&
+    studentEntriesDirty &&
+    loadedStudentProgramId &&
+    loadedStudentProgramId === nextProgramId &&
+    loadedStudentEntries.length
+  ) {
+    renderStudentProgramEntries();
+    els.studentProgramStatus.textContent = `${student.name}｜已載入 ${program.code || "目前課表"}`;
+    els.studentMobileSubmitBar.classList.toggle("is-visible", studentViewMode === "card" && loadedStudentEntries.length > 0);
+    els.studentMobileTools.classList.toggle("is-visible", studentViewMode === "card");
+    syncStudentAccessUI();
+    return;
+  }
+
   loadedStudentEntries = getProgramItems(program.id).map((item) => ({
     itemId: item.id,
     category: item.category,
@@ -2708,12 +2818,18 @@ function loadStudentProgram(options = {}) {
     targetType: item.targetType,
     targetValue: item.targetValue,
     itemNote: item.itemNote,
-    referenceLog: findLatestReferenceLog(student.id, item)
+    referenceLog: findLatestReferenceLog(student.id, item),
+    actualWeight: "",
+    actualSets: item.targetType === "time" || item.targetType === "reps" ? String(item.targetSets ?? "") : "",
+    actualReps: item.targetType === "reps" ? String(item.targetValue ?? "") : "",
+    studentNote: ""
   }));
 
   studentHistoryOpened = false;
   studentSubmissionCompleted = false;
   lastSubmittedLogs = [];
+  loadedStudentProgramId = nextProgramId;
+  studentEntriesDirty = false;
   renderStudentProgramEntries();
   els.studentProgramStatus.textContent = `${student.name}\uff5c\u5df2\u8f09\u5165 ${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
   els.studentMobileSubmitBar.classList.toggle("is-visible", studentViewMode === "card" && loadedStudentEntries.length > 0);
@@ -2723,16 +2839,22 @@ function loadStudentProgram(options = {}) {
 
 function buildEntryFields(entry, index) {
   const recommendation = getRecommendedWeightText(entry);
+  const actualWeight = escapeHtml(String(entry.actualWeight ?? ""));
+  const actualSets = escapeHtml(String(entry.actualSets ?? entry.targetSets ?? ""));
+  const actualReps = escapeHtml(String(entry.actualReps ?? entry.targetValue ?? ""));
+  const noteValue = escapeHtml(String(entry.studentNote ?? ""));
+  const actualSetsPlaceholder = escapeHtml(String(entry.referenceLog?.actualSets || ""));
+  const actualWeightPlaceholder = escapeHtml(String(entry.referenceLog?.actualWeight || "kg"));
   if (entry.targetType === "time") {
     return `
       <div class="field-stack">
         <label class="mini-field">
           <span>\u5be6\u969b\u7d44\u6578</span>
-          <input type="number" min="0" value="${entry.targetSets}" placeholder="${entry.referenceLog?.actualSets || ""}" data-entry-index="${index}" data-field="actualSets">
+          <input type="number" min="0" value="${actualSets}" placeholder="${actualSetsPlaceholder}" data-entry-index="${index}" data-field="actualSets">
         </label>
         <label class="mini-field">
           <span>\u5099\u8a3b</span>
-          <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+          <input type="text" value="${noteValue}" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
         </label>
       </div>
     `;
@@ -2743,12 +2865,12 @@ function buildEntryFields(entry, index) {
       <div class="field-stack">
         <label class="mini-field">
           <span>\u5be6\u969b\u91cd\u91cf</span>
-          <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+          <input type="number" min="0" step="0.5" value="${actualWeight}" placeholder="${actualWeightPlaceholder}" data-entry-index="${index}" data-field="actualWeight">
           ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
         </label>
         <label class="mini-field">
           <span>\u5099\u8a3b</span>
-          <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+          <input type="text" value="${noteValue}" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
         </label>
       </div>
     `;
@@ -2758,20 +2880,20 @@ function buildEntryFields(entry, index) {
     <div class="field-grid">
       <label class="mini-field">
         <span>\u91cd\u91cf</span>
-        <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+        <input type="number" min="0" step="0.5" value="${actualWeight}" placeholder="${actualWeightPlaceholder}" data-entry-index="${index}" data-field="actualWeight">
         ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
       </label>
       <label class="mini-field">
         <span>\u7d44\u6578</span>
-        <input type="number" min="0" value="${entry.targetSets}" data-entry-index="${index}" data-field="actualSets">
+        <input type="number" min="0" value="${actualSets}" data-entry-index="${index}" data-field="actualSets">
       </label>
       <label class="mini-field">
         <span>\u6b21\u6578</span>
-        <input type="number" min="0" value="${entry.targetValue}" data-entry-index="${index}" data-field="actualReps">
+        <input type="number" min="0" value="${actualReps}" data-entry-index="${index}" data-field="actualReps">
       </label>
       <label class="mini-field span-full">
         <span>\u5099\u8a3b</span>
-        <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+        <input type="text" value="${noteValue}" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
       </label>
     </div>
   `;
@@ -2779,15 +2901,21 @@ function buildEntryFields(entry, index) {
 
 function buildCardEntryFields(entry, index) {
   const recommendation = getRecommendedWeightText(entry);
+  const actualWeight = escapeHtml(String(entry.actualWeight ?? ""));
+  const actualSets = escapeHtml(String(entry.actualSets ?? entry.targetSets ?? ""));
+  const actualReps = escapeHtml(String(entry.actualReps ?? entry.targetValue ?? ""));
+  const noteValue = escapeHtml(String(entry.studentNote ?? ""));
+  const actualSetsPlaceholder = escapeHtml(String(entry.referenceLog?.actualSets || ""));
+  const actualWeightPlaceholder = escapeHtml(String(entry.referenceLog?.actualWeight || "kg"));
   if (entry.targetType === "time") {
     return `
       <label class="mini-field">
         <span>\u5be6\u969b\u7d44\u6578</span>
-        <input type="number" min="0" value="${entry.targetSets}" placeholder="${entry.referenceLog?.actualSets || ""}" data-entry-index="${index}" data-field="actualSets">
+        <input type="number" min="0" value="${actualSets}" placeholder="${actualSetsPlaceholder}" data-entry-index="${index}" data-field="actualSets">
       </label>
       <label class="mini-field">
         <span>\u5099\u8a3b</span>
-        <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+        <input type="text" value="${noteValue}" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
       </label>
     `;
   }
@@ -2796,12 +2924,12 @@ function buildCardEntryFields(entry, index) {
     return `
       <label class="mini-field">
         <span>\u5be6\u969b\u91cd\u91cf</span>
-        <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+        <input type="number" min="0" step="0.5" value="${actualWeight}" placeholder="${actualWeightPlaceholder}" data-entry-index="${index}" data-field="actualWeight">
         ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
       </label>
       <label class="mini-field">
         <span>\u5099\u8a3b</span>
-        <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+        <input type="text" value="${noteValue}" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
       </label>
     `;
   }
@@ -2809,22 +2937,22 @@ function buildCardEntryFields(entry, index) {
   return `
     <label class="mini-field">
       <span>\u91cd\u91cf</span>
-      <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+      <input type="number" min="0" step="0.5" value="${actualWeight}" placeholder="${actualWeightPlaceholder}" data-entry-index="${index}" data-field="actualWeight">
       ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
     </label>
     <div class="card-inline-fields">
       <label class="mini-field">
         <span>\u7d44\u6578</span>
-        <input type="number" min="0" value="${entry.targetSets}" data-entry-index="${index}" data-field="actualSets">
+        <input type="number" min="0" value="${actualSets}" data-entry-index="${index}" data-field="actualSets">
       </label>
       <label class="mini-field">
         <span>\u6b21\u6578</span>
-        <input type="number" min="0" value="${entry.targetValue}" data-entry-index="${index}" data-field="actualReps">
+        <input type="number" min="0" value="${actualReps}" data-entry-index="${index}" data-field="actualReps">
       </label>
     </div>
     <label class="mini-field">
       <span>\u5099\u8a3b</span>
-      <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+      <input type="text" value="${noteValue}" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
     </label>
   `;
 }
@@ -3536,6 +3664,12 @@ function syncStudentAccessUI() {
 
 function showStudentAccessPanel() {
   studentHistoryOpened = false;
+  loadedStudentEntries = [];
+  loadedStudentProgramId = "";
+  studentEntriesDirty = false;
+  studentSubmissionCompleted = false;
+  lastSubmittedLogs = [];
+  clearModeAccessInUrl();
   applyStudentViewMode();
   els.studentAuthShell.classList.remove("is-collapsed");
   els.studentAuthShell.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -3584,6 +3718,8 @@ async function finalizeSubmission() {
   renderStudentHistoryFilters();
   renderStudentHistory();
   loadedStudentEntries = [];
+  loadedStudentProgramId = "";
+  studentEntriesDirty = false;
   renderStudentProgramEntries();
   els.studentProgramStatus.textContent = `\u672c\u6b21\u8a13\u7df4\u5df2\u8a18\u9304\uff5c\u6700\u5f8c\u66f4\u65b0 ${lastSubmittedLogs[0]?.submittedAt || ""}`;
   els.studentMobileSubmitBar.classList.remove("is-visible");
