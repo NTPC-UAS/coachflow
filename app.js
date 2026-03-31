@@ -1,0 +1,5405 @@
+﻿const STORAGE_KEY = "coachflow-v2-state";
+
+const defaultState = {
+  coaches: [
+    { id: "coach-001", name: "Coach Lin", status: "active", role: "admin", accessCode: "CL001", token: "coachlin", lastUsedAt: "" },
+    { id: "coach-002", name: "Coach Chen", status: "active", role: "coach", accessCode: "CC002", token: "coachchen", lastUsedAt: "" }
+  ],
+  currentCoachId: "coach-001",
+  students: [
+    { id: "stu-001", name: "\u738b\u5c0f\u660e", className: "\u529b\u91cf A \u73ed", status: "active", accessCode: "WM001", token: "wm001", primaryCoachId: "coach-001" },
+    { id: "stu-002", name: "\u9673\u6cf3\u84c1", className: "\u529b\u91cf A \u73ed", status: "active", accessCode: "CY002", token: "cy002", primaryCoachId: "coach-001" },
+    { id: "stu-003", name: "\u6797\u67cf\u5b87", className: "\u529b\u91cf B \u73ed", status: "active", accessCode: "LB003", token: "lb003", primaryCoachId: "coach-002" }
+  ],
+  programs: [
+    {
+      id: "program-2026-03-29",
+      code: "0329A",
+      date: "2026-03-29",
+      title: "\u4e0b\u80a2\u529b\u91cf\u65e5",
+      coachId: "coach-001",
+      coachName: "Coach Lin",
+      notes: "\u4e3b\u9805\u76ee\u4fdd\u7559 2 \u4e0b\u9918\u88d5\u3002",
+      published: true,
+      createdAt: "2026-03-29T08:30:00+08:00"
+    }
+  ],
+  programItems: [
+    { id: "item-1", programId: "program-2026-03-29", sortOrder: 1, category: "\u7206\u767c\u529b", exercise: "\u7206\u767c\u9ad8\u62c9", targetSets: 4, targetType: "reps", targetValue: 8, itemNote: "" },
+    { id: "item-2", programId: "program-2026-03-29", sortOrder: 2, category: "\u4e3b\u9805\u76ee", exercise: "\u6df1\u8e72", targetSets: 5, targetType: "reps", targetValue: 5, itemNote: "" },
+    { id: "item-3", programId: "program-2026-03-29", sortOrder: 3, category: "\u8f14\u52a9\u9805", exercise: "\u5f8c\u8173\u62ac\u9ad8\u8e72", targetSets: 4, targetType: "time", targetValue: 60, itemNote: "" }
+  ],
+  workoutLogs: [
+    {
+      id: "log-1",
+      programId: "program-2026-03-29",
+      programCode: "0329A",
+      programDate: "2026-03-29",
+      coachId: "coach-001",
+      coachName: "Coach Lin",
+      studentId: "stu-001",
+      studentName: "\u738b\u5c0f\u660e",
+      category: "\u4e3b\u9805\u76ee",
+      exercise: "\u6df1\u8e72",
+      targetSets: 5,
+      targetType: "reps",
+      targetValue: 5,
+      actualWeight: 100,
+      actualSets: 5,
+      actualReps: 5,
+      studentNote: "",
+      submittedAt: "2026-03-29 09:14"
+    },
+    {
+      id: "log-2",
+      programId: "program-2026-03-29",
+      programCode: "0329A",
+      programDate: "2026-03-29",
+      coachId: "coach-001",
+      coachName: "Coach Lin",
+      studentId: "stu-002",
+      studentName: "\u9673\u6cf3\u84c1",
+      category: "\u4e3b\u9805\u76ee",
+      exercise: "\u6df1\u8e72",
+      targetSets: 5,
+      targetType: "reps",
+      targetValue: 5,
+      actualWeight: 82.5,
+      actualSets: 5,
+      actualReps: 5,
+      studentNote: "\u6700\u5f8c\u4e00\u7d44\u8f03\u5403\u529b",
+      submittedAt: "2026-03-29 09:21"
+    },
+    {
+      id: "log-3",
+      programId: "program-2026-03-22",
+      programCode: "0322B",
+      programDate: "2026-03-22",
+      coachId: "coach-001",
+      coachName: "Coach Lin",
+      studentId: "stu-001",
+      studentName: "\u738b\u5c0f\u660e",
+      category: "\u4e3b\u9805\u76ee",
+      exercise: "\u6df1\u8e72",
+      targetSets: 5,
+      targetType: "reps",
+      targetValue: 5,
+      actualWeight: 95,
+      actualSets: 5,
+      actualReps: 5,
+      studentNote: "\u6574\u9ad4\u72c0\u6cc1\u7a69\u5b9a",
+      submittedAt: "2026-03-22 09:08"
+    }
+  ]
+};
+
+const state = structuredClone(defaultState);
+
+let editingProgramId = null;
+let loadedStudentEntries = [];
+let pendingSubmission = null;
+let currentStudentId = "";
+let studentViewMode = window.innerWidth <= 820 ? "card" : "table";
+let studentHistoryOpened = false;
+let lastSubmittedLogs = [];
+let studentSubmissionCompleted = false;
+let expandedProgramLibraryId = null;
+let selectedTodayStudentId = "";
+let programLibraryVisibleCount = 6;
+let studentHistoryVisibleCount = 1;
+let coachTodayVisibleCount = 6;
+let coachHistoryVisibleCount = 6;
+let todayStudentDetailVisibleCount = 6;
+let coachViewMode = "desktop";
+let coachHistoryOpened = false;
+let pendingHistoryImportRows = [];
+let assigningStudentId = "";
+let authenticatedCoachId = "";
+
+function getAppMode() {
+  const params = new URLSearchParams(window.location.search);
+  const modeParam = params.get("mode");
+  if (modeParam === "coach" || modeParam === "student" || modeParam === "admin") {
+    return modeParam;
+  }
+
+  const fileName = String(window.location.pathname || "").split(/[\\/]/).pop().toLowerCase();
+  if (fileName === "coach.html") {
+    return "coach";
+  }
+  if (fileName === "admin.html") {
+    return "admin";
+  }
+  if (fileName === "student.html") {
+    return "student";
+  }
+
+  return "dual";
+}
+
+const APP_MODE = getAppMode();
+
+const APP_CONFIG = window.APP_CONFIG || {
+  mode: "local",
+  appsScriptUrl: "",
+  requestTimeoutMs: 12000
+};
+
+const IS_CLOUD_MODE =
+  String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
+  !!String(APP_CONFIG.appsScriptUrl || "").trim();
+
+function normalizeCloudCoach(row, index = 0) {
+  const name = row.coach_name || row.name || `Coach ${index + 1}`;
+  return {
+    id: row.coach_id || row.id || `coach-${index + 1}`,
+    name,
+    status: row.status || "active",
+    role: row.role || "coach",
+    accessCode: row.access_code || row.accessCode || buildCoachAccessCode(name, index + 1),
+    token: row.token || "",
+    lastUsedAt: row.last_used_at || row.lastUsedAt || ""
+  };
+}
+
+function isUsableCoach(record) {
+  return !!String(record?.id || "").trim() && !!String(record?.name || "").trim();
+}
+
+function normalizeCloudStudent(row, index = 0) {
+  const name = row.student_name || row.name || `學生 ${index + 1}`;
+  return {
+    id: row.student_id || row.id || `stu-${index + 1}`,
+    name,
+    className: row.class_name || row.className || "",
+    status: row.status || "active",
+    accessCode: row.access_code || row.accessCode || buildAccessCode(name, index + 1),
+    token: row.token || "",
+    primaryCoachId: row.primary_coach_id || row.primaryCoachId || "",
+    primaryCoachName: row.primary_coach_name || row.primaryCoachName || "",
+    lastUsedAt: row.last_used_at || row.lastUsedAt || ""
+  };
+}
+
+function isUsableStudent(record) {
+  return !!String(record?.id || "").trim() && !!String(record?.name || "").trim();
+}
+
+function normalizeCloudProgram(row, index = 0) {
+  return {
+    id: row.program_id || row.id || `program-${index + 1}`,
+    code: row.program_code || row.code || "",
+    date: row.program_date || row.date || "",
+    title: row.title || "",
+    coachId: row.coach_id || row.coachId || "",
+    coachName: row.coach_name || row.coachName || "",
+    notes: row.notes || "",
+    published: String(row.published || "").toLowerCase() === "true" || row.published === true,
+    createdAt: row.created_at || row.createdAt || "",
+    updatedAt: row.updated_at || row.updatedAt || ""
+  };
+}
+
+function isUsableProgram(record) {
+  return !!String(record?.id || "").trim() && !!String(record?.code || "").trim();
+}
+
+function normalizeCloudProgramItem(row, index = 0) {
+  return {
+    id: row.item_id || row.id || `item-${index + 1}`,
+    programId: row.program_id || row.programId || "",
+    sortOrder: Number(row.sort_order || row.sortOrder || index + 1),
+    category: row.category || "",
+    exercise: row.exercise || "",
+    targetSets: Number(row.target_sets || row.targetSets || 0),
+    targetType: row.target_type || row.targetType || "reps",
+    targetValue: Number(row.target_value || row.targetValue || 0),
+    itemNote: row.item_note || row.itemNote || "",
+    updatedAt: row.updated_at || row.updatedAt || ""
+  };
+}
+
+function isUsableProgramItem(record) {
+  return !!String(record?.id || "").trim()
+    && !!String(record?.programId || "").trim()
+    && !!String(record?.exercise || "").trim();
+}
+
+function normalizeCloudLog(row, index = 0) {
+  return {
+    id: row.log_id || row.id || `log-${index + 1}`,
+    programId: row.program_id || row.programId || "",
+    programCode: row.program_code || row.programCode || "",
+    programDate: row.program_date || row.programDate || "",
+    coachId: row.coach_id || row.coachId || "",
+    coachName: row.coach_name || row.coachName || "",
+    studentId: row.student_id || row.studentId || "",
+    studentName: row.student_name || row.studentName || "",
+    category: row.category || "",
+    exercise: row.exercise || "",
+    targetSets: Number(row.target_sets || row.targetSets || 0),
+    targetType: row.target_type || row.targetType || "reps",
+    targetValue: Number(row.target_value || row.targetValue || 0),
+    actualWeight: Number(row.actual_weight || row.actualWeight || 0),
+    actualSets: Number(row.actual_sets || row.actualSets || 0),
+    actualReps: Number(row.actual_reps || row.actualReps || 0),
+    studentNote: row.student_note || row.studentNote || "",
+    submittedAt: row.submitted_at || row.submittedAt || "",
+    updatedAt: row.updated_at || row.updatedAt || ""
+  };
+}
+
+function isUsableWorkoutLog(record) {
+  return !!String(record?.id || "").trim()
+    && !!String(record?.studentId || "").trim()
+    && !!String(record?.exercise || "").trim();
+}
+
+function applyCloudPayloadToState(payload) {
+  if (!payload || payload.ok === false) {
+    throw new Error(payload?.message || "雲端資料回傳失敗。");
+  }
+
+  if (Array.isArray(payload.coaches)) {
+    state.coaches = payload.coaches
+      .map(normalizeCloudCoach)
+      .filter(isUsableCoach);
+  }
+  if (Array.isArray(payload.students)) {
+    state.students = payload.students
+      .map(normalizeCloudStudent)
+      .filter(isUsableStudent);
+  }
+  if (Array.isArray(payload.programs)) {
+    state.programs = payload.programs
+      .map(normalizeCloudProgram)
+      .filter(isUsableProgram);
+  }
+  if (Array.isArray(payload.programItems)) {
+    state.programItems = payload.programItems
+      .map(normalizeCloudProgramItem)
+      .filter(isUsableProgramItem);
+  }
+  if (Array.isArray(payload.workoutLogs)) {
+    state.workoutLogs = payload.workoutLogs
+      .map(normalizeCloudLog)
+      .filter(isUsableWorkoutLog);
+  }
+
+  if (payload.coach) {
+    const normalizedCoach = normalizeCloudCoach(payload.coach);
+    const existingCoach = state.coaches.find((coach) => coach.id === normalizedCoach.id);
+    if (existingCoach) {
+      Object.assign(existingCoach, normalizedCoach);
+    } else {
+      state.coaches.push(normalizedCoach);
+    }
+  }
+
+  if (payload.student) {
+    const normalizedStudent = normalizeCloudStudent(payload.student);
+    const existingStudent = state.students.find((student) => student.id === normalizedStudent.id);
+    if (existingStudent) {
+      Object.assign(existingStudent, normalizedStudent);
+    } else {
+      state.students.push(normalizedStudent);
+    }
+  }
+
+  persistState();
+}
+
+async function callCloudApi(action, payload = {}, method = "POST") {
+  if (!IS_CLOUD_MODE) {
+    throw new Error("目前不是雲端模式。");
+  }
+
+  const controller = new AbortController();
+  const timeout = window.setTimeout(
+    () => controller.abort(),
+    Number(APP_CONFIG.requestTimeoutMs || 12000)
+  );
+
+  try {
+    const url = new URL(APP_CONFIG.appsScriptUrl);
+
+    let response;
+    if (String(method).toUpperCase() === "GET") {
+      url.searchParams.set("action", action);
+      Object.entries(payload || {}).forEach(([key, value]) => {
+        if (value !== undefined && value !== null) {
+          url.searchParams.set(key, String(value));
+        }
+      });
+      response = await fetch(url.toString(), {
+        method: "GET",
+        signal: controller.signal
+      });
+    } else {
+      response = await fetch(url.toString(), {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json"
+        },
+        body: JSON.stringify({ action, ...payload }),
+        signal: controller.signal
+      });
+    }
+
+    const json = await response.json();
+    if (!response.ok || json.ok === false) {
+      throw new Error(json?.message || "雲端 API 執行失敗。");
+    }
+    return json;
+  } catch (error) {
+    if (error?.name === "AbortError") {
+      throw new Error("雲端請求逾時，請稍後再試。");
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeout);
+  }
+}
+
+async function bootstrapCloudMode() {
+  if (!IS_CLOUD_MODE) {
+    return;
+  }
+
+  if (APP_MODE === "admin") {
+    try {
+      const payload = await callCloudApi("bootstrapAdmin", {}, "GET");
+      applyCloudPayloadToState(payload);
+    } catch (error) {
+      console.warn("Admin cloud bootstrap failed, using local state:", error);
+    }
+    return;
+  }
+
+  if (APP_MODE === "coach") {
+    await hydrateCoachAccessFromUrl();
+    return;
+  }
+
+  if (APP_MODE === "student") {
+    await hydrateStudentAccessFromUrl();
+  }
+}
+
+async function resolveStudentAccessFromCloud(accessValue) {
+  const payload = await callCloudApi("resolveStudentAccess", { access: accessValue });
+  applyCloudPayloadToState(payload);
+  return payload.student ? normalizeCloudStudent(payload.student) : getSelectedStudent();
+}
+
+async function resolveCoachAccessFromCloud(accessValue) {
+  const payload = await callCloudApi("resolveCoachAccess", { access: accessValue });
+  applyCloudPayloadToState(payload);
+  return payload.coach ? normalizeCloudCoach(payload.coach) : getCurrentCoach();
+}
+
+async function submitStudentLogsToCloud(logs) {
+  const payload = await callCloudApi("submitWorkoutLogs", {
+    logs: logs.map((log) => ({
+      log_id: log.id,
+      program_id: log.programId,
+      program_code: log.programCode,
+      program_date: log.programDate,
+      coach_id: log.coachId || "",
+      coach_name: log.coachName || "",
+      student_id: log.studentId,
+      student_name: log.studentName,
+      category: log.category,
+      exercise: log.exercise,
+      target_sets: log.targetSets,
+      target_type: log.targetType,
+      target_value: log.targetValue,
+      actual_weight: log.actualWeight,
+      actual_sets: log.actualSets,
+      actual_reps: log.actualReps,
+      student_note: log.studentNote,
+      submitted_at: log.submittedAt
+    }))
+  });
+  applyCloudPayloadToState(payload);
+}
+
+async function saveProgramToCloud(program, items) {
+  const payload = await callCloudApi("saveProgram", {
+    program: {
+      program_id: program.id,
+      program_code: program.code,
+      program_date: program.date,
+      title: program.title || "",
+      coach_id: program.coachId || "",
+      coach_name: program.coachName || "",
+      notes: program.notes || "",
+      published: String(!!program.published)
+    },
+    items: items.map((item) => ({
+      item_id: item.id,
+      program_id: program.id,
+      sort_order: item.sortOrder,
+      category: item.category,
+      exercise: item.exercise,
+      target_sets: item.targetSets,
+      target_type: item.targetType,
+      target_value: item.targetValue,
+      item_note: item.itemNote || ""
+    }))
+  });
+  applyCloudPayloadToState(payload);
+}
+
+async function publishProgramToCloud(program, items) {
+  await saveProgramToCloud({ ...program, published: true }, items);
+  const payload = await callCloudApi("publishProgram", {
+    programId: program.id,
+    coachId: program.coachId
+  });
+  applyCloudPayloadToState(payload);
+}
+
+async function importHistoryRowsToCloud(rows) {
+  const payload = await callCloudApi("importWorkoutLogs", {
+    logs: rows.map((row) => {
+      const student = state.students.find((item) => item.id === row.studentId);
+      const coach = state.coaches.find((item) => item.id === (student?.primaryCoachId || ""));
+      return {
+        log_id: row.logId || "",
+        program_id: "",
+        program_code: row.programCode || "",
+        program_date: row.programDate,
+        coach_id: coach?.id || "",
+        coach_name: coach?.name || "",
+        student_id: row.studentId,
+        student_name: row.studentName,
+        category: row.category,
+        exercise: row.exercise,
+        target_sets: row.targetSets,
+        target_type: row.targetType,
+        target_value: row.targetValue,
+        actual_weight: row.actualWeight,
+        actual_sets: row.actualSets,
+        actual_reps: row.actualReps,
+        student_note: row.studentNote || ""
+      };
+    })
+  });
+  applyCloudPayloadToState(payload);
+}
+
+function setNodeText(node, text) {
+  if (node) {
+    node.textContent = text;
+  }
+}
+
+function setLabelText(label, text) {
+  if (!label) {
+    return;
+  }
+  const textNode = [...label.childNodes].find((node) => node.nodeType === Node.TEXT_NODE);
+  if (textNode) {
+    textNode.textContent = `${text}\n`;
+    return;
+  }
+  label.prepend(document.createTextNode(`${text}\n`));
+}
+
+function setTableHeaders(tableSelector, labels) {
+  const headers = document.querySelectorAll(`${tableSelector} thead th`);
+  labels.forEach((label, index) => {
+    if (headers[index]) {
+      headers[index].textContent = label;
+    }
+  });
+}
+
+function applyStaticCopy() {
+  document.title = "CoachFlow 重訓課表與紀錄系統";
+
+  setNodeText(document.querySelector(".hero-copy .eyebrow"), "CoachFlow 重訓課表與紀錄系統");
+  setNodeText(document.querySelector(".hero-copy h1"), "教練建立課表，學生完成紀錄");
+  setNodeText(document.querySelector(".hero-note .hero-chip"), "系統原型");
+  setNodeText(document.querySelector(".hero-note h3"), "目前版本說明");
+  setNodeText(document.querySelector(".hero-note p"), "目前以本地資料模擬，後續可再接回 Google Sheets 與 Apps Script。");
+
+  if (els.mainTabs[0]) setNodeText(els.mainTabs[0], "教練管理");
+  if (els.mainTabs[1]) setNodeText(els.mainTabs[1], "學生填寫");
+
+  if (els.coachGlobalViewDesktopButton) setNodeText(els.coachGlobalViewDesktopButton, "網頁版介面");
+  if (els.coachGlobalViewMobileButton) setNodeText(els.coachGlobalViewMobileButton, "手機版介面");
+  if (els.studentGlobalViewDesktopButton) setNodeText(els.studentGlobalViewDesktopButton, "網頁版介面");
+  if (els.studentGlobalViewMobileButton) setNodeText(els.studentGlobalViewMobileButton, "手機版介面");
+
+  const coachTabLabels = {
+    "coach-editor": "建立課表",
+    "coach-coaches": "教練管理",
+    "coach-students": "學生管理",
+    "coach-today": "今日紀錄",
+    "coach-history": "歷史查詢"
+  };
+  els.coachTabs.forEach((button) => {
+    const label = coachTabLabels[button.dataset.coachTab];
+    if (label) {
+      button.textContent = label;
+    }
+  });
+
+  setNodeText(document.querySelector("#coach-auth-card .section-kicker"), "教練登入");
+  setNodeText(document.querySelector("#coach-auth-card h3"), "教練專屬入口");
+  if (els.coachAccessCode) {
+    els.coachAccessCode.placeholder = "例如：CL001";
+    setLabelText(els.coachAccessCode.closest("label"), "教練代碼");
+  }
+  setNodeText(document.querySelector("#coach-auth-card .muted-copy"), "也可以直接使用教練專屬連結進入，系統會自動帶入你的身份。");
+  if (els.confirmCoachAccess) setNodeText(els.confirmCoachAccess, "確認身份並進入教練工作台");
+
+  setNodeText(document.querySelector("#student-entry-card .section-kicker"), "身份確認");
+  setNodeText(document.querySelector("#student-entry-card h3"), "學生專屬入口");
+  if (els.studentAccessCode) {
+    els.studentAccessCode.placeholder = "例如：WM001";
+    setLabelText(els.studentAccessCode.closest("label"), "專屬代碼");
+  }
+  const studentEntryNote = document.querySelector("#student-entry-card .muted-copy");
+  if (studentEntryNote) {
+    studentEntryNote.textContent = "也可以直接使用專屬連結進入，系統會自動帶入你的身份。";
+  }
+  if (els.confirmStudentAccess) setNodeText(els.confirmStudentAccess, "確認身份並載入今日課表");
+
+  setNodeText(document.querySelector("#coach-coaches .section-kicker"), "教練設定");
+  setNodeText(document.querySelector("#coach-coaches h3"), "教練管理");
+  setNodeText(document.querySelector("#coach-roster-card > .muted-copy"), "可新增教練、修改名稱、停用教練，並查看每位教練的最後使用狀態。");
+  setNodeText(document.querySelector("#coach-roster-card .student-manager-block:first-child .student-manager-label"), "新增教練");
+  if (els.newCoachName) {
+    els.newCoachName.placeholder = "例如：王教練";
+    setLabelText(els.newCoachName.closest("label"), "教練姓名");
+  }
+  if (els.addCoachButton) {
+    els.addCoachButton.textContent = "新增教練";
+  }
+  setNodeText(document.querySelector("#coach-roster-card .student-manager-block:last-child .student-manager-label"), "目前登入");
+  const coachSessionBlockCopy = document.querySelector("#coach-roster-card .student-manager-block:last-child .muted-copy");
+  if (coachSessionBlockCopy) {
+    coachSessionBlockCopy.textContent = "正式版將由教練專屬入口登入，管理者頁不再切換目前教練。";
+  }
+  if (els.coachSessionName) {
+    els.coachSessionName.placeholder = "管理者模式不使用";
+  }
+  setNodeText(document.querySelector("#coach-students .section-kicker"), "學生管理");
+  setNodeText(document.querySelector("#coach-students h3"), "學生管理");
+  setNodeText(document.querySelector("#coach-student-links-card > .muted-copy"), "可依學生姓名快速查看專屬網址與共用入口，方便傳給學生登入。");
+  if (els.coachStudentLinkName) {
+    els.coachStudentLinkName.placeholder = "請輸入學生姓名";
+    setLabelText(els.coachStudentLinkName.closest("label"), "學生姓名");
+  }
+  if (els.coachStudentLinkSelect) {
+    setLabelText(els.coachStudentLinkSelect.closest("label"), "或直接選擇學生");
+    if (els.coachStudentLinkSelect.options.length && !els.coachStudentLinkSelect.options[0].value) {
+      els.coachStudentLinkSelect.options[0].textContent = "請選擇學生";
+    }
+  }
+  setNodeText(document.querySelector("#coach-student-links-card .section-kicker"), "學生專屬網址");
+  setNodeText(document.querySelector("#coach-student-links-card h3"), "學生專屬網址");
+  setNodeText(document.querySelector("#history-import-card .section-kicker"), "歷史資料匯入");
+  setNodeText(document.querySelector("#history-import-card h3"), "批次匯入訓練紀錄");
+  setNodeText(document.querySelector("#history-import-card > .muted-copy"), "可下載匯入範本 CSV，整理完成後再批次匯入舊訓練紀錄。");
+  setNodeText(document.querySelector("#history-import-card .student-manager-block:first-child .student-manager-label"), "步驟 1");
+  if (els.downloadHistoryTemplateButton) {
+    els.downloadHistoryTemplateButton.textContent = "下載匯入範本";
+  }
+  setNodeText(document.querySelector("#history-import-card .student-manager-block:last-child .student-manager-label"), "步驟 2");
+  if (els.historyImportFile) {
+    setLabelText(els.historyImportFile.closest("label"), "上傳 CSV 檔案");
+  }
+  if (els.confirmHistoryImportButton) {
+    els.confirmHistoryImportButton.textContent = "確認匯入";
+  }
+  setNodeText(document.querySelector("#coach-editor .section-kicker"), "課表編輯");
+  setNodeText(document.querySelector("#coach-editor h3"), "建立今日課表");
+  if (els.coachActiveCopy) {
+    els.coachActiveCopy.textContent = "";
+  }
+  if (els.changeCoachAccess) {
+    els.changeCoachAccess.textContent = "切換教練";
+  }
+  if (els.programCode) setLabelText(els.programCode.closest("label"), "課表代碼");
+  if (els.programDate) setLabelText(els.programDate.closest("label"), "課表日期");
+  if (els.coachName) {
+    setLabelText(els.coachName.closest("label"), "教練名稱");
+    els.coachName.placeholder = "例如：Coach Lin";
+  }
+  if (els.programNotes) {
+    setLabelText(els.programNotes.closest("label"), "課表備註");
+    els.programNotes.placeholder = "可填寫當日提醒或訓練重點";
+  }
+  const addProgramItemButton = document.querySelector("#add-program-item");
+  if (addProgramItemButton) addProgramItemButton.textContent = "新增一列";
+  const saveProgramButton = document.querySelector("#save-program");
+  if (saveProgramButton) saveProgramButton.textContent = "儲存課表";
+  const publishProgramButton = document.querySelector("#publish-program");
+  if (publishProgramButton) publishProgramButton.textContent = "發布課表";
+  setNodeText(document.querySelector("#coach-today .section-kicker"), "提交狀況");
+  setNodeText(document.querySelector("#coach-today h3"), "今日全班紀錄");
+  if (els.coachTodayDate) setLabelText(els.coachTodayDate.closest("label"), "查看日期");
+  if (els.todayLogsSearch) {
+    setLabelText(els.todayLogsSearch.closest("label"), "搜尋今日紀錄");
+    els.todayLogsSearch.placeholder = "可搜尋學生姓名或動作";
+  }
+  setNodeText(document.querySelector("#coach-history .section-kicker"), "歷史查詢");
+  setNodeText(document.querySelector("#coach-history h3"), "學生／動作歷史紀錄");
+  if (els.coachHistoryStudent) setLabelText(els.coachHistoryStudent.closest("label"), "學生");
+  if (els.coachHistoryExercise) {
+    setLabelText(els.coachHistoryExercise.closest("label"), "動作");
+    els.coachHistoryExercise.placeholder = "請輸入或選擇動作";
+  }
+  if (els.coachHistoryDateFrom) setLabelText(els.coachHistoryDateFrom.closest("label"), "開始日期");
+  if (els.coachHistoryDateTo) setLabelText(els.coachHistoryDateTo.closest("label"), "結束日期");
+  if (els.coachHistoryLast30) els.coachHistoryLast30.textContent = "最近 30 天";
+  if (els.runCoachHistoryButton) els.runCoachHistoryButton.textContent = "查看歷史紀錄";
+  if (els.resetCoachHistoryButton) els.resetCoachHistoryButton.textContent = "清除條件";
+  if (els.exportCoachHistoryButton) els.exportCoachHistoryButton.textContent = "匯出 CSV";
+
+  setTableHeaders(".editor-table", ["分類", "動作名稱", "組數", "類型", "次數", "備註", "排序", ""]);
+  setTableHeaders("#coach-today table", ["學生", "分類", "動作", "目標", "實際結果", "備註", "送出時間"]);
+  setTableHeaders("#today-student-detail-card table", ["分類", "動作", "目標", "實際結果", "備註", "送出時間"]);
+  setTableHeaders("#coach-history .wide-card table", ["日期", "學生", "分類", "動作", "目標", "實際結果", "備註"]);
+  setTableHeaders("#student-table-wrap table", ["分類", "動作", "目標", "填寫內容"]);
+  setTableHeaders("#student-history-card table", ["日期", "分類", "動作", "目標", "實際結果", "備註"]);
+  setTableHeaders("#success-modal table", ["分類", "動作", "目標", "實際結果", "備註"]);
+  setTableHeaders("#history-import-card table", ["學生姓名", "日期", "動作", "分類", "目標格式", "匯入狀態"]);
+
+  if (els.loadStudentProgramInline) els.loadStudentProgramInline.textContent = "載入今日課表";
+  if (els.loadStudentProgramMobile) els.loadStudentProgramMobile.textContent = "載入今日課表";
+  if (els.editStudentProgramMobile) els.editStudentProgramMobile.textContent = "編輯課表項目";
+  if (els.openStudentHistoryMobile) els.openStudentHistoryMobile.textContent = "查看我的歷史紀錄";
+  if (els.submitStudentLog) els.submitStudentLog.textContent = "確認本次填寫內容";
+  if (els.submitStudentLogMobile) els.submitStudentLogMobile.textContent = "確認本次填寫內容";
+  if (els.openStudentHistory) els.openStudentHistory.textContent = "查看我的歷史紀錄";
+  if (els.downloadSuccessImage) els.downloadSuccessImage.textContent = "下載圖片";
+  if (els.successOpenHistory) els.successOpenHistory.textContent = "返回歷史紀錄";
+  if (els.closeSuccessModal) els.closeSuccessModal.textContent = "完成";
+  setNodeText(document.querySelector("#success-modal .section-kicker"), "完成送出");
+  setNodeText(document.querySelector("#success-title"), "課表已完成");
+  setNodeText(document.querySelector("#student-history-card .section-kicker"), "歷史紀錄");
+  setNodeText(document.querySelector("#student-history-card h3"), "我的歷史紀錄");
+  if (els.studentHistoryExercise) {
+    setLabelText(els.studentHistoryExercise.closest("label"), "項目");
+    els.studentHistoryExercise.placeholder = "請選擇或輸入項目";
+  }
+
+  const studentRosterHint = document.querySelector("#coach-students .student-roster-heading > .muted-copy");
+  if (studentRosterHint) {
+    studentRosterHint.textContent = APP_MODE === "admin"
+      ? "可指派教練、修改姓名、複製代碼、停用或刪除學生。"
+      : "可直接查看網址、修改姓名、複製代碼、查看全部紀錄、停用或刪除學生。";
+  }
+}
+
+function formatUsageTimestamp(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})$/);
+  if (!match) {
+    return text || "尚無紀錄";
+  }
+  const [, year, month, day, time] = match;
+  return `${Number(year) - 1911}.${Number(month)}.${Number(day)} ${time}`;
+}
+
+function markCoachUsed(coachId) {
+  if (!coachId) {
+    return;
+  }
+  const coach = state.coaches.find((item) => item.id === coachId);
+  if (!coach) {
+    return;
+  }
+  coach.lastUsedAt = timestampNow();
+  persistState();
+}
+
+function markStudentUsed(studentId) {
+  if (!studentId) {
+    return;
+  }
+  const student = state.students.find((item) => item.id === studentId);
+  if (!student) {
+    return;
+  }
+  student.lastUsedAt = timestampNow();
+  persistState();
+}
+
+function buildCoachAccessCode(name, index) {
+  const latin = String(name || "")
+    .replace(/[^A-Za-z]/g, "")
+    .toUpperCase()
+    .slice(0, 2);
+  const prefix = latin || "CO";
+  return `${prefix}${String(index).padStart(3, "0")}`;
+}
+
+function resolveCoachByAccess(rawValue) {
+  const value = String(rawValue || "").trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+  return state.coaches.find((coach) => {
+    const code = String(coach.accessCode || "").trim().toLowerCase();
+    const token = String(coach.token || "").trim().toLowerCase();
+    return coach.status !== "inactive" && (value === code || value === token || value === String(coach.id).toLowerCase());
+  }) || null;
+}
+
+function getCurrentCoach() {
+  if (APP_MODE === "coach") {
+    return state.coaches?.find((coach) => coach.id === authenticatedCoachId)
+      || null;
+  }
+  return state.coaches?.find((coach) => coach.id === state.currentCoachId)
+    || state.coaches?.[0]
+    || null;
+}
+
+function getCoachScopedStudents() {
+  const coach = getCurrentCoach();
+  if (!coach) {
+    return [];
+  }
+  if (APP_MODE === "admin") {
+    return state.students;
+  }
+  return state.students.filter((student) => (student.primaryCoachId || coach.id) === coach.id);
+}
+
+function getCoachScopedPrograms() {
+  const coach = getCurrentCoach();
+  if (!coach) {
+    return [];
+  }
+  if (APP_MODE === "admin") {
+    return state.programs;
+  }
+  return state.programs.filter((program) => (program.coachId || coach.id) === coach.id);
+}
+
+function getCoachScopedLogs() {
+  const coach = getCurrentCoach();
+  if (!coach) {
+    return [];
+  }
+  if (APP_MODE === "admin") {
+    return state.workoutLogs;
+  }
+  return state.workoutLogs.filter((log) => {
+    const program = state.programs.find((item) => item.id === log.programId);
+    const student = state.students.find((item) => item.id === log.studentId);
+    const coachId = log.coachId || program?.coachId || student?.primaryCoachId || coach.id;
+    return coachId === coach.id;
+  });
+}
+
+function getDefaultEditingProgramId() {
+  const coach = getCurrentCoach();
+  if (!coach) {
+    return null;
+  }
+
+  const coachPrograms = state.programs
+    .filter((program) => (program.coachId || coach.id) === coach.id)
+    .sort((a, b) => {
+      const dateCompare = String(b.date || "").localeCompare(String(a.date || ""));
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      return String(b.createdAt || "").localeCompare(String(a.createdAt || ""));
+    });
+
+  return getPublishedProgram(coach.id)?.id || coachPrograms[0]?.id || createBlankProgram().id;
+}
+
+function cleanupRedundantBlankPrograms() {
+  const removableIds = new Set();
+
+  state.coaches.forEach((coach) => {
+    const blankPrograms = state.programs
+      .filter((program) => (program.coachId || "") === coach.id)
+      .filter((program) => !program.published)
+      .filter((program) => !String(program.code || "").trim())
+      .filter((program) => !String(program.title || "").trim())
+      .filter((program) => !String(program.notes || "").trim())
+      .filter((program) => getProgramItems(program.id).length === 0)
+      .sort((a, b) => String(b.createdAt || "").localeCompare(String(a.createdAt || "")));
+
+    blankPrograms.slice(1).forEach((program) => removableIds.add(program.id));
+  });
+
+  if (!removableIds.size) {
+    return;
+  }
+
+  state.programs = state.programs.filter((program) => !removableIds.has(program.id));
+  state.programItems = state.programItems.filter((item) => !removableIds.has(item.programId));
+  persistState();
+}
+
+
+const COMMON_EXERCISES = [
+  "\u7206\u767c\u9ad8\u62c9",
+  "\u5bec\u63e1\u9ad8\u62c9",
+  "\u6df1\u8e72",
+  "SSB\u6df1\u8e72",
+  "\u80a9\u63a8",
+  "\u81e5\u63a8",
+  "\u5730\u9707\u81e5\u63a8",
+  "\u786c\u8209",
+  "\u50b3\u7d71\u786c\u8209",
+  "RDL",
+  "\u5c48\u9ad4\u5212\u8239",
+  "\u55ae\u624b\u5212\u8239",
+  "\u5f8c\u8173\u62ac\u9ad8\u8e72",
+  "\u524d\u8173\u62ac\u9ad8\u5206\u817f\u8e72",
+  "\u55ae\u8dea\u59ff\u55ae\u80a9\u63a8",
+  "\u55ae\u908aRDL",
+  "\u58fa\u9234\u64fa\u76ea",
+  "\u6536\u62cc\u5f0f",
+  "\u5f15\u9ad4\u5411\u4e0a",
+  "\u624b\u81c2\u88dc\u5f37",
+  "\u4e8c\u982d\u808c\u5f4e\u8209"
+];
+
+const els = {
+  mainTabsNav: document.querySelector(".main-tabs"),
+  mainTabs: [...document.querySelectorAll(".main-tab")],
+  panels: [...document.querySelectorAll(".panel")],
+  coachTabs: [...document.querySelectorAll(".sub-tab")],
+  coachPanels: [...document.querySelectorAll(".sub-panel")],
+  currentCoachSelect: document.querySelector("#current-coach-select"),
+  coachSessionName: document.querySelector("#coach-session-name"),
+  coachActiveBar: document.querySelector("#coach-active-bar"),
+  coachActiveCopy: document.querySelector("#coach-active-copy"),
+  changeCoachAccess: document.querySelector("#change-coach-access"),
+  newCoachName: document.querySelector("#new-coach-name"),
+  addCoachButton: document.querySelector("#add-coach"),
+  coachRosterCount: document.querySelector("#coach-roster-count"),
+  coachRoster: document.querySelector("#coach-roster"),
+  programCode: document.querySelector("#program-code"),
+  programDate: document.querySelector("#program-date"),
+  coachName: document.querySelector("#coach-name"),
+  programNotes: document.querySelector("#program-notes"),
+  programItemsBody: document.querySelector("#program-items-body"),
+  programItemTemplate: document.querySelector("#program-item-template"),
+  coachExerciseOptions: document.querySelector("#coach-exercise-options"),
+  programLibraryCount: document.querySelector("#program-library-count"),
+  programLibrarySort: document.querySelector("#program-library-sort"),
+  programLibrarySearch: document.querySelector("#program-library-search"),
+  programLibraryList: document.querySelector("#program-library-list"),
+  programLibraryMore: document.querySelector("#program-library-more"),
+  coachStats: document.querySelector("#coach-stats"),
+  coachTodayDate: document.querySelector("#coach-today-date"),
+  submittedList: document.querySelector("#submitted-list"),
+  pendingList: document.querySelector("#pending-list"),
+  todayLogsCount: document.querySelector("#today-logs-count"),
+  todayLogsSearch: document.querySelector("#today-logs-search"),
+  todayLogsBody: document.querySelector("#today-logs-body"),
+  todayLogsMore: document.querySelector("#today-logs-more"),
+  todayStudentDetailStatus: document.querySelector("#today-student-detail-status"),
+  todayStudentDetailBody: document.querySelector("#today-student-detail-body"),
+  todayStudentDetailMore: document.querySelector("#today-student-detail-more"),
+  coachHistoryStudent: document.querySelector("#coach-history-student"),
+  coachHistoryExercise: document.querySelector("#coach-history-exercise"),
+  coachHistoryDateFrom: document.querySelector("#coach-history-date-from"),
+  coachHistoryDateTo: document.querySelector("#coach-history-date-to"),
+  coachHistoryLast30: document.querySelector("#coach-history-last-30"),
+  coachHistoryCount: document.querySelector("#coach-history-count"),
+  coachHistoryBody: document.querySelector("#coach-history-body"),
+  coachHistoryMore: document.querySelector("#coach-history-more"),
+  coachHistoryResultsWrap: document.querySelector("#coach-history-results-wrap"),
+  toggleCoachHistoryResults: document.querySelector("#toggle-coach-history-results"),
+  coachAuthShell: document.querySelector("#coach-auth-shell"),
+  coachAccessCode: document.querySelector("#coach-access-code"),
+  confirmCoachAccess: document.querySelector("#confirm-coach-access"),
+  coachSummary: document.querySelector("#coach-summary"),
+  runCoachHistoryButton: document.querySelector("#run-coach-history"),
+  resetCoachHistoryButton: document.querySelector("#reset-coach-history"),
+  exportCoachHistoryButton: document.querySelector("#export-coach-history"),
+  coachStudentLinkName: document.querySelector("#coach-student-link-name"),
+  coachStudentLinkSelect: document.querySelector("#coach-student-link-select"),
+  coachStudentLinkOptions: document.querySelector("#coach-student-link-options"),
+  coachStudentLinks: document.querySelector("#coach-student-links"),
+  coachStudentLinksCard: document.querySelector("#coach-student-links-card"),
+  historyImportCard: document.querySelector("#history-import-card"),
+  historyImportCount: document.querySelector("#history-import-count"),
+  downloadHistoryTemplateButton: document.querySelector("#download-history-template"),
+  historyImportFile: document.querySelector("#history-import-file"),
+  historyImportPreviewBody: document.querySelector("#history-import-preview-body"),
+  confirmHistoryImportButton: document.querySelector("#confirm-history-import"),
+  newStudentName: document.querySelector("#new-student-name"),
+  addStudentButton: document.querySelector("#add-student"),
+  coachStudentCount: document.querySelector("#coach-student-count"),
+  coachStudentRosterSearch: document.querySelector("#coach-student-roster-search"),
+  clearStudentRosterSearchButton: document.querySelector("#clear-student-roster-search"),
+  coachStudentRosterSummary: document.querySelector("#coach-student-roster-summary"),
+  coachStudentRoster: document.querySelector("#coach-student-roster"),
+  coachGlobalViewDesktopButton: document.querySelector("#coach-global-view-desktop"),
+  coachGlobalViewMobileButton: document.querySelector("#coach-global-view-mobile"),
+  studentPanelViewToggle: document.querySelector("#student-panel .panel-header .view-toggle"),
+  studentAccessCode: document.querySelector("#student-access-code"),
+  studentProgramSelect: document.querySelector("#student-program-select"),
+  studentSummary: document.querySelector("#student-summary"),
+  studentAuthShell: document.querySelector("#student-auth-shell"),
+  studentAuthCard: document.querySelector("#student-auth-card"),
+  studentProgramShell: document.querySelector(".student-program-shell"),
+  studentActiveBar: document.querySelector("#student-active-bar"),
+  studentActiveCopy: document.querySelector("#student-active-copy"),
+  studentRecordedBanner: document.querySelector("#student-recorded-banner"),
+  studentProgramStatus: document.querySelector("#student-program-status"),
+  studentProgramCard: document.querySelector("#student-program-card"),
+  studentPhoneFrame: document.querySelector("#student-phone-frame"),
+  studentMobileTools: document.querySelector("#student-mobile-tools"),
+  studentMobileSecondaryActions: document.querySelector("#student-mobile-secondary-actions"),
+  studentCardList: document.querySelector("#student-card-list"),
+  studentTableWrap: document.querySelector("#student-table-wrap"),
+  studentProgramBody: document.querySelector("#student-program-body"),
+  studentEntryTemplate: document.querySelector("#student-entry-template"),
+  studentHistoryExercise: document.querySelector("#student-history-exercise"),
+  studentHistoryExerciseOptions: document.querySelector("#student-history-exercise-options"),
+  studentHistoryCount: document.querySelector("#student-history-count"),
+  studentHistoryBody: document.querySelector("#student-history-body"),
+  studentHistoryCard: document.querySelector("#student-history-card"),
+  studentHistoryCardList: document.querySelector("#student-history-card-list"),
+  studentHistoryMore: document.querySelector("#student-history-more"),
+  studentGlobalViewCardButton: document.querySelector("#student-global-view-card"),
+  studentGlobalViewTableButton: document.querySelector("#student-global-view-table"),
+  studentViewCardButton: document.querySelector("#student-view-card"),
+  studentViewTableButton: document.querySelector("#student-view-table"),
+  loadStudentProgramInline: document.querySelector("#load-student-program-inline"),
+  loadStudentProgramMobile: document.querySelector("#load-student-program-mobile"),
+  editStudentProgram: document.querySelector("#edit-student-program"),
+  editStudentProgramMobile: document.querySelector("#edit-student-program-mobile"),
+  openStudentHistoryMobile: document.querySelector("#open-student-history-mobile"),
+  changeStudentAccess: document.querySelector("#change-student-access"),
+  submitStudentLogMobile: document.querySelector("#submit-student-log-mobile"),
+  studentMobileSubmitBar: document.querySelector("#student-mobile-submit-bar"),
+  confirmModal: document.querySelector("#confirm-modal"),
+  confirmModalCard: document.querySelector("#confirm-modal-card"),
+  confirmSummary: document.querySelector("#confirm-summary"),
+  confirmCardList: document.querySelector("#confirm-card-list"),
+  confirmBody: document.querySelector("#confirm-body"),
+  studentProgramEditModal: document.querySelector("#student-program-edit-modal"),
+  studentProgramEditModalCard: document.querySelector("#student-program-edit-modal-card"),
+  studentProgramEditBody: document.querySelector("#student-program-edit-body"),
+  studentEditMobileList: document.querySelector("#student-edit-mobile-list"),
+  studentProgramEditRowTemplate: document.querySelector("#student-program-edit-row-template"),
+  programPreviewModal: document.querySelector("#program-preview-modal"),
+  modalPreviewCode: document.querySelector("#modal-preview-code"),
+  modalPreviewBody: document.querySelector("#modal-program-preview-body"),
+  successModal: document.querySelector("#success-modal"),
+  successModalCard: document.querySelector("#success-modal-card"),
+  successSummary: document.querySelector("#success-summary"),
+  successCardList: document.querySelector("#success-card-list"),
+  successBody: document.querySelector("#success-body"),
+  downloadSuccessImage: document.querySelector("#download-success-image"),
+  successOpenHistory: document.querySelector("#success-open-history"),
+  assignCoachModal: document.querySelector("#assign-coach-modal"),
+  assignCoachSummary: document.querySelector("#assign-coach-summary"),
+  assignCoachSelect: document.querySelector("#assign-coach-select"),
+  closeAssignCoachModal: document.querySelector("#close-assign-coach-modal"),
+  cancelAssignCoach: document.querySelector("#cancel-assign-coach"),
+  saveAssignCoach: document.querySelector("#save-assign-coach")
+};
+
+init().catch((error) => {
+  console.error("CoachFlow init failed:", error);
+  window.alert(error?.message || "系統初始化失敗，請重新整理後再試。");
+});
+
+function refreshAdminWorkspace() {
+  renderCoachRoster();
+  renderCoachStudentRoster();
+}
+
+function refreshCoachWorkspace() {
+  editingProgramId = getDefaultEditingProgramId();
+  renderCurrentCoachOptions();
+  renderCoachRoster();
+  renderCoachExerciseOptions();
+  getCoachTodayDate();
+  seedEditorFromProgram(editingProgramId);
+  renderCoachHistoryFilters();
+  renderProgramLibrary();
+  renderCoachStudentLinks();
+  renderHistoryImportPreview();
+  renderCoachStudentRoster();
+  syncEditorPreviewState();
+  renderCoachToday();
+  renderCoachHistory();
+  renderCoachSummary();
+  syncCoachAccessUI();
+}
+
+function refreshStudentWorkspace() {
+  renderStudentProgramOptions();
+  renderStudentHistoryFilters();
+  renderStudentHistory();
+  renderStudentSummary();
+  syncStudentAccessUI();
+}
+
+async function init() {
+  applyStaticCopy();
+  applyAppMode();
+  hydrateFromStorage();
+  await bootstrapCloudMode();
+  await hydrateCoachAccessFromUrl();
+  await hydrateStudentAccessFromUrl();
+  if (!IS_CLOUD_MODE) {
+    cleanupRedundantBlankPrograms();
+  }
+  bindEvents();
+
+  if (APP_MODE === "admin") {
+    refreshAdminWorkspace();
+    applyCoachViewMode();
+    applyAppMode();
+    switchCoachPanel("coach-coaches");
+    return;
+  }
+
+  refreshCoachWorkspace();
+  refreshStudentWorkspace();
+  if (APP_MODE === "coach" && !authenticatedCoachId) {
+    const coachAccessFromUrl = new URLSearchParams(window.location.search).get("coach")
+      || new URLSearchParams(window.location.search).get("token")
+      || new URLSearchParams(window.location.search).get("code")
+      || "";
+    if (coachAccessFromUrl && els.coachAccessCode) {
+      els.coachAccessCode.value = coachAccessFromUrl;
+      await confirmCoachAccess();
+    }
+  }
+  if (APP_MODE === "coach") {
+    markCoachUsed(getCurrentCoach()?.id || "");
+  }
+  if (currentStudentId) {
+    loadStudentProgram({ silent: true });
+  }
+  if (APP_MODE === "coach") {
+    syncCoachAccessUI();
+  }
+  if (APP_MODE === "student") {
+    syncStudentAccessUI();
+  }
+  applyCoachViewMode();
+  applyStudentViewMode();
+  applyAppMode();
+}
+
+function renderCoachExerciseOptions() {
+  if (!els.coachExerciseOptions) {
+    return;
+  }
+
+  const known = new Set(COMMON_EXERCISES);
+  state.programItems.forEach((item) => {
+    if (item.exercise) {
+      known.add(item.exercise);
+    }
+  });
+
+  els.coachExerciseOptions.innerHTML = [...known]
+    .sort((a, b) => a.localeCompare(b, "zh-Hant"))
+    .map((exercise) => `<option value="${exercise}"></option>`)
+    .join("");
+}
+
+function renderCurrentCoachOptions() {
+  if (!els.currentCoachSelect) {
+    return;
+  }
+  const currentCoach = getCurrentCoach();
+  els.currentCoachSelect.innerHTML = (state.coaches || [])
+    .filter((coach) => coach.status !== "inactive")
+    .map((coach) => `<option value="${coach.id}">${coach.name}</option>`)
+    .join("");
+  if (currentCoach) {
+    els.currentCoachSelect.value = currentCoach.id;
+  }
+  if (els.coachName) {
+    els.coachName.value = currentCoach?.name || "";
+  }
+  if (els.coachSessionName) {
+    els.coachSessionName.value = currentCoach?.name || "";
+  }
+}
+
+function renderCoachRoster() {
+  if (!els.coachRoster) {
+    return;
+  }
+
+  const coaches = state.coaches || [];
+  if (els.coachRosterCount) {
+    els.coachRosterCount.textContent = `共 ${coaches.length} 位`;
+  }
+
+  els.coachRoster.innerHTML = coaches.length
+    ? coaches
+        .map((coach) => {
+          const studentCount = state.students.filter((student) => (student.primaryCoachId || "") === coach.id).length;
+          const programCount = state.programs.filter((program) => (program.coachId || "") === coach.id).length;
+          const logCount = state.workoutLogs.filter((log) => (log.coachId || "") === coach.id).length;
+          const isCurrent = state.currentCoachId === coach.id;
+          const isInactive = coach.status === "inactive";
+          const lastUsedText = formatUsageTimestamp(coach.lastUsedAt);
+
+          return `
+            <article class="coach-link-card" data-coach-card="${coach.id}">
+              <div class="coach-link-top">
+                <div>
+                  <h4>${coach.name}</h4>
+                  <p class="coach-student-meta">教練代碼：${coach.accessCode || "-"}</p>
+                  <p class="coach-student-meta">學生 ${studentCount} 人｜課表 ${programCount} 份｜紀錄 ${logCount} 筆</p>
+                  <p class="coach-student-meta">最後使用：${lastUsedText}</p>
+                </div>
+                <div class="roster-pill-stack">
+                  ${APP_MODE !== "admin" ? `<span class="status-pill ${isCurrent ? "is-success" : "is-muted"}">${isCurrent ? "目前教練" : "可切換"}</span>` : ""}
+                  <span class="status-pill ${isInactive ? "is-muted" : "is-success"}">${isInactive ? "已停用" : "使用中"}</span>
+                </div>
+              </div>
+              <div class="coach-link-actions">
+                ${APP_MODE !== "admin" ? `<button class="ghost-button" type="button" data-set-current-coach="${coach.id}" ${isCurrent ? "disabled" : ""}>設為目前教練</button>` : ""}
+                <button class="ghost-button" type="button" data-edit-coach="${coach.id}">修改姓名</button>
+                <button class="ghost-button" type="button" data-toggle-coach-status="${coach.id}">
+                  ${isInactive ? "啟用教練" : "停用教練"}
+                </button>
+                ${APP_MODE === "admin" ? `<button class="ghost-button" type="button" data-delete-coach="${coach.id}">刪除教練</button>` : ""}
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `<div class="empty-card">目前尚未建立教練。</div>`;
+}
+
+function getActiveStudents() {
+  return state.students.filter((student) => student.status !== "inactive");
+}
+
+function getCoachActiveStudents() {
+  return getCoachScopedStudents().filter((student) => student.status !== "inactive");
+}
+
+function getCoachTodayDate() {
+  const fallback = getPublishedProgram(getCurrentCoach()?.id)?.date || new Date().toISOString().slice(0, 10);
+  if (els.coachTodayDate && !els.coachTodayDate.value) {
+    els.coachTodayDate.value = fallback;
+  }
+  return els.coachTodayDate?.value || fallback;
+}
+
+function bindEvents() {
+  els.mainTabs.forEach((button) => {
+    button.addEventListener("click", () => switchMainPanel(button.dataset.panel));
+  });
+
+  els.coachTabs.forEach((button) => {
+    button.addEventListener("click", () => switchCoachPanel(button.dataset.coachTab));
+  });
+  els.currentCoachSelect?.addEventListener("change", handleCurrentCoachChange);
+  els.addCoachButton?.addEventListener("click", createCoachFromForm);
+  els.confirmCoachAccess?.addEventListener("click", confirmCoachAccess);
+  els.changeCoachAccess?.addEventListener("click", resetCoachAccess);
+
+  document.querySelector("#add-program-item").addEventListener("click", () => {
+    addProgramItemRow();
+    syncSortNumbers();
+    syncEditorPreviewState();
+  });
+  document.querySelector("#save-program").addEventListener("click", saveProgram);
+  document.querySelector("#publish-program").addEventListener("click", publishProgram);
+  els.programLibraryList?.addEventListener("click", handleProgramLibraryAction);
+  els.programLibrarySearch?.addEventListener("input", () => {
+    programLibraryVisibleCount = 6;
+    renderProgramLibrary();
+  });
+  els.programLibrarySort?.addEventListener("change", () => {
+    programLibraryVisibleCount = 6;
+    renderProgramLibrary();
+  });
+  els.programLibraryMore?.addEventListener("click", toggleProgramLibraryVisibleCount);
+  document.querySelector("#close-program-preview-modal").addEventListener("click", closeProgramPreviewModal);
+  document.querySelector("#modal-close-preview").addEventListener("click", closeProgramPreviewModal);
+  document.querySelector("#modal-export-program-image").addEventListener("click", exportProgramImage);
+  els.toggleCoachHistoryResults?.addEventListener("click", toggleCoachHistoryResults);
+  document.querySelector("#confirm-student-access").addEventListener("click", confirmStudentAccessAndLoadProgram);
+  els.loadStudentProgramInline.addEventListener("click", loadStudentProgram);
+  els.loadStudentProgramMobile.addEventListener("click", loadStudentProgram);
+  els.editStudentProgram.addEventListener("click", handleStudentDetailAction);
+  els.editStudentProgramMobile.addEventListener("click", handleStudentDetailAction);
+  document.querySelector("#submit-student-log").addEventListener("click", openSubmissionConfirm);
+  els.submitStudentLogMobile.addEventListener("click", openSubmissionConfirm);
+  els.openStudentHistoryMobile.addEventListener("click", () => {
+    studentHistoryOpened = true;
+    applyStudentViewMode();
+    renderStudentHistory();
+    els.studentHistoryCard.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+  els.changeStudentAccess.addEventListener("click", showStudentAccessPanel);
+  document.querySelector("#open-student-history").addEventListener("click", () => {
+    renderStudentHistory();
+    document.querySelector("#student-history-exercise").focus();
+  });
+  document.querySelector("#close-confirm-modal").addEventListener("click", closeConfirmModal);
+  document.querySelector("#cancel-submit").addEventListener("click", closeConfirmModal);
+  document.querySelector("#confirm-submit").addEventListener("click", finalizeSubmission);
+  document.querySelector("#close-success-modal").addEventListener("click", closeSuccessModal);
+  els.downloadSuccessImage?.addEventListener("click", downloadSuccessImage);
+  els.successOpenHistory?.addEventListener("click", openSuccessHistory);
+  document.querySelector("#close-student-program-edit-modal").addEventListener("click", closeStudentProgramEditModal);
+  document.querySelector("#cancel-student-program-edit").addEventListener("click", closeStudentProgramEditModal);
+  document.querySelector("#save-student-program-edit").addEventListener("click", saveStudentProgramEdits);
+  document.querySelector("#add-student-edit-row").addEventListener("click", () => addStudentProgramEditRow());
+  els.closeAssignCoachModal?.addEventListener("click", closeAssignCoachModal);
+  els.cancelAssignCoach?.addEventListener("click", closeAssignCoachModal);
+  els.saveAssignCoach?.addEventListener("click", saveAssignedCoach);
+  els.coachGlobalViewDesktopButton?.addEventListener("click", () => setCoachViewMode("desktop"));
+  els.coachGlobalViewMobileButton?.addEventListener("click", () => setCoachViewMode("mobile"));
+  els.studentGlobalViewCardButton.addEventListener("click", () => setStudentViewMode("card"));
+  els.studentGlobalViewTableButton.addEventListener("click", () => setStudentViewMode("table"));
+  els.studentViewCardButton.addEventListener("click", () => setStudentViewMode("card"));
+  els.studentViewTableButton.addEventListener("click", () => setStudentViewMode("table"));
+
+  [els.programCode, els.programDate, els.coachName, els.programNotes].forEach((input) => {
+    input.addEventListener("input", syncEditorPreviewState);
+  });
+
+  els.studentAccessCode.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmStudentAccessAndLoadProgram();
+    }
+  });
+  els.coachAccessCode?.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      confirmCoachAccess();
+    }
+  });
+
+  els.studentProgramSelect.addEventListener("change", renderStudentSummary);
+
+  els.coachHistoryStudent.addEventListener("change", () => {
+    coachHistoryVisibleCount = 6;
+    renderCoachHistory();
+  });
+  els.coachHistoryExercise.addEventListener("change", () => {
+    coachHistoryVisibleCount = 6;
+    renderCoachHistory();
+  });
+  els.coachHistoryDateFrom?.addEventListener("change", () => {
+    coachHistoryVisibleCount = 6;
+    renderCoachHistory();
+  });
+  els.coachHistoryDateTo?.addEventListener("change", () => {
+    coachHistoryVisibleCount = 6;
+    renderCoachHistory();
+  });
+  els.todayLogsSearch?.addEventListener("input", () => {
+    coachTodayVisibleCount = 6;
+    renderCoachToday();
+  });
+  els.coachTodayDate?.addEventListener("change", () => {
+    coachTodayVisibleCount = 6;
+    renderCoachToday();
+  });
+  els.todayLogsBody?.addEventListener("click", handleTodayLogAction);
+  els.todayLogsMore?.addEventListener("click", toggleTodayLogsVisibleCount);
+  els.todayStudentDetailMore?.addEventListener("click", toggleTodayStudentDetailVisibleCount);
+  els.submittedList?.addEventListener("click", handleTodayStudentListAction);
+  els.pendingList?.addEventListener("click", handleTodayStudentListAction);
+  els.coachStudentLinks?.addEventListener("click", handleCoachStudentLinkAction);
+  els.coachStudentRoster?.addEventListener("click", handleCoachStudentRosterAction);
+  els.coachRoster?.addEventListener("click", handleCoachRosterAction);
+  els.coachStudentLinkName?.addEventListener("input", renderCoachStudentLinks);
+  els.coachStudentLinkName?.addEventListener("change", renderCoachStudentLinks);
+  els.downloadHistoryTemplateButton?.addEventListener("click", downloadHistoryImportTemplate);
+  els.historyImportFile?.addEventListener("change", handleHistoryImportFile);
+  els.confirmHistoryImportButton?.addEventListener("click", confirmHistoryImport);
+  els.coachStudentRosterSearch?.addEventListener("input", renderCoachStudentRoster);
+  els.clearStudentRosterSearchButton?.addEventListener("click", () => {
+    if (els.coachStudentRosterSearch) {
+      els.coachStudentRosterSearch.value = "";
+    }
+    renderCoachStudentRoster();
+    els.coachStudentRosterSearch?.focus();
+  });
+  els.coachStudentLinkSelect?.addEventListener("change", () => {
+    els.coachStudentLinkName.value = els.coachStudentLinkSelect.value;
+    renderCoachStudentLinks();
+  });
+  els.addStudentButton?.addEventListener("click", createStudentFromCoachForm);
+  els.studentHistoryExercise.addEventListener("input", () => {
+    studentHistoryVisibleCount = 1;
+    renderStudentHistory();
+  });
+  els.studentHistoryExercise.addEventListener("change", () => {
+    studentHistoryVisibleCount = 1;
+    renderStudentHistory();
+  });
+  els.studentHistoryMore?.addEventListener("click", toggleStudentHistoryVisibleCount);
+  els.coachHistoryLast30?.addEventListener("click", applyCoachHistoryLast30Days);
+  els.runCoachHistoryButton?.addEventListener("click", () => {
+    coachHistoryVisibleCount = 6;
+    renderCoachHistory();
+  });
+  els.resetCoachHistoryButton?.addEventListener("click", resetCoachHistoryFilters);
+  els.exportCoachHistoryButton?.addEventListener("click", exportCoachHistoryCsv);
+  els.coachHistoryMore?.addEventListener("click", toggleCoachHistoryVisibleCount);
+  window.addEventListener("resize", handleViewportChange);
+
+  els.confirmModal.addEventListener("click", (event) => {
+    if (event.target === els.confirmModal) {
+      closeConfirmModal();
+    }
+  });
+  els.programPreviewModal.addEventListener("click", (event) => {
+    if (event.target === els.programPreviewModal) {
+      closeProgramPreviewModal();
+    }
+  });
+  els.successModal.addEventListener("click", (event) => {
+    if (event.target === els.successModal) {
+      closeSuccessModal();
+    }
+  });
+  els.studentProgramEditModal.addEventListener("click", (event) => {
+    if (event.target === els.studentProgramEditModal) {
+      closeStudentProgramEditModal();
+    }
+  });
+  els.assignCoachModal?.addEventListener("click", (event) => {
+    if (event.target === els.assignCoachModal) {
+      closeAssignCoachModal();
+    }
+  });
+  window.addEventListener("storage", handleStorageSync);
+}
+
+function hydrateFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) {
+      persistState();
+      return;
+    }
+    const parsed = JSON.parse(raw);
+    state.coaches = (parsed.coaches || structuredClone(defaultState.coaches)).map((coach, index) => {
+      const fallback = defaultState.coaches[index] || {};
+      const generatedAccessCode = buildCoachAccessCode(coach.name || fallback.name || `Coach ${index + 1}`, index + 1);
+      const generatedToken = String(coach.name || fallback.name || `coach${index + 1}`)
+        .replace(/\s+/g, "")
+        .toLowerCase()
+        .replace(/[^a-z0-9]/g, "");
+      return {
+        ...fallback,
+        ...coach,
+        accessCode: coach.accessCode || fallback.accessCode || generatedAccessCode,
+        token: coach.token || fallback.token || generatedToken || `coach${index + 1}`,
+        lastUsedAt: coach.lastUsedAt || fallback.lastUsedAt || "",
+        status: coach.status || fallback.status || "active",
+        role: coach.role || fallback.role || "coach"
+      };
+    });
+    state.currentCoachId = parsed.currentCoachId || state.coaches[0]?.id || defaultState.currentCoachId;
+    state.students = (parsed.students || structuredClone(defaultState.students)).map((student, index) => {
+      const fallback = defaultState.students[index] || {};
+      return {
+        ...fallback,
+        ...student,
+        lastUsedAt: student.lastUsedAt || fallback.lastUsedAt || "",
+        accessCode: student.accessCode || fallback.accessCode || `CODE${index + 1}`,
+        token: student.token || fallback.token || `token${index + 1}`,
+        primaryCoachId: student.primaryCoachId || fallback.primaryCoachId || state.currentCoachId
+      };
+    });
+    state.programs = (parsed.programs || structuredClone(defaultState.programs)).map((program) => ({
+      ...program,
+      coachId: program.coachId || state.currentCoachId,
+      coachName: program.coachName || getCurrentCoach()?.name || ""
+    }));
+    state.programItems = parsed.programItems || structuredClone(defaultState.programItems);
+    state.workoutLogs = (parsed.workoutLogs || structuredClone(defaultState.workoutLogs)).map((log) => {
+      const program = (parsed.programs || structuredClone(defaultState.programs)).find((item) => item.id === log.programId);
+      const student = (parsed.students || structuredClone(defaultState.students)).find((item) => item.id === log.studentId);
+      const coachId = log.coachId || program?.coachId || student?.primaryCoachId || state.currentCoachId;
+      const coachName = log.coachName || state.coaches.find((coach) => coach.id === coachId)?.name || "";
+      return {
+        ...log,
+        coachId,
+        coachName
+      };
+    });
+    persistState();
+  } catch {
+    persistState();
+  }
+}
+
+function persistState() {
+  localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+}
+
+function switchMainPanel(panelId) {
+  els.mainTabs.forEach((button) => button.classList.toggle("is-active", button.dataset.panel === panelId));
+  els.panels.forEach((panel) => panel.classList.toggle("is-active", panel.id === panelId));
+}
+
+function applyCoachTabVisibility() {
+  const tabConfig = {
+    "coach-editor": APP_MODE !== "admin",
+    "coach-coaches": APP_MODE === "admin" || APP_MODE === "dual",
+    "coach-students": true,
+    "coach-today": APP_MODE !== "admin",
+    "coach-history": APP_MODE !== "admin"
+  };
+
+  els.coachTabs.forEach((button) => {
+    const visible = tabConfig[button.dataset.coachTab] !== false;
+    button.hidden = !visible;
+    button.style.display = visible ? "" : "none";
+  });
+
+  els.coachPanels.forEach((panel) => {
+    const visible = tabConfig[panel.id] !== false;
+    panel.dataset.available = visible ? "true" : "false";
+    if (!visible) {
+      panel.classList.remove("is-active");
+      panel.hidden = true;
+      panel.style.display = "none";
+    } else {
+      panel.hidden = false;
+      panel.style.display = "";
+    }
+  });
+
+  const activeCoachPanel = els.coachPanels.find((panel) => panel.classList.contains("is-active"));
+  if (!activeCoachPanel || activeCoachPanel.dataset.available === "false") {
+    if (APP_MODE === "admin") {
+      switchCoachPanel("coach-coaches");
+    } else {
+      switchCoachPanel("coach-editor");
+    }
+  }
+}
+
+function applyAppMode() {
+  const coachPanel = document.querySelector("#coach-panel");
+  const studentPanel = document.querySelector("#student-panel");
+  const coachHeaderBlock = document.querySelector("#coach-panel .panel-header > div:first-child");
+  const coachHeaderKicker = coachHeaderBlock?.querySelector(".section-kicker");
+  const coachHeaderTitle = coachHeaderBlock?.querySelector("h2");
+  const coachHeaderCopy = coachHeaderBlock?.querySelector(".muted-copy");
+
+  document.body.dataset.appMode = APP_MODE;
+  if (els.mainTabsNav) {
+    els.mainTabsNav.classList.toggle("is-hidden", APP_MODE !== "dual");
+    els.mainTabsNav.hidden = APP_MODE !== "dual";
+    els.mainTabsNav.style.display = APP_MODE === "dual" ? "" : "none";
+  }
+
+  if (coachPanel) {
+    coachPanel.hidden = APP_MODE === "student";
+    coachPanel.style.display = APP_MODE === "student" ? "none" : "";
+  }
+  if (studentPanel) {
+    studentPanel.hidden = APP_MODE === "coach" || APP_MODE === "admin";
+    studentPanel.style.display = APP_MODE === "coach" || APP_MODE === "admin" ? "none" : "";
+  }
+
+  const coachSessionInline = document.querySelector(".coach-session-inline");
+  if (coachSessionInline) {
+    const shouldShowCoachSwitcher = APP_MODE === "dual";
+    coachSessionInline.hidden = !shouldShowCoachSwitcher;
+    coachSessionInline.style.display = shouldShowCoachSwitcher ? "" : "none";
+  }
+  const coachSessionBlock = els.coachSessionName?.closest(".student-manager-block");
+  if (coachSessionBlock) {
+    const showCoachSessionBlock = APP_MODE !== "admin";
+    coachSessionBlock.hidden = !showCoachSessionBlock;
+    coachSessionBlock.style.display = showCoachSessionBlock ? "" : "none";
+  }
+  if (els.coachAuthShell) {
+    const showCoachAuthShell = APP_MODE === "coach";
+    els.coachAuthShell.hidden = !showCoachAuthShell;
+    els.coachAuthShell.style.display = showCoachAuthShell ? "" : "none";
+  }
+  if (els.coachStudentLinksCard) {
+    const showStudentLinks = APP_MODE !== "admin";
+    els.coachStudentLinksCard.hidden = !showStudentLinks;
+    els.coachStudentLinksCard.style.display = showStudentLinks ? "" : "none";
+  }
+  if (els.historyImportCard) {
+    const showImport = APP_MODE !== "admin";
+    els.historyImportCard.hidden = !showImport;
+    els.historyImportCard.style.display = showImport ? "" : "none";
+  }
+
+  applyCoachTabVisibility();
+
+  if (APP_MODE === "coach" || APP_MODE === "admin") {
+    switchMainPanel("coach-panel");
+  } else if (APP_MODE === "student") {
+    switchMainPanel("student-panel");
+  }
+  if (APP_MODE === "admin") {
+    if (coachHeaderKicker) coachHeaderKicker.textContent = "管理者控制台";
+    if (coachHeaderTitle) coachHeaderTitle.textContent = "人員管理者控制台";
+    if (coachHeaderCopy) coachHeaderCopy.textContent = "管理教練、管理學生，並指派學生的主要教練。";
+    switchCoachPanel("coach-coaches");
+  } else {
+    if (coachHeaderKicker) coachHeaderKicker.textContent = "教練工作台";
+    if (coachHeaderTitle) coachHeaderTitle.textContent = "教練課表與紀錄管理";
+    if (coachHeaderCopy) coachHeaderCopy.textContent = "建立課表、管理學生、查看今日紀錄與歷史資料。";
+  }
+
+  if (APP_MODE === "coach") {
+    syncCoachAccessUI();
+  }
+  if (APP_MODE === "student") {
+    syncStudentAccessUI();
+  }
+}
+
+function handleStorageSync(event) {
+  if (event.key !== STORAGE_KEY) {
+    return;
+  }
+
+  const activeCoachPanel = els.coachPanels.find((panel) => panel.classList.contains("is-active"))?.id || (APP_MODE === "admin" ? "coach-coaches" : "coach-editor");
+  const activeMainPanel = els.panels.find((panel) => panel.classList.contains("is-active"))?.id || (APP_MODE === "student" ? "student-panel" : "coach-panel");
+
+  hydrateFromStorage();
+  cleanupRedundantBlankPrograms();
+
+  if (APP_MODE === "admin") {
+    refreshAdminWorkspace();
+  } else {
+    refreshCoachWorkspace();
+    refreshStudentWorkspace();
+  }
+
+  switchMainPanel(activeMainPanel);
+  switchCoachPanel(activeCoachPanel);
+  if (APP_MODE === "coach") {
+    syncCoachAccessUI();
+  }
+  if (APP_MODE === "student") {
+    syncStudentAccessUI();
+  }
+  applyCoachViewMode();
+  applyStudentViewMode();
+  applyAppMode();
+}
+
+function switchCoachPanel(panelId) {
+  const targetPanel = els.coachPanels.find((panel) => panel.id === panelId);
+  if (targetPanel?.dataset.available === "false") {
+    return;
+  }
+  els.coachTabs.forEach((button) => {
+    button.classList.toggle("is-active", button.dataset.coachTab === panelId && button.style.display !== "none");
+  });
+  els.coachPanels.forEach((panel) => {
+    const shouldActivate = panel.id === panelId && panel.dataset.available !== "false";
+    panel.classList.toggle("is-active", shouldActivate);
+  });
+  if (panelId !== "coach-history") {
+    coachHistoryOpened = false;
+  }
+  if (panelId === "coach-coaches") {
+    renderCoachRoster();
+  }
+  if (panelId === "coach-students") {
+    renderCoachStudentRoster();
+  }
+  applyCoachHistoryVisibility();
+  if (APP_MODE === "coach") {
+    syncCoachAccessUI();
+  }
+}
+
+function handleCurrentCoachChange() {
+  if (!els.currentCoachSelect?.value) {
+    return;
+  }
+  state.currentCoachId = els.currentCoachSelect.value;
+  persistState();
+  renderCurrentCoachOptions();
+  renderCoachRoster();
+  editingProgramId = getDefaultEditingProgramId();
+  seedEditorFromProgram(editingProgramId);
+  renderProgramLibrary();
+  renderCoachStudentLinks();
+  renderCoachStudentRoster();
+  renderCoachRoster();
+  renderCoachToday();
+  renderCoachHistoryFilters();
+  renderCoachHistory();
+  renderCoachRoster();
+  renderStudentProgramOptions();
+  renderStudentHistoryFilters();
+  renderStudentHistory();
+  renderStudentSummary();
+}
+
+function createBlankProgram() {
+  const today = new Date().toISOString().slice(0, 10);
+  const currentCoach = getCurrentCoach();
+  const program = {
+    id: `program-${Date.now()}`,
+    code: "",
+    date: today,
+    title: "",
+    coachId: currentCoach?.id || "",
+    coachName: currentCoach?.name || "",
+    notes: "",
+    published: false,
+    createdAt: timestampNow()
+  };
+  state.programs.unshift(program);
+  persistState();
+  return program;
+}
+
+function seedEditorFromProgram(programId) {
+  if (!els.programItemsBody || !els.programCode || !els.programDate || !els.coachName || !els.programNotes) {
+    return;
+  }
+
+  if (!programId) {
+    els.programCode.value = "";
+    els.programDate.value = new Date().toISOString().slice(0, 10);
+    els.coachName.value = getCurrentCoach()?.name || "";
+    els.programNotes.value = "";
+    els.programItemsBody.innerHTML = "";
+    return;
+  }
+
+  const program = state.programs.find((item) => item.id === programId) || createBlankProgram();
+  const items = getProgramItems(program.id);
+
+  els.programCode.value = program.code || "";
+  els.programDate.value = program.date || new Date().toISOString().slice(0, 10);
+  els.coachName.value = program.coachName || "";
+  els.programNotes.value = program.notes || "";
+
+  els.programItemsBody.innerHTML = "";
+  if (items.length) {
+    items.forEach((item) => addProgramItemRow(item));
+  } else {
+    addProgramItemRow();
+    addProgramItemRow({ category: "\u4e3b\u9805\u76ee", targetSets: 5, targetType: "reps", targetValue: 5 });
+    addProgramItemRow({ category: "\u8f14\u52a9\u9805", targetSets: 4, targetType: "time", targetValue: 60 });
+    syncSortNumbers();
+  }
+}
+
+function addProgramItemRow(item = {}) {
+  const fragment = els.programItemTemplate.content.cloneNode(true);
+  const row = fragment.querySelector("tr");
+  const category = fragment.querySelector(".category-input");
+  const exercise = fragment.querySelector(".exercise-input");
+  const sets = fragment.querySelector(".sets-input");
+  const type = fragment.querySelector(".type-input");
+  const value = fragment.querySelector(".value-input");
+  const note = fragment.querySelector(".item-note-input");
+  const sort = fragment.querySelector(".sort-input");
+
+  category.value = item.category || "\u7206\u767c\u529b";
+  exercise.value = item.exercise || "";
+  sets.value = item.targetSets || 4;
+  type.value = item.targetType || "reps";
+  value.value = item.targetType === "rm" ? "" : (item.targetValue || 8);
+  note.value = item.itemNote || "";
+  sort.value = item.sortOrder || els.programItemsBody.children.length + 1;
+
+  [category, exercise, sets, type, value, note, sort].forEach((input) => {
+    input.addEventListener("input", () => {
+      syncSortNumbers();
+      syncEditorPreviewState();
+    });
+    input.addEventListener("change", () => {
+      syncSortNumbers();
+      syncEditorPreviewState();
+    });
+  });
+
+  syncProgramItemRowState(row);
+  type.addEventListener("change", () => {
+    syncProgramItemRowState(row);
+  });
+
+  fragment.querySelector(".remove-item").addEventListener("click", () => {
+    row.remove();
+    syncSortNumbers();
+    syncEditorPreviewState();
+  });
+
+  els.programItemsBody.appendChild(fragment);
+}
+
+function syncProgramItemRowState(row) {
+  const typeInput = row.querySelector(".type-input");
+  const valueInput = row.querySelector(".value-input");
+
+  if (typeInput.value === "rm") {
+    valueInput.value = "";
+    valueInput.disabled = true;
+    valueInput.placeholder = "RM";
+    return;
+  }
+
+  valueInput.disabled = false;
+  valueInput.placeholder = typeInput.value === "time" ? "\u79d2\u6578" : "\u6b21\u6578";
+  if (!valueInput.value) {
+    valueInput.value = typeInput.value === "time" ? 60 : 8;
+  }
+}
+
+function addStudentProgramEditRow(item = {}) {
+  const useMobile = studentViewMode === "card";
+
+  if (useMobile) {
+    const card = document.createElement("article");
+    card.className = "student-entry-card student-edit-mobile-card";
+    card.innerHTML = `
+      <div class="student-entry-fields">
+        <label class="mini-field">
+          <span>\u5206\u985e</span>
+          <select class="student-edit-category">
+            <option value="\u7206\u767c\u529b">\u7206\u767c\u529b</option>
+            <option value="\u4e3b\u9805\u76ee">\u4e3b\u9805\u76ee</option>
+            <option value="\u8f14\u52a9\u9805">\u8f14\u52a9\u9805</option>
+          </select>
+        </label>
+        <label class="mini-field">
+          <span>\u52d5\u4f5c\u540d\u7a31</span>
+          <input type="text" class="student-edit-exercise" placeholder="\u8acb\u8f38\u5165\u52d5\u4f5c\u540d\u7a31">
+        </label>
+        <div class="card-inline-fields">
+          <label class="mini-field">
+            <span>\u7d44\u6578</span>
+            <input type="number" class="student-edit-sets" min="1" value="4">
+          </label>
+          <label class="mini-field">
+            <span>\u985e\u578b</span>
+            <select class="student-edit-type">
+              <option value="reps">reps</option>
+              <option value="time">time</option>
+              <option value="rm">rm</option>
+            </select>
+          </label>
+        </div>
+        <label class="mini-field">
+          <span>\u6b21\u6578</span>
+          <input type="number" class="student-edit-value" min="1" value="8">
+        </label>
+        <button type="button" class="icon-button remove-student-edit-row">\u522a\u9664</button>
+      </div>
+    `;
+
+    const category = card.querySelector(".student-edit-category");
+    const exercise = card.querySelector(".student-edit-exercise");
+    const sets = card.querySelector(".student-edit-sets");
+    const type = card.querySelector(".student-edit-type");
+    const value = card.querySelector(".student-edit-value");
+
+    category.value = item.category || "\u4e3b\u9805\u76ee";
+    exercise.value = item.exercise || "";
+    sets.value = item.targetSets || 4;
+    type.value = item.targetType || "reps";
+    value.value = item.targetType === "rm" ? "" : (item.targetValue || 8);
+
+    const sync = () => {
+      if (type.value === "rm") {
+        value.value = "";
+        value.disabled = true;
+        value.placeholder = "RM";
+        return;
+      }
+      value.disabled = false;
+      value.placeholder = type.value === "time" ? "\u79d2\u6578" : "\u6b21\u6578";
+      if (!value.value) {
+        value.value = type.value === "time" ? 60 : 8;
+      }
+    };
+
+    type.addEventListener("change", sync);
+    card.querySelector(".remove-student-edit-row").addEventListener("click", () => card.remove());
+    sync();
+    els.studentEditMobileList.appendChild(card);
+    return;
+  }
+
+  const fragment = els.studentProgramEditRowTemplate.content.cloneNode(true);
+  const row = fragment.querySelector("tr");
+  const category = fragment.querySelector(".student-edit-category");
+  const exercise = fragment.querySelector(".student-edit-exercise");
+  const sets = fragment.querySelector(".student-edit-sets");
+  const type = fragment.querySelector(".student-edit-type");
+  const value = fragment.querySelector(".student-edit-value");
+
+  category.value = item.category || "\u4e3b\u9805\u76ee";
+  exercise.value = item.exercise || "";
+  sets.value = item.targetSets || 4;
+  type.value = item.targetType || "reps";
+  value.value = item.targetType === "rm" ? "" : (item.targetValue || 8);
+
+  const sync = () => {
+    if (type.value === "rm") {
+      value.value = "";
+      value.disabled = true;
+      value.placeholder = "RM";
+      return;
+    }
+
+    value.disabled = false;
+    value.placeholder = type.value === "time" ? "\u79d2\u6578" : "\u6b21\u6578";
+    if (!value.value) {
+      value.value = type.value === "time" ? 60 : 8;
+    }
+  };
+
+  type.addEventListener("change", sync);
+  fragment.querySelector(".remove-student-edit-row").addEventListener("click", () => {
+    row.remove();
+  });
+  sync();
+  els.studentProgramEditBody.appendChild(fragment);
+}
+
+function syncSortNumbers() {
+  [...els.programItemsBody.querySelectorAll("tr")].forEach((row, index) => {
+    const sortInput = row.querySelector(".sort-input");
+    if (!Number(sortInput.value)) {
+      sortInput.value = index + 1;
+    }
+  });
+}
+
+function collectProgramPayload() {
+  const program = {
+    id: editingProgramId || `program-${Date.now()}`,
+    code: els.programCode.value.trim(),
+    date: els.programDate.value,
+    coachId: getCurrentCoach()?.id || "",
+    coachName: getCurrentCoach()?.name || els.coachName.value.trim(),
+    notes: els.programNotes.value.trim(),
+    published: false,
+    createdAt: timestampNow()
+  };
+
+  const items = [...els.programItemsBody.querySelectorAll("tr")]
+    .map((row, index) => ({
+      id: row.dataset.itemId || `item-${program.id}-${index + 1}`,
+      programId: program.id,
+      sortOrder: Number(row.querySelector(".sort-input").value || index + 1),
+      category: row.querySelector(".category-input").value,
+      exercise: row.querySelector(".exercise-input").value.trim(),
+      targetSets: Number(row.querySelector(".sets-input").value || 0),
+      targetType: row.querySelector(".type-input").value,
+      targetValue: row.querySelector(".type-input").value === "rm"
+        ? 0
+        : Number(row.querySelector(".value-input").value || 0),
+      itemNote: row.querySelector(".item-note-input").value.trim()
+    }))
+    .filter((item) => item.exercise && item.targetSets > 0 && (item.targetType === "rm" || item.targetValue > 0))
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+
+  return { program, items };
+}
+
+async function saveProgram() {
+  const { program, items } = collectProgramPayload();
+
+  if (!program.code || !program.date || !items.length) {
+    window.alert("\u8acb\u5148\u5b8c\u6210\u8ab2\u8868\u4ee3\u78bc\u3001\u65e5\u671f\u8207\u81f3\u5c11\u4e00\u7b46\u8ab2\u8868\u9805\u76ee\u3002");
+    return;
+  }
+
+  if (IS_CLOUD_MODE) {
+    try {
+      await saveProgramToCloud(program, items);
+    } catch (error) {
+      console.warn("Cloud saveProgram failed, falling back to local state:", error);
+      upsertProgram(program);
+      state.programItems = state.programItems.filter((item) => item.programId !== program.id).concat(items);
+      persistState();
+    }
+  } else {
+    upsertProgram(program);
+    state.programItems = state.programItems.filter((item) => item.programId !== program.id).concat(items);
+    persistState();
+  }
+
+  editingProgramId = program.id;
+  renderCoachExerciseOptions();
+  syncEditorPreviewState();
+  renderProgramLibrary();
+  renderCoachRoster();
+  renderCoachHistoryFilters();
+  renderCoachStudentLinks();
+  renderStudentProgramOptions();
+  renderStudentHistoryFilters();
+  openProgramPreviewModal();
+}
+
+async function publishProgram() {
+  const { program, items } = collectProgramPayload();
+
+  if (!program.code || !program.date || !items.length) {
+    window.alert("\u8acb\u5148\u5b8c\u6210\u8ab2\u8868\u4ee3\u78bc\u3001\u65e5\u671f\u8207\u81f3\u5c11\u4e00\u7b46\u8ab2\u8868\u9805\u76ee\u3002");
+    return;
+  }
+
+  if (IS_CLOUD_MODE) {
+    try {
+      await publishProgramToCloud(program, items);
+    } catch (error) {
+      console.warn("Cloud publishProgram failed, falling back to local state:", error);
+      state.programs = state.programs.map((item) => ({
+        ...item,
+        published: item.id === program.id ? true : false
+      }));
+      upsertProgram({ ...program, published: true });
+      state.programItems = state.programItems.filter((item) => item.programId !== program.id).concat(items);
+      persistState();
+    }
+  } else {
+    state.programs = state.programs.map((item) => ({
+      ...item,
+      published: item.id === program.id ? true : false
+    }));
+
+    upsertProgram({ ...program, published: true });
+    state.programItems = state.programItems.filter((item) => item.programId !== program.id).concat(items);
+    persistState();
+  }
+
+  editingProgramId = program.id;
+  if (els.coachTodayDate) {
+    els.coachTodayDate.value = program.date;
+  }
+  renderCoachExerciseOptions();
+  syncEditorPreviewState();
+  renderProgramLibrary();
+  renderCoachRoster();
+  renderCoachToday();
+  renderCoachHistoryFilters();
+  renderCoachStudentLinks();
+  renderStudentProgramOptions();
+  renderStudentHistoryFilters();
+  renderStudentSummary();
+  window.alert("\u8ab2\u8868\u5df2\u767c\u5e03\u3002\u5b78\u751f\u7aef\u73fe\u5728\u53ef\u4ee5\u8f09\u5165\u9019\u4efd\u8ab2\u8868\u3002");
+}
+
+function upsertProgram(program) {
+  const index = state.programs.findIndex((item) => item.id === program.id);
+  if (index >= 0) {
+    state.programs[index] = { ...state.programs[index], ...program };
+  } else {
+    state.programs.unshift(program);
+  }
+}
+
+function renderProgramLibrary() {
+  if (!els.programLibraryList) {
+    return;
+  }
+
+  const sortBy = els.programLibrarySort?.value || "date-desc";
+  const programs = [...getCoachScopedPrograms()].sort((a, b) => comparePrograms(a, b, sortBy));
+  const keyword = (els.programLibrarySearch?.value || "").trim().toLowerCase();
+  const filteredPrograms = programs.filter((program) => {
+    if (!keyword) {
+      return true;
+    }
+    return (
+      String(program.code || "").toLowerCase().includes(keyword) ||
+      String(program.date || "").toLowerCase().includes(keyword)
+    );
+  });
+
+  if (els.programLibraryCount) {
+    els.programLibraryCount.textContent = `共 ${filteredPrograms.length} / ${programs.length} 份`;
+  }
+
+  const visiblePrograms = filteredPrograms.slice(0, programLibraryVisibleCount);
+  const hasMorePrograms = filteredPrograms.length > programLibraryVisibleCount;
+  const canCollapsePrograms = filteredPrograms.length > 6 && programLibraryVisibleCount >= filteredPrograms.length;
+
+  els.programLibraryList.innerHTML = visiblePrograms.length
+    ? visiblePrograms
+        .map((program) => {
+          const items = getProgramItems(program.id);
+          const itemCount = items.length;
+          const itemPreview = items.length
+            ? items
+                .map((item) => `${item.category}｜${item.exercise}｜${formatTarget(item)}`)
+                .join("<br>")
+            : "目前沒有課表項目";
+          const isExpanded = expandedProgramLibraryId === program.id;
+          return `
+            <article class="coach-link-card">
+              <div class="coach-link-top">
+                <div>
+                  <h4>${program.code || "未命名課表"}</h4>
+                  <p class="coach-student-meta">${program.date || "-"}｜${itemCount} 個項目</p>
+                </div>
+                <div class="roster-pill-stack">
+                  <span class="status-pill ${program.published ? "is-success" : "is-muted"}">${program.published ? "目前課表" : "未發布"}</span>
+                </div>
+              </div>
+              <div class="coach-program-preview ${isExpanded ? "is-expanded" : ""}">${itemPreview}</div>
+              <div class="coach-link-actions">
+                <button class="ghost-button" type="button" data-toggle-program-preview="${program.id}">${isExpanded ? "收起項目" : "查看項目"}</button>
+                <button class="ghost-button" type="button" data-load-program="${program.id}">載入編輯</button>
+                <button class="ghost-button" type="button" data-publish-existing-program="${program.id}">設為目前課表</button>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `<div class="empty-card">目前沒有符合條件的歷史課表。</div>`;
+
+  if (els.programLibraryMore) {
+    const shouldShowButton = filteredPrograms.length > 6;
+    els.programLibraryMore.classList.toggle("is-hidden", !shouldShowButton);
+    els.programLibraryMore.textContent = hasMorePrograms ? "顯示更多" : "收合";
+  }
+}
+
+function toggleProgramLibraryVisibleCount() {
+  const sortBy = els.programLibrarySort?.value || "date-desc";
+  const keyword = (els.programLibrarySearch?.value || "").trim().toLowerCase();
+  const filteredCount = [...state.programs]
+    .sort((a, b) => comparePrograms(a, b, sortBy))
+    .filter((program) => {
+      if (!keyword) {
+        return true;
+      }
+      return (
+        String(program.code || "").toLowerCase().includes(keyword) ||
+        String(program.date || "").toLowerCase().includes(keyword)
+      );
+    }).length;
+
+  if (programLibraryVisibleCount >= filteredCount) {
+    programLibraryVisibleCount = 6;
+  } else {
+    programLibraryVisibleCount += 6;
+  }
+
+  renderProgramLibrary();
+}
+
+function comparePrograms(a, b, sortBy) {
+  const dateA = String(a.date || "");
+  const dateB = String(b.date || "");
+  const codeA = String(a.code || "");
+  const codeB = String(b.code || "");
+  const createdA = String(a.createdAt || "");
+  const createdB = String(b.createdAt || "");
+
+  if (sortBy === "date-asc") {
+    const dateCompare = dateA.localeCompare(dateB);
+    if (dateCompare !== 0) {
+      return dateCompare;
+    }
+    return createdA.localeCompare(createdB);
+  }
+
+  if (sortBy === "code-asc") {
+    const codeCompare = codeA.localeCompare(codeB, "zh-Hant", { numeric: true, sensitivity: "base" });
+    if (codeCompare !== 0) {
+      return codeCompare;
+    }
+    return dateB.localeCompare(dateA);
+  }
+
+  if (sortBy === "code-desc") {
+    const codeCompare = codeB.localeCompare(codeA, "zh-Hant", { numeric: true, sensitivity: "base" });
+    if (codeCompare !== 0) {
+      return codeCompare;
+    }
+    return dateB.localeCompare(dateA);
+  }
+
+  const dateCompare = dateB.localeCompare(dateA);
+  if (dateCompare !== 0) {
+    return dateCompare;
+  }
+  return createdB.localeCompare(createdA);
+}
+
+function handleProgramLibraryAction(event) {
+  const button = event.target.closest("[data-toggle-program-preview], [data-load-program], [data-publish-existing-program]");
+  if (!button) {
+    return;
+  }
+
+  if (button.dataset.toggleProgramPreview) {
+    const programId = button.dataset.toggleProgramPreview;
+    expandedProgramLibraryId = expandedProgramLibraryId === programId ? null : programId;
+    renderProgramLibrary();
+    return;
+  }
+
+  if (button.dataset.loadProgram) {
+    const programId = button.dataset.loadProgram;
+    editingProgramId = programId;
+    seedEditorFromProgram(programId);
+    syncEditorPreviewState();
+    switchCoachPanel("coach-editor");
+    document.querySelector("#coach-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  const publishProgramId = button.dataset.publishExistingProgram;
+  const program = state.programs.find((item) => item.id === publishProgramId);
+  if (!program) {
+    return;
+  }
+
+  state.programs = state.programs.map((item) => ({
+    ...item,
+    published: item.id === publishProgramId
+  }));
+  editingProgramId = publishProgramId;
+  persistState();
+  if (els.coachTodayDate) {
+    els.coachTodayDate.value = program.date;
+  }
+  seedEditorFromProgram(publishProgramId);
+  syncEditorPreviewState();
+  renderProgramLibrary();
+  renderCoachToday();
+  renderCoachStudentLinks();
+  renderCoachStudentRoster();
+  renderStudentProgramOptions();
+  renderStudentSummary();
+  switchCoachPanel("coach-editor");
+  window.alert("已設為目前課表。");
+}
+
+function renderPreview() {
+  const { program, items } = collectProgramPayload();
+  els.modalPreviewCode.textContent = program.code || "\u8acb\u5148\u8f38\u5165\u8ab2\u8868\u4ee3\u78bc";
+
+  if (!items.length) {
+    els.modalPreviewBody.innerHTML = `<div class="program-preview-empty">\u8acb\u5148\u8f38\u5165\u8ab2\u8868\u5167\u5bb9\u3002</div>`;
+    return;
+  }
+
+  const previewMarkup = items
+    .map(
+      (item, index) => `
+        <div class="preview-row ${index % 2 === 0 ? "is-accent" : ""}">
+          <div class="preview-cell category">${item.category}</div>
+          <div class="preview-cell exercise">${item.exercise}</div>
+          <div class="preview-cell target">${formatTarget(item)}</div>
+        </div>
+      `
+    )
+    .join("");
+
+  els.modalPreviewBody.innerHTML = previewMarkup;
+}
+
+function syncEditorPreviewState() {
+  renderPreview();
+}
+
+function renderStudentProgramOptions() {
+  if (!els.studentProgramSelect) {
+    return;
+  }
+  const student = getSelectedStudent();
+  if (student?.status === "inactive") {
+    els.studentProgramSelect.innerHTML = `<option value="">\u8a72\u5b78\u751f\u5df2\u505c\u7528</option>`;
+    return;
+  }
+
+  const studentCoachId = student?.primaryCoachId || "";
+  const assignedCoach = state.coaches.find((coach) => coach.id === studentCoachId);
+  const programs = [...state.programs]
+    .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const currentValue = els.studentProgramSelect.value;
+
+  els.studentProgramSelect.innerHTML = programs.length
+    ? programs
+        .map((program) => {
+          const label = `${program.date} | ${program.code || "\u76ee\u524d\u8ab2\u8868"}${assignedCoach?.name ? ` | ${assignedCoach.name}` : ""}${program.published ? " | \u76ee\u524d\u8ab2\u8868" : ""}`;
+          return `<option value="${program.id}">${label}</option>`;
+        })
+        .join("")
+    : `<option value="">${assignedCoach?.name ? `${assignedCoach.name}\u76ee\u524d\u6c92\u6709\u8ab2\u8868` : "\u76ee\u524d\u6c92\u6709\u8ab2\u8868"}</option>`;
+
+  if (programs.length) {
+    const published = getPublishedProgram(studentCoachId);
+    const fallbackProgram = published || programs[0];
+    els.studentProgramSelect.value =
+      programs.some((program) => program.id === currentValue)
+        ? currentValue
+        : fallbackProgram.id;
+  }
+}
+
+function renderStudentSummary() {
+  const student = getSelectedStudent();
+  const program = getSelectedStudentProgram();
+  const assignedCoach = state.coaches.find((coach) => coach.id === (student?.primaryCoachId || ""));
+  const assignedCoachName = assignedCoach?.name || "\u5c1a\u672a\u6307\u6d3e";
+
+  if (!student) {
+    els.studentSummary.innerHTML = `<p class="muted-copy">\u8acb\u5148\u8f38\u5165\u5c08\u5c6c\u4ee3\u78bc\uff0c\u6216\u76f4\u63a5\u4f7f\u7528\u4f60\u7684\u5c08\u5c6c\u9023\u7d50\u3002</p>`;
+    els.studentActiveCopy.textContent = "";
+    els.studentMobileSubmitBar.classList.remove("is-visible");
+    els.studentMobileTools.classList.remove("is-visible");
+    syncStudentAccessUI();
+    return;
+  }
+
+  if (!program) {
+    els.studentSummary.innerHTML = `
+      <p><strong>${student.name}</strong></p>
+      <p>\u6559\u7df4\uff1a${assignedCoachName}</p>
+      <p>\u5c08\u5c6c\u4ee3\u78bc\uff1a${student.accessCode}</p>
+      <p class="muted-copy">\u76ee\u524d\u9084\u6c92\u6709 ${assignedCoachName} \u7684\u53ef\u8f09\u5165\u8ab2\u8868\u3002</p>
+    `;
+    els.studentActiveCopy.textContent = `${student.name}\uff5c${assignedCoachName}`;
+    els.studentMobileSubmitBar.classList.remove("is-visible");
+    els.studentMobileTools.classList.remove("is-visible");
+    syncStudentAccessUI();
+    return;
+  }
+
+  els.studentSummary.innerHTML = `
+    <p><strong>${student.name}</strong></p>
+    <p>\u6559\u7df4\uff1a${assignedCoachName}</p>
+    <p>\u5c08\u5c6c\u4ee3\u78bc\uff1a${student.accessCode}</p>
+    <p>\u8ab2\u8868\uff1a${program.code || "\u76ee\u524d\u8ab2\u8868"}</p>
+    <p>${program.date}${program.published ? "\uff5c\u5df2\u767c\u5e03" : "\uff5c\u672a\u767c\u5e03"}</p>
+  `;
+  els.studentActiveCopy.textContent = `${student.name}\uff5c${assignedCoachName}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
+  syncStudentAccessUI();
+}
+
+function renderCoachSummary() {
+  if (!els.coachSummary) {
+    return;
+  }
+  const coach = getCurrentCoach();
+  if (!coach || APP_MODE !== "coach") {
+    els.coachSummary.innerHTML = `<p class="muted-copy">請先輸入教練代碼，或直接使用你的專屬連結。</p>`;
+    return;
+  }
+
+  els.coachSummary.innerHTML = `
+    <p><strong>${coach.name}</strong></p>
+    <p>教練代碼：${coach.accessCode || "-"}</p>
+    <p>身份已確認，已載入你的教練工作台。</p>
+  `;
+}
+
+function resetCoachAccess() {
+  authenticatedCoachId = "";
+  if (els.coachAccessCode) {
+    els.coachAccessCode.value = "";
+  }
+  renderCoachSummary();
+  refreshCoachWorkspace();
+  if (els.coachAccessCode) {
+    els.coachAccessCode.focus();
+  }
+}
+
+function syncCoachAccessUI() {
+  if (APP_MODE !== "coach") {
+    return;
+  }
+
+  const hasCoach = Boolean(getCurrentCoach());
+  const coachAuthShell = els.coachAuthShell;
+  const coachHeader = document.querySelector("#coach-panel .panel-header");
+  const coachTabs = document.querySelector("#coach-panel .sub-tabs");
+  const coachPanelsWrap = Array.from(document.querySelectorAll("#coach-panel .sub-panel"));
+  const coachActiveBar = els.coachActiveBar;
+
+  if (coachAuthShell) {
+    coachAuthShell.hidden = hasCoach;
+    coachAuthShell.style.display = hasCoach ? "none" : "";
+    coachAuthShell.classList.toggle("is-collapsed", hasCoach);
+  }
+
+  if (coachHeader) {
+    coachHeader.style.display = hasCoach ? "" : "none";
+  }
+
+  if (coachActiveBar) {
+    coachActiveBar.hidden = !hasCoach;
+    coachActiveBar.classList.toggle("is-hidden", !hasCoach);
+    coachActiveBar.style.display = hasCoach ? "" : "none";
+  }
+
+  if (els.coachActiveCopy) {
+    const coach = getCurrentCoach();
+    els.coachActiveCopy.textContent = hasCoach && coach
+      ? `${coach.name}｜${coach.accessCode || "-"}`
+      : "";
+  }
+
+  if (coachTabs) {
+    coachTabs.style.display = hasCoach ? "" : "none";
+  }
+
+  coachPanelsWrap.forEach((panel) => {
+    panel.style.display = hasCoach && panel.classList.contains("is-active") ? "" : "none";
+    panel.hidden = !hasCoach || !panel.classList.contains("is-active");
+  });
+}
+
+async function confirmCoachAccess() {
+  const accessValue = els.coachAccessCode?.value || "";
+  let matchedCoach = null;
+  if (IS_CLOUD_MODE) {
+    try {
+      matchedCoach = await resolveCoachAccessFromCloud(accessValue);
+    } catch (error) {
+      console.warn("Coach cloud login failed, falling back to local state:", error);
+      matchedCoach = resolveCoachByAccess(accessValue);
+    }
+  } else {
+    matchedCoach = resolveCoachByAccess(accessValue);
+  }
+  authenticatedCoachId = matchedCoach?.id || "";
+
+  if (!matchedCoach) {
+    renderCoachSummary();
+    window.alert("找不到這組教練代碼，請重新確認後再試一次。");
+    return false;
+  }
+
+  if (matchedCoach.status === "inactive") {
+    authenticatedCoachId = "";
+    renderCoachSummary();
+    window.alert("這位教練帳號目前已停用。");
+    return false;
+  }
+
+  if (els.coachAccessCode) {
+    els.coachAccessCode.value = matchedCoach.accessCode || els.coachAccessCode.value;
+  }
+  state.currentCoachId = matchedCoach.id;
+  if (IS_CLOUD_MODE) {
+    try {
+      const payload = await callCloudApi("touchCoach", { coachId: matchedCoach.id });
+      applyCloudPayloadToState(payload);
+    } catch {
+      markCoachUsed(matchedCoach.id);
+    }
+  } else {
+    markCoachUsed(matchedCoach.id);
+  }
+  refreshCoachWorkspace();
+  return true;
+}
+
+async function confirmStudentAccess() {
+  const accessValue = els.studentAccessCode.value;
+  let matchedStudent = null;
+  if (IS_CLOUD_MODE) {
+    try {
+      matchedStudent = await resolveStudentAccessFromCloud(accessValue);
+    } catch (error) {
+      console.warn("Student cloud login failed, falling back to local state:", error);
+      matchedStudent = resolveStudentByAccess(accessValue);
+    }
+  } else {
+    matchedStudent = resolveStudentByAccess(accessValue);
+  }
+  currentStudentId = matchedStudent?.id || "";
+
+  if (!matchedStudent) {
+    els.studentProgramStatus.textContent = "\u8eab\u4efd\u672a\u78ba\u8a8d";
+    els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</td></tr>`;
+    els.studentCardList.innerHTML = `<div class="empty-card">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</div>`;
+    renderStudentSummary();
+    renderStudentHistoryFilters();
+    renderStudentHistory();
+    window.alert("\u627e\u4e0d\u5230\u9019\u7d44\u5c08\u5c6c\u4ee3\u78bc\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u5f8c\u518d\u8a66\u4e00\u6b21\u3002");
+    return false;
+  }
+
+  if (matchedStudent.status === "inactive") {
+    currentStudentId = "";
+    window.alert("\u9019\u4f4d\u5b78\u751f\u5e33\u865f\u76ee\u524d\u5df2\u505c\u7528\uff0c\u8acb\u806f\u7d61\u6559\u7df4\u3002");
+    return false;
+  }
+
+  els.studentAccessCode.value = matchedStudent.accessCode || els.studentAccessCode.value;
+  if (IS_CLOUD_MODE) {
+    try {
+      const payload = await callCloudApi("touchStudent", { studentId: matchedStudent.id });
+      applyCloudPayloadToState(payload);
+    } catch {
+      markStudentUsed(matchedStudent.id);
+    }
+  } else {
+    markStudentUsed(matchedStudent.id);
+  }
+  els.studentProgramStatus.textContent = `${matchedStudent.name} \u8eab\u4efd\u5df2\u78ba\u8a8d`;
+  if (els.studentPanelViewToggle) {
+    els.studentPanelViewToggle.hidden = false;
+    els.studentPanelViewToggle.classList.remove("is-hidden");
+    els.studentPanelViewToggle.style.display = "";
+  }
+  renderStudentProgramOptions();
+  renderStudentSummary();
+  renderStudentHistoryFilters();
+  renderStudentHistory();
+  syncStudentAccessUI();
+  return true;
+}
+
+async function confirmStudentAccessAndLoadProgram() {
+  const isConfirmed = await confirmStudentAccess();
+  if (!isConfirmed) {
+    return;
+  }
+  loadStudentProgram();
+}
+
+function loadStudentProgram(options = {}) {
+  const { silent = false } = options;
+  const program = getSelectedStudentProgram();
+  const student = getSelectedStudent();
+
+  if (!student) {
+    if (!silent) {
+      window.alert("\u8acb\u5148\u78ba\u8a8d\u5b78\u751f\u8eab\u4efd\u3002");
+    }
+    return;
+  }
+
+  if (!program) {
+    els.studentProgramStatus.textContent = "\u6c92\u6709\u53ef\u8f09\u5165\u8ab2\u8868";
+    els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u76ee\u524d\u6c92\u6709\u53ef\u4f7f\u7528\u7684\u8ab2\u8868\u3002</td></tr>`;
+    els.studentCardList.innerHTML = `<div class="empty-card">\u76ee\u524d\u6c92\u6709\u53ef\u4f7f\u7528\u7684\u8ab2\u8868\u3002</div>`;
+    els.studentMobileSubmitBar.classList.remove("is-visible");
+    els.studentMobileTools.classList.remove("is-visible");
+    return;
+  }
+
+  loadedStudentEntries = getProgramItems(program.id).map((item) => ({
+    itemId: item.id,
+    category: item.category,
+    exercise: item.exercise,
+    targetSets: item.targetSets,
+    targetType: item.targetType,
+    targetValue: item.targetValue,
+    itemNote: item.itemNote,
+    referenceLog: findLatestReferenceLog(student.id, item)
+  }));
+
+  studentHistoryOpened = false;
+  studentSubmissionCompleted = false;
+  lastSubmittedLogs = [];
+  renderStudentProgramEntries();
+  els.studentProgramStatus.textContent = `${student.name}\uff5c\u5df2\u8f09\u5165 ${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
+  els.studentMobileSubmitBar.classList.toggle("is-visible", studentViewMode === "card" && loadedStudentEntries.length > 0);
+  els.studentMobileTools.classList.toggle("is-visible", studentViewMode === "card");
+  syncStudentAccessUI();
+}
+
+function buildEntryFields(entry, index) {
+  const recommendation = getRecommendedWeightText(entry);
+  if (entry.targetType === "time") {
+    return `
+      <div class="field-stack">
+        <label class="mini-field">
+          <span>\u5be6\u969b\u7d44\u6578</span>
+          <input type="number" min="0" value="${entry.targetSets}" placeholder="${entry.referenceLog?.actualSets || ""}" data-entry-index="${index}" data-field="actualSets">
+        </label>
+        <label class="mini-field">
+          <span>\u5099\u8a3b</span>
+          <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+        </label>
+      </div>
+    `;
+  }
+
+  if (entry.targetType === "rm") {
+    return `
+      <div class="field-stack">
+        <label class="mini-field">
+          <span>\u5be6\u969b\u91cd\u91cf</span>
+          <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+          ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
+        </label>
+        <label class="mini-field">
+          <span>\u5099\u8a3b</span>
+          <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+        </label>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="field-grid">
+      <label class="mini-field">
+        <span>\u91cd\u91cf</span>
+        <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+        ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
+      </label>
+      <label class="mini-field">
+        <span>\u7d44\u6578</span>
+        <input type="number" min="0" value="${entry.targetSets}" data-entry-index="${index}" data-field="actualSets">
+      </label>
+      <label class="mini-field">
+        <span>\u6b21\u6578</span>
+        <input type="number" min="0" value="${entry.targetValue}" data-entry-index="${index}" data-field="actualReps">
+      </label>
+      <label class="mini-field span-full">
+        <span>\u5099\u8a3b</span>
+        <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+      </label>
+    </div>
+  `;
+}
+
+function buildCardEntryFields(entry, index) {
+  const recommendation = getRecommendedWeightText(entry);
+  if (entry.targetType === "time") {
+    return `
+      <label class="mini-field">
+        <span>\u5be6\u969b\u7d44\u6578</span>
+        <input type="number" min="0" value="${entry.targetSets}" placeholder="${entry.referenceLog?.actualSets || ""}" data-entry-index="${index}" data-field="actualSets">
+      </label>
+      <label class="mini-field">
+        <span>\u5099\u8a3b</span>
+        <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+      </label>
+    `;
+  }
+
+  if (entry.targetType === "rm") {
+    return `
+      <label class="mini-field">
+        <span>\u5be6\u969b\u91cd\u91cf</span>
+        <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+        ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
+      </label>
+      <label class="mini-field">
+        <span>\u5099\u8a3b</span>
+        <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+      </label>
+    `;
+  }
+
+  return `
+    <label class="mini-field">
+      <span>\u91cd\u91cf</span>
+      <input type="number" min="0" step="0.5" placeholder="${entry.referenceLog?.actualWeight || "kg"}" data-entry-index="${index}" data-field="actualWeight">
+      ${recommendation ? `<small class="field-hint recommendation-hint">${recommendation}</small>` : ""}
+    </label>
+    <div class="card-inline-fields">
+      <label class="mini-field">
+        <span>\u7d44\u6578</span>
+        <input type="number" min="0" value="${entry.targetSets}" data-entry-index="${index}" data-field="actualSets">
+      </label>
+      <label class="mini-field">
+        <span>\u6b21\u6578</span>
+        <input type="number" min="0" value="${entry.targetValue}" data-entry-index="${index}" data-field="actualReps">
+      </label>
+    </div>
+    <label class="mini-field">
+      <span>\u5099\u8a3b</span>
+      <input type="text" placeholder="\u72c0\u6cc1\u3001\u611f\u53d7" data-entry-index="${index}" data-field="studentNote">
+    </label>
+  `;
+}
+
+function formatLogForSummary(log) {
+  return `
+    <article class="confirm-entry-card">
+      <div class="confirm-entry-top">
+        <span class="confirm-entry-category">${log.category}</span>
+        <span class="confirm-entry-target">${formatTarget(log)}</span>
+      </div>
+      <h4>${log.exercise}</h4>
+      <p class="confirm-entry-result">${formatActual(log)}</p>
+      <p class="confirm-entry-note">${log.studentNote || "-"}</p>
+    </article>
+  `;
+}
+
+function renderStudentProgramEntries() {
+  els.studentProgramBody.innerHTML = "";
+  els.studentCardList.innerHTML = "";
+  els.studentRecordedBanner.classList.toggle("is-hidden", !studentSubmissionCompleted);
+  els.editStudentProgram.textContent = studentSubmissionCompleted ? "\u67e5\u770b\u672c\u6b21\u8a13\u7df4\u7d00\u9304" : "\u7de8\u8f2f\u8ab2\u8868\u9805\u76ee";
+  els.editStudentProgramMobile.textContent = studentSubmissionCompleted ? "\u67e5\u770b\u672c\u6b21\u8a13\u7df4\u7d00\u9304" : "\u7de8\u8f2f\u8ab2\u8868\u9805\u76ee";
+
+  if (!loadedStudentEntries.length) {
+    if (studentSubmissionCompleted && lastSubmittedLogs.length) {
+      els.studentProgramBody.innerHTML = lastSubmittedLogs
+        .map(
+          (log) => `
+            <tr>
+              <td>${log.category}</td>
+              <td>${log.exercise}</td>
+              <td>${formatTarget(log)}</td>
+              <td>${formatActual(log)}</td>
+            </tr>
+          `
+        )
+        .join("");
+      els.studentCardList.innerHTML = `
+        <div class="empty-card success-state-card">\u8ab2\u8868\u5df2\u5b8c\u6210</div>
+        ${lastSubmittedLogs.map((log) => formatLogForSummary(log)).join("")}
+      `;
+    } else {
+      els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u8acb\u5148\u8f09\u5165\u4e00\u4efd\u8ab2\u8868\u3002</td></tr>`;
+      els.studentCardList.innerHTML = `<div class="empty-card">\u8acb\u5148\u8f09\u5165\u4e00\u4efd\u8ab2\u8868\u3002</div>`;
+    }
+    return;
+  }
+
+  loadedStudentEntries.forEach((entry, index) => {
+    const fragment = els.studentEntryTemplate.content.cloneNode(true);
+    const row = fragment.querySelector("tr");
+    row.dataset.index = index;
+    fragment.querySelector(".entry-category").textContent = entry.category;
+    fragment.querySelector(".entry-exercise").textContent = entry.exercise;
+    fragment.querySelector(".entry-target").textContent = formatTarget(entry);
+    fragment.querySelector(".entry-fields").innerHTML = buildEntryFields(entry, index);
+    els.studentProgramBody.appendChild(fragment);
+
+    const card = document.createElement("article");
+    card.className = "student-entry-card";
+    card.innerHTML = `
+      <div class="student-entry-top">
+        <span class="student-entry-category">${entry.category}</span>
+        <span class="student-entry-target">${formatTarget(entry)}</span>
+      </div>
+      <h4>${entry.exercise}</h4>
+      <div class="student-entry-fields">
+        ${buildCardEntryFields(entry, index)}
+      </div>
+    `;
+    els.studentCardList.appendChild(card);
+  });
+}
+
+function openSubmissionConfirm() {
+  const student = getSelectedStudent();
+  const program = getSelectedStudentProgram();
+
+  if (!student || !program) {
+    window.alert("\u8acb\u5148\u78ba\u8a8d\u5b78\u751f\u8eab\u4efd\u8207\u8ab2\u8868\u3002");
+    return;
+  }
+
+  if (!loadedStudentEntries.length) {
+    window.alert("\u8acb\u5148\u8f09\u5165\u4e00\u4efd\u8ab2\u8868\uff0c\u518d\u78ba\u8a8d\u672c\u6b21\u586b\u5beb\u5167\u5bb9\u3002");
+    return;
+  }
+
+  if (!validateSubmissionInputs()) {
+    els.studentProgramStatus.textContent = "\u8acb\u5148\u5b8c\u6210\u5fc5\u586b\u6b04\u4f4d";
+    return;
+  }
+
+  const alreadySubmitted = state.workoutLogs.some(
+    (log) => log.studentId === student.id && log.programId === program.id
+  );
+  if (alreadySubmitted) {
+    els.studentProgramStatus.textContent = "\u672c\u6b21\u9001\u51fa\u5c07\u8986\u84cb\u820a\u7d00\u9304";
+  }
+
+  pendingSubmission = loadedStudentEntries.map((entry, index) => buildLogPayload(student, program, entry, index));
+  els.confirmSummary.textContent = alreadySubmitted
+    ? `${student.name}\uff5c${program.date}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u78ba\u8a8d\u5f8c\u6703\u8986\u84cb\u4f60\u539f\u672c\u7684\u540c\u4efd\u8ab2\u8868\u7d00\u9304\u3002`
+    : `${student.name}\uff5c${program.date}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u8acb\u78ba\u8a8d\u9019\u6b21\u586b\u5beb\u5167\u5bb9\u3002`;
+  els.confirmCardList.innerHTML = pendingSubmission.map((log) => formatLogForSummary(log)).join("");
+  els.confirmBody.innerHTML = pendingSubmission
+    .map(
+      (log) => `
+        <tr>
+          <td>${log.category}</td>
+          <td>${log.exercise}</td>
+          <td>${formatTarget(log)}</td>
+          <td>${formatActual(log)}</td>
+          <td>${log.studentNote || "-"}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  els.confirmModal.classList.toggle("is-mobile-preview", studentViewMode === "card");
+  els.confirmModalCard.classList.toggle("is-mobile-preview", studentViewMode === "card");
+  els.confirmModal.classList.remove("is-hidden");
+  els.confirmModal.setAttribute("aria-hidden", "false");
+}
+
+function getActiveEntryField(index, field) {
+  const activeRoot = studentViewMode === "card" ? els.studentCardList : els.studentProgramBody;
+  return activeRoot?.querySelector(`[data-entry-index="${index}"][data-field="${field}"]`) || null;
+}
+
+function buildLogPayload(student, program, entry, index) {
+  const read = (field) => getActiveEntryField(index, field);
+
+  return {
+    id: `log-${Date.now()}-${index}`,
+    programId: program.id,
+    programCode: program.code,
+    programDate: program.date,
+    studentId: student.id,
+    studentName: student.name,
+    category: entry.category,
+    exercise: entry.exercise,
+    targetSets: entry.targetSets,
+    targetType: entry.targetType,
+    targetValue: entry.targetValue,
+    actualWeight: Number(read("actualWeight")?.value || 0),
+    actualSets: Number(read("actualSets")?.value || 0),
+    actualReps: Number(read("actualReps")?.value || 0),
+    studentNote: read("studentNote")?.value.trim() || "",
+    submittedAt: timestampNow()
+  };
+}
+
+function setInputError(input, message) {
+  if (!input) {
+    return;
+  }
+  input.classList.add("input-error");
+  const wrapper = input.closest(".entry-input, .card-field, .field-group, label") || input.parentElement;
+  wrapper?.classList.add("has-error");
+  let hint = wrapper.querySelector(".field-error");
+  if (!hint) {
+    hint = document.createElement("span");
+    hint.className = "field-error";
+    wrapper.appendChild(hint);
+  }
+  hint.textContent = message;
+}
+
+function clearInputErrors() {
+  document.querySelectorAll(".input-error").forEach((input) => input.classList.remove("input-error"));
+  document.querySelectorAll(".has-error").forEach((node) => node.classList.remove("has-error"));
+  document.querySelectorAll(".field-error").forEach((hint) => hint.remove());
+}
+
+function validateSubmissionInputs() {
+  clearInputErrors();
+  let isValid = true;
+
+  loadedStudentEntries.forEach((entry, index) => {
+    const read = (field) => getActiveEntryField(index, field);
+    const weightInput = read("actualWeight");
+    const setsInput = read("actualSets");
+    const repsInput = read("actualReps");
+
+    if (entry.targetType === "reps") {
+      if (!weightInput?.value) {
+        setInputError(weightInput, "\u8acb\u586b\u5beb\u91cd\u91cf");
+        isValid = false;
+      }
+      if (!setsInput?.value) {
+        setInputError(setsInput, "\u8acb\u586b\u5beb\u7d44\u6578");
+        isValid = false;
+      }
+      if (!repsInput?.value) {
+        setInputError(repsInput, "\u8acb\u586b\u5beb\u6b21\u6578");
+        isValid = false;
+      }
+    }
+
+    if (entry.targetType === "time" && !setsInput?.value) {
+      setInputError(setsInput, "\u8acb\u586b\u5beb\u7d44\u6578");
+      isValid = false;
+    }
+
+    if (entry.targetType === "rm" && !weightInput?.value) {
+      setInputError(weightInput, "\u8acb\u586b\u5beb\u91cd\u91cf");
+      isValid = false;
+    }
+  });
+
+  if (!isValid) {
+    const firstError = document.querySelector(".input-error");
+    firstError?.scrollIntoView({ behavior: "smooth", block: "center" });
+    firstError?.focus?.();
+    window.alert("\u9084\u6709\u5fc5\u586b\u6b04\u4f4d\u672a\u5b8c\u6210\uff0c\u8acb\u5148\u88dc\u9f4a\u3002");
+  }
+
+  return isValid;
+}
+
+function closeConfirmModal() {
+  pendingSubmission = null;
+  els.confirmModal.classList.add("is-hidden");
+  els.confirmModal.classList.remove("is-mobile-preview");
+  els.confirmModalCard.classList.remove("is-mobile-preview");
+  els.confirmModal.setAttribute("aria-hidden", "true");
+  els.confirmCardList.innerHTML = "";
+}
+
+function openSuccessModal() {
+  const program = getSelectedStudentProgram();
+  els.successSummary.textContent = `${program?.date || ""}\uff5c${program?.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u672c\u6b21\u8a13\u7df4\u5167\u5bb9\u5df2\u8a18\u9304\u3002`;
+  els.successCardList.innerHTML = lastSubmittedLogs.map((log) => formatLogForSummary(log)).join("");
+  els.successBody.innerHTML = lastSubmittedLogs
+    .map(
+      (log) => `
+        <tr>
+          <td>${log.category}</td>
+          <td>${log.exercise}</td>
+          <td>${formatTarget(log)}</td>
+          <td>${formatActual(log)}</td>
+          <td>${log.studentNote || "-"}</td>
+        </tr>
+      `
+    )
+    .join("");
+  els.successModal.classList.toggle("is-mobile-preview", studentViewMode === "card");
+  els.successModalCard.classList.toggle("is-mobile-preview", studentViewMode === "card");
+  els.successModal.classList.remove("is-hidden");
+  els.successModal.setAttribute("aria-hidden", "false");
+}
+
+function closeSuccessModal() {
+  els.successModal.classList.add("is-hidden");
+  els.successModal.classList.remove("is-mobile-preview");
+  els.successModalCard.classList.remove("is-mobile-preview");
+  els.successModal.setAttribute("aria-hidden", "true");
+}
+
+function buildSuccessImageFileName(student, program) {
+  return `${student?.name || "學生"}_${program?.code || "課表"}_完成紀錄`;
+}
+
+async function downloadSuccessImage() {
+  if (!lastSubmittedLogs.length) {
+    window.alert("目前沒有可下載的完成紀錄。");
+    return;
+  }
+
+  const student = getSelectedStudent();
+  const program = getSelectedStudentProgram();
+  const title = buildSuccessImageFileName(student, program);
+
+  try {
+    const imageData = await renderSuccessSheetAsJpeg(student, program, lastSubmittedLogs);
+    const link = document.createElement("a");
+    link.href = imageData.data;
+    link.download = `${title}.png`;
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+  } catch (error) {
+    console.error(error);
+    window.alert("圖片下載失敗，請稍後再試一次。");
+  }
+}
+
+function openSuccessHistory() {
+  closeSuccessModal();
+  studentHistoryOpened = true;
+  renderStudentHistoryFilters();
+  renderStudentHistory();
+  applyStudentViewMode();
+  els.studentHistoryCard?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+async function renderSuccessSheetAsJpeg(student, program, logs) {
+  const width = 1120;
+  const rowHeight = 78;
+  const height = 250 + logs.length * rowHeight + 40;
+  const rowsSvg = logs
+    .map((log, index) => {
+      const y = 210 + index * rowHeight;
+      const fill = index % 2 === 0 ? "#fffdf9" : "#f7f1e8";
+      const note = truncateForSheet(log.studentNote || "-", 24);
+      return `
+        <rect x="40" y="${y}" width="1040" height="${rowHeight}" rx="18" fill="${fill}" />
+        <text x="72" y="${y + 30}" font-size="20" font-weight="700" fill="#8a552f">${escapeXml(log.category)}</text>
+        <text x="240" y="${y + 30}" font-size="26" font-weight="700" fill="#2f241c">${escapeXml(log.exercise)}</text>
+        <text x="240" y="${y + 58}" font-size="18" fill="#8e8171">${escapeXml(formatTarget(log))}</text>
+        <text x="700" y="${y + 30}" font-size="22" font-weight="700" fill="#2f241c">${escapeXml(formatActual(log))}</text>
+        <text x="700" y="${y + 58}" font-size="18" fill="#8e8171">${escapeXml(note)}</text>
+      `;
+    })
+    .join("");
+
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}">
+      <rect width="100%" height="100%" fill="#f7f1e8" />
+      <rect x="20" y="20" width="${width - 40}" height="${height - 40}" rx="28" fill="#ffffff" stroke="#e6d8c7" />
+      <text x="60" y="78" font-size="18" font-weight="800" fill="#8a552f">CoachFlow 完成紀錄</text>
+      <text x="60" y="128" font-size="38" font-weight="800" fill="#2f241c">${escapeXml(student?.name || "學生")}｜${escapeXml(program?.code || "課表")}</text>
+      <text x="60" y="168" font-size="22" fill="#8e8171">日期：${escapeXml(program?.date || "-")}　送出時間：${escapeXml(logs[0]?.submittedAt || "-")}</text>
+      ${rowsSvg}
+    </svg>
+  `;
+
+  const blob = new Blob([svg], { type: "image/svg+xml;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+
+  try {
+    const image = await loadImage(url);
+    const canvas = document.createElement("canvas");
+    canvas.width = width;
+    canvas.height = height;
+    const context = canvas.getContext("2d");
+    context.fillStyle = "#f7f1e8";
+    context.fillRect(0, 0, width, height);
+    context.drawImage(image, 0, 0, width, height);
+    return {
+      data: canvas.toDataURL("image/png"),
+      width,
+      height
+    };
+  } finally {
+    URL.revokeObjectURL(url);
+  }
+}
+
+function loadImage(url) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    image.onload = () => resolve(image);
+    image.onerror = reject;
+    image.src = url;
+  });
+}
+
+function buildPdfBlobFromJpeg(dataUrl, imageWidth, imageHeight) {
+  const base64 = String(dataUrl).split(",")[1] || "";
+  const imageBytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+  const pdfWidth = 595.28;
+  const pdfHeight = (imageHeight / imageWidth) * pdfWidth;
+  const pageHeight = Math.max(pdfHeight + 40, 842);
+
+  const parts = [];
+  const offsets = [];
+  let position = 0;
+
+  const pushString = (value) => {
+    const bytes = new TextEncoder().encode(value);
+    parts.push(bytes);
+    position += bytes.length;
+  };
+
+  const pushBytes = (bytes) => {
+    parts.push(bytes);
+    position += bytes.length;
+  };
+
+  pushString("%PDF-1.4\n");
+
+  offsets[1] = position;
+  pushString("1 0 obj\n<< /Type /Catalog /Pages 2 0 R >>\nendobj\n");
+
+  offsets[2] = position;
+  pushString("2 0 obj\n<< /Type /Pages /Kids [3 0 R] /Count 1 >>\nendobj\n");
+
+  offsets[3] = position;
+  pushString(`3 0 obj\n<< /Type /Page /Parent 2 0 R /MediaBox [0 0 ${pdfWidth.toFixed(2)} ${pageHeight.toFixed(2)}] /Resources << /XObject << /Im0 4 0 R >> >> /Contents 5 0 R >>\nendobj\n`);
+
+  offsets[4] = position;
+  pushString(`4 0 obj\n<< /Type /XObject /Subtype /Image /Width ${imageWidth} /Height ${imageHeight} /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length ${imageBytes.length} >>\nstream\n`);
+  pushBytes(imageBytes);
+  pushString("\nendstream\nendobj\n");
+
+  const imageDrawHeight = (imageHeight / imageWidth) * (pdfWidth - 40);
+  const contentStream = `q\n${(pdfWidth - 40).toFixed(2)} 0 0 ${imageDrawHeight.toFixed(2)} 20 ${(pageHeight - imageDrawHeight - 20).toFixed(2)} cm\n/Im0 Do\nQ\n`;
+  const contentBytes = new TextEncoder().encode(contentStream);
+
+  offsets[5] = position;
+  pushString(`5 0 obj\n<< /Length ${contentBytes.length} >>\nstream\n`);
+  pushBytes(contentBytes);
+  pushString("endstream\nendobj\n");
+
+  const xrefStart = position;
+  pushString("xref\n0 6\n");
+  pushString("0000000000 65535 f \n");
+  for (let i = 1; i <= 5; i += 1) {
+    pushString(`${String(offsets[i]).padStart(10, "0")} 00000 n \n`);
+  }
+  pushString(`trailer\n<< /Size 6 /Root 1 0 R >>\nstartxref\n${xrefStart}\n%%EOF`);
+
+  return new Blob(parts, { type: "application/pdf" });
+}
+
+function openProgramPreviewModal() {
+  renderPreview();
+  els.programPreviewModal.classList.remove("is-hidden");
+  els.programPreviewModal.setAttribute("aria-hidden", "false");
+}
+
+function closeProgramPreviewModal() {
+  els.programPreviewModal.classList.add("is-hidden");
+  els.programPreviewModal.setAttribute("aria-hidden", "true");
+}
+
+function handleStudentDetailAction() {
+  if (studentSubmissionCompleted && lastSubmittedLogs.length) {
+    openSuccessModal();
+    return;
+  }
+  openStudentProgramEditModal();
+}
+
+function openStudentProgramEditModal() {
+  if (!loadedStudentEntries.length) {
+    window.alert("\u8acb\u5148\u8f09\u5165\u4e00\u4efd\u8ab2\u8868\uff0c\u518d\u8abf\u6574\u9805\u76ee\u3002");
+    return;
+  }
+
+  els.studentProgramEditBody.innerHTML = "";
+  els.studentEditMobileList.innerHTML = "";
+  loadedStudentEntries.forEach((entry) => addStudentProgramEditRow(entry));
+  els.studentProgramEditModal.classList.toggle("is-mobile-preview", studentViewMode === "card");
+  els.studentProgramEditModalCard.classList.toggle("is-mobile-preview", studentViewMode === "card");
+  els.studentProgramEditModal.classList.remove("is-hidden");
+  els.studentProgramEditModal.setAttribute("aria-hidden", "false");
+}
+
+function closeStudentProgramEditModal() {
+  els.studentProgramEditModal.classList.add("is-hidden");
+  els.studentProgramEditModal.classList.remove("is-mobile-preview");
+  els.studentProgramEditModalCard.classList.remove("is-mobile-preview");
+  els.studentProgramEditModal.setAttribute("aria-hidden", "true");
+}
+
+function openAssignCoachModal(studentId) {
+  const student = state.students.find((item) => item.id === studentId);
+  if (!student || !els.assignCoachModal || !els.assignCoachSelect) {
+    return;
+  }
+  assigningStudentId = studentId;
+  const activeCoaches = state.coaches.filter((coach) => coach.status !== "inactive");
+  els.assignCoachSelect.innerHTML = activeCoaches
+    .map((coach) => `<option value="${coach.id}">${coach.name}</option>`)
+    .join("");
+  els.assignCoachSelect.value = student.primaryCoachId || activeCoaches[0]?.id || "";
+  if (els.assignCoachSummary) {
+    els.assignCoachSummary.textContent = `請選擇 ${student.name} 的主要教練。`;
+  }
+  els.assignCoachModal.classList.remove("is-hidden");
+  els.assignCoachModal.setAttribute("aria-hidden", "false");
+}
+
+function closeAssignCoachModal() {
+  assigningStudentId = "";
+  if (!els.assignCoachModal) {
+    return;
+  }
+  els.assignCoachModal.classList.add("is-hidden");
+  els.assignCoachModal.setAttribute("aria-hidden", "true");
+}
+
+async function saveAssignedCoach() {
+  const student = state.students.find((item) => item.id === assigningStudentId);
+  const nextCoachId = els.assignCoachSelect?.value || "";
+  const nextCoach = state.coaches.find((coach) => coach.id === nextCoachId && coach.status !== "inactive");
+  if (!student || !nextCoach) {
+    window.alert("請先選擇有效的教練。");
+    return;
+  }
+  if (IS_CLOUD_MODE) {
+    try {
+      const payload = await callCloudApi("assignStudentCoach", {
+        studentId: student.id,
+        coachId: nextCoach.id
+      });
+      applyCloudPayloadToState(payload);
+    } catch (error) {
+      console.warn("Cloud assign coach failed, falling back to local state:", error);
+      student.primaryCoachId = nextCoach.id;
+      student.primaryCoachName = nextCoach.name;
+      persistState();
+    }
+  } else {
+    student.primaryCoachId = nextCoach.id;
+    persistState();
+  }
+  if (APP_MODE === "admin") {
+    refreshAdminWorkspace();
+  } else {
+    renderCoachStudentLinks();
+    renderCoachStudentRoster();
+    renderCoachRoster();
+    renderCoachToday();
+    renderCoachHistoryFilters();
+    renderCoachHistory();
+    renderStudentProgramOptions();
+    renderStudentHistoryFilters();
+    renderStudentHistory();
+    renderStudentSummary();
+  }
+  closeAssignCoachModal();
+  window.alert(`已指派給 ${nextCoach.name} 教練。`);
+}
+
+function saveStudentProgramEdits() {
+  const editRows = studentViewMode === "card"
+    ? [...els.studentEditMobileList.querySelectorAll(".student-edit-mobile-card")]
+    : [...els.studentProgramEditBody.querySelectorAll("tr")];
+
+  const editedEntries = editRows
+    .map((row) => {
+      const type = row.querySelector(".student-edit-type").value;
+      return {
+        itemId: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        category: row.querySelector(".student-edit-category").value,
+        exercise: row.querySelector(".student-edit-exercise").value.trim(),
+        targetSets: Number(row.querySelector(".student-edit-sets").value || 0),
+        targetType: type,
+        targetValue: type === "rm" ? 0 : Number(row.querySelector(".student-edit-value").value || 0),
+        itemNote: "",
+        referenceLog: null
+      };
+    })
+    .filter((entry) => entry.exercise && entry.targetSets > 0 && (entry.targetType === "rm" || entry.targetValue > 0))
+    .map((entry) => ({
+      ...entry,
+      referenceLog: findLatestReferenceLog(getSelectedStudent()?.id || "", entry)
+    }));
+
+  if (!editedEntries.length) {
+    window.alert("\u8acb\u81f3\u5c11\u4fdd\u7559\u4e00\u7b46\u8ab2\u8868\u9805\u76ee\u3002");
+    return;
+  }
+
+  loadedStudentEntries = editedEntries;
+  renderStudentProgramEntries();
+  closeStudentProgramEditModal();
+}
+
+function setStudentViewMode(mode) {
+  studentViewMode = mode;
+  applyStudentViewMode();
+}
+
+function setCoachViewMode(mode) {
+  coachViewMode = mode;
+  applyCoachViewMode();
+}
+
+function applyCoachHistoryVisibility() {
+  const isMobile = coachViewMode === "mobile";
+  const isOpen = !isMobile || coachHistoryOpened;
+  els.coachHistoryResultsWrap?.classList.toggle("is-hidden", !isOpen);
+  els.toggleCoachHistoryResults?.classList.toggle("is-hidden", !isMobile);
+  if (els.coachHistoryMore) {
+    els.coachHistoryMore.classList.toggle("is-hidden", !isOpen || els.coachHistoryMore.dataset.empty === "true");
+  }
+  if (els.toggleCoachHistoryResults) {
+    els.toggleCoachHistoryResults.textContent = isOpen ? "收起歷史紀錄" : "查看歷史紀錄";
+  }
+}
+
+function applyCoachViewMode() {
+  const isMobile = coachViewMode === "mobile";
+  const coachPanel = document.querySelector("#coach-panel");
+  coachPanel?.classList.toggle("coach-mobile-preview", isMobile);
+  els.coachGlobalViewDesktopButton?.classList.toggle("is-active", !isMobile);
+  els.coachGlobalViewMobileButton?.classList.toggle("is-active", isMobile);
+  applyCoachHistoryVisibility();
+}
+
+function toggleCoachHistoryResults() {
+  coachHistoryOpened = !coachHistoryOpened;
+  applyCoachHistoryVisibility();
+}
+
+function toggleTodayLogsVisibleCount() {
+  const viewDate = getCoachTodayDate();
+  const allTodayLogs = state.workoutLogs.filter((log) => log.programDate === viewDate);
+  const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
+  const filteredLogs = allTodayLogs.filter((log) => {
+    if (!keyword) {
+      return true;
+    }
+    return [log.studentName, log.exercise]
+      .some((value) => String(value || "").toLowerCase().includes(keyword));
+  });
+
+  coachTodayVisibleCount = coachTodayVisibleCount < filteredLogs.length ? coachTodayVisibleCount + 6 : 6;
+  renderCoachToday();
+}
+
+function toggleCoachHistoryVisibleCount() {
+  const logs = getCoachHistoryLogs();
+  coachHistoryVisibleCount = coachHistoryVisibleCount < logs.length ? coachHistoryVisibleCount + 6 : 6;
+  renderCoachHistory();
+}
+
+function toggleTodayStudentDetailVisibleCount() {
+  const viewDate = getCoachTodayDate();
+  const studentLogs = state.workoutLogs
+    .filter((log) => log.programDate === viewDate)
+    .filter((log) => log.studentId === selectedTodayStudentId)
+    .sort((a, b) => `${a.programDate} ${a.submittedAt}`.localeCompare(`${b.programDate} ${b.submittedAt}`));
+
+  todayStudentDetailVisibleCount = todayStudentDetailVisibleCount < studentLogs.length ? todayStudentDetailVisibleCount + 6 : 6;
+  renderTodayStudentDetail(state.workoutLogs.filter((log) => log.programDate === viewDate));
+}
+
+function applyStudentViewMode() {
+  const isCard = studentViewMode === "card";
+  const hasStudent = Boolean(getSelectedStudent());
+  const hasLoadedProgram = loadedStudentEntries.length > 0;
+  els.studentGlobalViewCardButton.classList.toggle("is-active", isCard);
+  els.studentGlobalViewTableButton.classList.toggle("is-active", !isCard);
+  els.studentViewCardButton.classList.toggle("is-active", isCard);
+  els.studentViewTableButton.classList.toggle("is-active", !isCard);
+  els.studentCardList.classList.toggle("is-active", isCard);
+  els.studentPhoneFrame.classList.toggle("is-active", isCard);
+  els.studentTableWrap.classList.toggle("is-hidden", isCard);
+  els.studentMobileSubmitBar.classList.toggle("is-visible", isCard && hasLoadedProgram);
+  els.studentMobileTools.classList.toggle("is-visible", isCard && hasStudent && !hasLoadedProgram);
+  els.studentMobileSecondaryActions.classList.toggle("is-visible", isCard && hasLoadedProgram);
+  els.studentProgramCard.classList.toggle("is-mobile-preview", isCard);
+  els.studentHistoryCard.classList.toggle("is-mobile-preview", isCard);
+  els.studentHistoryCard.classList.toggle("is-mobile-open", !isCard || studentHistoryOpened);
+  els.studentAuthShell.classList.toggle("is-mobile-preview", isCard && !hasStudent);
+}
+
+function handleViewportChange() {
+  if (window.innerWidth <= 820 && studentViewMode !== "card") {
+    setStudentViewMode("card");
+  }
+}
+
+function syncStudentAccessUI() {
+  const hasStudent = Boolean(getSelectedStudent());
+  const isCard = studentViewMode === "card";
+  const hasLoadedProgram = loadedStudentEntries.length > 0;
+  document.body.dataset.studentAuth = hasStudent ? "authenticated" : "anonymous";
+  els.studentAuthShell.classList.toggle("is-collapsed", hasStudent);
+  els.studentAuthShell.classList.toggle("is-mobile-preview", isCard && !hasStudent);
+  if (els.studentProgramSelect) {
+    els.studentProgramSelect.hidden = true;
+    els.studentProgramSelect.style.display = "none";
+  }
+  if (els.studentProgramShell) {
+    els.studentProgramShell.hidden = !hasStudent;
+    els.studentProgramShell.style.display = hasStudent ? "" : "none";
+  }
+  if (els.studentHistoryCard) {
+    const shouldShowHistory = hasStudent && (!isCard || studentHistoryOpened || loadedStudentEntries.length > 0);
+    els.studentHistoryCard.hidden = !shouldShowHistory;
+    els.studentHistoryCard.style.display = shouldShowHistory ? "" : "none";
+  }
+  els.studentActiveBar.classList.toggle("is-hidden", !hasStudent || isCard);
+  els.studentProgramCard.classList.toggle("is-mobile-preview", isCard);
+  els.studentProgramCard.classList.toggle("is-hidden-mobile-entry", isCard && !hasStudent);
+  els.studentHistoryCard.classList.toggle("is-hidden-mobile-entry", isCard && !hasStudent);
+  els.loadStudentProgramInline?.classList.toggle("is-hidden", hasLoadedProgram);
+  els.loadStudentProgramMobile?.classList.toggle("is-hidden", hasLoadedProgram);
+  if (els.loadStudentProgramInline) {
+    els.loadStudentProgramInline.hidden = hasLoadedProgram;
+  }
+  if (els.loadStudentProgramMobile) {
+    els.loadStudentProgramMobile.hidden = hasLoadedProgram;
+  }
+  els.studentMobileTools.classList.toggle("is-visible", hasStudent && isCard && !hasLoadedProgram);
+  els.studentMobileSecondaryActions.classList.toggle("is-visible", hasStudent && isCard && hasLoadedProgram);
+  if (els.studentPanelViewToggle) {
+    els.studentPanelViewToggle.hidden = false;
+    els.studentPanelViewToggle.classList.remove("is-hidden");
+    els.studentPanelViewToggle.style.display = "";
+  }
+  if (!hasStudent) {
+    els.studentMobileSubmitBar.classList.remove("is-visible");
+    els.studentMobileTools.classList.remove("is-visible");
+    els.studentMobileSecondaryActions.classList.remove("is-visible");
+  }
+}
+
+function showStudentAccessPanel() {
+  studentHistoryOpened = false;
+  applyStudentViewMode();
+  els.studentAuthShell.classList.remove("is-collapsed");
+  els.studentAuthShell.scrollIntoView({ behavior: "smooth", block: "start" });
+  els.studentAccessCode.focus();
+}
+
+async function finalizeSubmission() {
+  if (!pendingSubmission?.length) {
+    closeConfirmModal();
+    return;
+  }
+
+  lastSubmittedLogs = [...pendingSubmission];
+  studentSubmissionCompleted = true;
+  if (IS_CLOUD_MODE) {
+    try {
+      await submitStudentLogsToCloud(pendingSubmission);
+    } catch (error) {
+      console.warn("Cloud submit logs failed, falling back to local state:", error);
+      const submissionKeys = new Set(
+        pendingSubmission.map((log) => `${log.programId}::${log.studentId}::${log.exercise}`)
+      );
+      state.workoutLogs = state.workoutLogs.filter(
+        (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${log.exercise}`)
+      );
+      state.workoutLogs = pendingSubmission.concat(state.workoutLogs);
+      persistState();
+    }
+  } else {
+    const submissionKeys = new Set(
+      pendingSubmission.map((log) => `${log.programId}::${log.studentId}::${log.exercise}`)
+    );
+    state.workoutLogs = state.workoutLogs.filter(
+      (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${log.exercise}`)
+    );
+    state.workoutLogs = pendingSubmission.concat(state.workoutLogs);
+    persistState();
+  }
+  closeConfirmModal();
+  renderCoachToday();
+  renderCoachHistoryFilters();
+  renderCoachStudentLinks();
+  renderCoachStudentRoster();
+  renderCoachRoster();
+  renderCoachHistory();
+  renderStudentHistoryFilters();
+  renderStudentHistory();
+  loadedStudentEntries = [];
+  renderStudentProgramEntries();
+  els.studentProgramStatus.textContent = `\u672c\u6b21\u8a13\u7df4\u5df2\u8a18\u9304\uff5c\u6700\u5f8c\u66f4\u65b0 ${lastSubmittedLogs[0]?.submittedAt || ""}`;
+  els.studentMobileSubmitBar.classList.remove("is-visible");
+  els.studentMobileTools.classList.remove("is-visible");
+  els.studentMobileSecondaryActions.classList.add("is-visible");
+  openSuccessModal();
+}
+
+function renderCoachToday() {
+  const viewDate = getCoachTodayDate();
+  const coachPrograms = getCoachScopedPrograms();
+  const coachLogs = getCoachScopedLogs();
+  const coachStudents = getCoachActiveStudents();
+  const dayProgram = coachPrograms.find((program) => program.date === viewDate && program.published)
+    || coachPrograms.find((program) => program.date === viewDate)
+    || null;
+  const allTodayLogs = coachLogs.filter((log) => log.programDate === viewDate);
+  const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
+  const todayLogs = allTodayLogs.filter((log) => {
+    if (!keyword) {
+      return true;
+    }
+    return (
+      String(log.studentName || "").toLowerCase().includes(keyword) ||
+      String(log.exercise || "").toLowerCase().includes(keyword)
+    );
+  });
+  const visibleTodayLogs = todayLogs.slice(0, coachTodayVisibleCount);
+  const submittedStudents = [...new Set(todayLogs.map((log) => log.studentName))];
+  const allStudents = coachStudents.map((student) => student.name);
+  const pendingStudents = allStudents.filter((name) => !allTodayLogs.map((log) => log.studentName).includes(name));
+
+  const statItems = [
+    { label: "\u67e5\u770b\u65e5\u671f", value: viewDate || "-" },
+    { label: "\u7576\u65e5\u8ab2\u8868", value: dayProgram ? `${dayProgram.code || "\u672a\u547d\u540d"}` : "\u5c1a\u672a\u5efa\u7acb" },
+    { label: "\u5df2\u9001\u51fa", value: `${new Set(allTodayLogs.map((log) => log.studentName)).size} \u4eba` },
+    { label: "\u672a\u9001\u51fa", value: `${pendingStudents.length} \u4eba` },
+    { label: "\u7576\u65e5\u7d00\u9304", value: `${allTodayLogs.length} \u7b46` }
+  ];
+
+  els.coachStats.innerHTML = statItems
+    .map(
+      (item) => `
+        <div class="stat-card">
+          <div class="stat-label">${item.label}</div>
+          <div class="stat-value">${item.value}</div>
+        </div>
+      `
+    )
+    .join("");
+
+  els.submittedList.innerHTML = submittedStudents.length
+    ? submittedStudents
+        .map((name) => {
+          const student = coachStudents.find((item) => item.name === name);
+          return `<li><button class="ghost-button today-student-list-button" type="button" data-open-submitted-student="${student?.id || ""}">${name}</button></li>`;
+        })
+        .join("")
+    : `<li class="muted-copy">\u76ee\u524d\u9084\u6c92\u6709\u4eba\u9001\u51fa\u3002</li>`;
+
+  els.pendingList.innerHTML = pendingStudents.length
+    ? pendingStudents
+        .map((name) => {
+          const student = coachStudents.find((item) => item.name === name);
+          return `<li><button class="ghost-button today-student-list-button" type="button" data-open-pending-student="${student?.id || ""}">${name}</button></li>`;
+        })
+        .join("")
+    : `<li class="muted-copy">\u6240\u6709\u5b78\u751f\u90fd\u5df2\u9001\u51fa\u3002</li>`;
+
+  if (els.todayLogsCount) {
+    els.todayLogsCount.textContent = `共 ${visibleTodayLogs.length} / ${todayLogs.length} 筆`;
+  }
+
+  els.todayLogsBody.innerHTML = visibleTodayLogs.length
+    ? visibleTodayLogs
+        .map(
+          (log) => `
+            <tr class="${selectedTodayStudentId === log.studentId ? "is-selected-log" : ""}">
+              <td><button class="ghost-button ${selectedTodayStudentId === log.studentId ? "is-selected-log-button" : ""}" type="button" data-open-today-student="${log.studentId}">${log.studentName}</button></td>
+              <td>${log.category}</td>
+              <td>${log.exercise}</td>
+              <td>${formatTarget(log)}</td>
+              <td>${formatActual(log)}</td>
+              <td>${log.studentNote || "-"}</td>
+              <td>${log.submittedAt}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : `<tr><td colspan="7" class="empty-state">\u76ee\u524d\u9084\u6c92\u6709\u4eca\u65e5\u7d00\u9304\u3002</td></tr>`;
+
+  if (els.todayLogsMore) {
+    const remaining = todayLogs.length - visibleTodayLogs.length;
+    const shouldHide = todayLogs.length <= 6;
+    els.todayLogsMore.classList.toggle("is-hidden", shouldHide);
+    if (!shouldHide) {
+      els.todayLogsMore.textContent = remaining > 0 ? `查看更多（剩餘 ${remaining} 筆）` : "收合";
+    }
+  }
+
+  if (!selectedTodayStudentId || !allTodayLogs.some((log) => log.studentId === selectedTodayStudentId)) {
+    selectedTodayStudentId = allTodayLogs[0]?.studentId || "";
+  }
+  renderTodayStudentDetail(allTodayLogs);
+}
+
+function handleTodayLogAction(event) {
+  const button = event.target.closest("[data-open-today-student]");
+  if (!button) {
+    return;
+  }
+
+  selectedTodayStudentId = button.dataset.openTodayStudent || "";
+  todayStudentDetailVisibleCount = 6;
+  const program = getPublishedProgram(getCurrentCoach()?.id);
+  const allTodayLogs = program ? getCoachScopedLogs().filter((log) => log.programId === program.id) : [];
+  renderTodayStudentDetail(allTodayLogs);
+  document.querySelector("#today-student-detail-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+}
+
+function handleTodayStudentListAction(event) {
+  const submittedButton = event.target.closest("[data-open-submitted-student]");
+  if (submittedButton) {
+    selectedTodayStudentId = submittedButton.dataset.openSubmittedStudent || "";
+    todayStudentDetailVisibleCount = 6;
+    const program = getPublishedProgram(getCurrentCoach()?.id);
+    const allTodayLogs = program ? getCoachScopedLogs().filter((log) => log.programId === program.id) : [];
+    renderCoachToday();
+    renderTodayStudentDetail(allTodayLogs);
+    document.querySelector("#today-student-detail-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  const pendingButton = event.target.closest("[data-open-pending-student]");
+  if (!pendingButton) {
+    return;
+  }
+
+  const student = state.students.find((item) => item.id === pendingButton.dataset.openPendingStudent);
+  if (!student) {
+    return;
+  }
+
+  switchCoachPanel("coach-students");
+  if (els.coachStudentLinkName) {
+    els.coachStudentLinkName.value = student.name;
+  }
+  if (els.coachStudentLinkSelect) {
+    els.coachStudentLinkSelect.value = student.name;
+  }
+  renderCoachStudentLinks();
+  els.coachStudentLinkName?.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+function renderTodayStudentDetail(todayLogs = []) {
+  if (!els.todayStudentDetailBody || !els.todayStudentDetailStatus) {
+    return;
+  }
+
+  if (!todayLogs.length) {
+    els.todayStudentDetailStatus.textContent = "\u4eca\u65e5\u5c1a\u7121\u7d00\u9304";
+    els.todayStudentDetailBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5148\u7b49\u5b78\u751f\u9001\u51fa\u4eca\u65e5\u7d00\u9304\u3002</td></tr>`;
+    els.todayStudentDetailMore?.classList.add("is-hidden");
+    return;
+  }
+
+  const studentLogs = todayLogs
+    .filter((log) => log.studentId === selectedTodayStudentId)
+    .sort((a, b) => `${a.programDate} ${a.submittedAt}`.localeCompare(`${b.programDate} ${b.submittedAt}`));
+  const studentName = studentLogs[0]?.studentName || "";
+
+  if (!studentLogs.length) {
+    els.todayStudentDetailStatus.textContent = "\u8acb\u5148\u9078\u64c7\u5b78\u751f";
+    els.todayStudentDetailBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5f9e\u4e0a\u65b9\u4eca\u65e5\u7d00\u9304\u8868\u683c\u9ede\u9078\u4e00\u4f4d\u5b78\u751f\u3002</td></tr>`;
+    els.todayStudentDetailMore?.classList.add("is-hidden");
+    return;
+  }
+
+  const visibleLogs = studentLogs.slice(0, todayStudentDetailVisibleCount);
+  els.todayStudentDetailStatus.textContent = `${studentName}\u4eca\u65e5\u5171 ${visibleLogs.length} / ${studentLogs.length} \u7b46`;
+  els.todayStudentDetailBody.innerHTML = visibleLogs
+    .map(
+      (log) => `
+        <tr>
+          <td>${log.category}</td>
+          <td>${log.exercise}</td>
+          <td>${formatTarget(log)}</td>
+          <td>${formatActual(log)}</td>
+          <td>${log.studentNote || "-"}</td>
+          <td>${log.submittedAt}</td>
+        </tr>
+      `
+    )
+    .join("");
+
+  if (els.todayStudentDetailMore) {
+    const remaining = studentLogs.length - visibleLogs.length;
+    const shouldHide = studentLogs.length <= 6;
+    els.todayStudentDetailMore.classList.toggle("is-hidden", shouldHide);
+    if (!shouldHide) {
+      els.todayStudentDetailMore.textContent = remaining > 0 ? `查看更多（剩餘 ${remaining} 筆）` : "收合";
+    }
+  }
+}
+
+async function hydrateCoachAccessFromUrl() {
+  if (APP_MODE !== "coach") {
+    return;
+  }
+  const params = new URLSearchParams(window.location.search);
+  const accessValue = params.get("coach") || params.get("token") || params.get("code") || "";
+  let matchedCoach = null;
+  if (IS_CLOUD_MODE) {
+    try {
+      matchedCoach = await resolveCoachAccessFromCloud(accessValue);
+    } catch (error) {
+      console.warn("Coach cloud hydrate failed, falling back to local state:", error);
+      matchedCoach = resolveCoachByAccess(accessValue);
+    }
+  } else {
+    matchedCoach = resolveCoachByAccess(accessValue);
+  }
+  if (!matchedCoach) {
+    return;
+  }
+  authenticatedCoachId = matchedCoach.id;
+  state.currentCoachId = matchedCoach.id;
+  if (els.coachAccessCode) {
+    els.coachAccessCode.value = matchedCoach.accessCode || accessValue;
+  }
+}
+
+function renderCoachHistoryFilters() {
+  const studentOptions = [
+    `<option value="">\u5168\u90e8\u5b78\u751f</option>`,
+    ...getCoachScopedStudents().map((student) => `<option value="${student.id}">${student.name}</option>`)
+  ];
+
+  const exercises = [...new Set(getCoachScopedLogs().map((log) => log.exercise))].sort();
+  const exerciseOptions = [
+    `<option value="">\u5168\u90e8\u52d5\u4f5c</option>`,
+    ...exercises.map((exercise) => `<option value="${exercise}">${exercise}</option>`)
+  ];
+
+  els.coachHistoryStudent.innerHTML = studentOptions.join("");
+  els.coachHistoryExercise.innerHTML = exerciseOptions.join("");
+}
+
+function renderCoachStudentLinks() {
+  if (!els.coachStudentLinks) {
+    return;
+  }
+
+  const configuredPublicBase = String(APP_CONFIG.publicBaseUrl || "").trim();
+  const isHosted = /^https?:/i.test(window.location.protocol);
+  const baseHref = configuredPublicBase || (isHosted ? window.location.href : "");
+  const studentBaseUrl = baseHref ? new URL("student.html", baseHref) : null;
+  const canGenerateScannableQr = Boolean(studentBaseUrl);
+
+  if (!studentBaseUrl) {
+    els.coachStudentLinks.innerHTML = `
+      <div class="empty-card">
+        目前是本機檔案模式，QR code 無法提供可掃描的公開網址。
+        <br>
+        請先將系統部署到網站，或在 <code>config.js</code> 設定 <code>publicBaseUrl</code>。
+      </div>
+    `;
+    return;
+  }
+
+  studentBaseUrl.search = "";
+  studentBaseUrl.hash = "";
+  studentBaseUrl.searchParams.set("mode", "student");
+  const sharedBaseUrl = new URL(studentBaseUrl.toString());
+  sharedBaseUrl.search = "";
+  sharedBaseUrl.searchParams.set("mode", "student");
+
+  const keyword = (els.coachStudentLinkName?.value || "").trim().toLowerCase();
+  if (els.coachStudentLinkSelect && els.coachStudentLinkName?.value) {
+    els.coachStudentLinkSelect.value = els.coachStudentLinkName.value;
+  }
+
+  const scopedStudents = getCoachScopedStudents();
+  const matchedStudents = scopedStudents.filter((student) => {
+    if (!keyword) {
+      return false;
+    }
+
+      return (
+        String(student.name || "").trim().toLowerCase().includes(keyword) ||
+        String(student.accessCode || "").trim().toLowerCase().includes(keyword)
+      );
+    });
+
+  if (els.coachStudentLinkOptions) {
+    els.coachStudentLinkOptions.innerHTML = scopedStudents
+      .map((student) => `<option value="${student.name}"></option>`)
+      .join("");
+  }
+
+  if (els.coachStudentLinkSelect) {
+    const currentValue = els.coachStudentLinkSelect.value;
+    els.coachStudentLinkSelect.innerHTML = [
+      `<option value="">\u8acb\u9078\u64c7\u5b78\u751f</option>`,
+      ...scopedStudents.map((student) => `<option value="${student.name}">${student.name}</option>`)
+    ].join("");
+    els.coachStudentLinkSelect.value = scopedStudents.some((student) => student.name === currentValue)
+      ? currentValue
+      : keyword
+        ? (matchedStudents[0]?.name || "")
+        : "";
+  }
+
+  if (!keyword) {
+    els.coachStudentLinks.innerHTML = `<div class="empty-card">\u8acb\u5148\u8f38\u5165\u5b78\u751f\u59d3\u540d\u3002</div>`;
+    return;
+  }
+
+  if (!matchedStudents.length) {
+    els.coachStudentLinks.innerHTML = `<div class="empty-card">\u627e\u4e0d\u5230\u7b26\u5408\u7684\u5b78\u751f\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u59d3\u540d\u6216\u4ee3\u78bc\u3002</div>`;
+    return;
+  }
+
+  els.coachStudentLinks.innerHTML = matchedStudents
+    .slice(0, 1)
+    .map((student) => {
+      const accessUrl = new URL(studentBaseUrl.toString());
+      accessUrl.searchParams.set("token", student.token || student.accessCode || student.id);
+      const sharedUrl = sharedBaseUrl.toString();
+      const qrImageUrl = canGenerateScannableQr
+        ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(accessUrl.toString())}`
+        : "";
+
+      return `
+        <article class="coach-link-card">
+            <div class="coach-link-top">
+              <div>
+                <h4>${student.name}</h4>
+              </div>
+            <div class="roster-pill-stack">
+              <span class="status-pill">\u4ee3\u78bc\uff1a${student.accessCode || "-"}</span>
+              <span class="status-pill ${student.status === "inactive" ? "is-muted" : "is-success"}">${student.status === "inactive" ? "\u5df2\u505c\u7528" : "\u4f7f\u7528\u4e2d"}</span>
+            </div>
+          </div>
+          <label class="coach-link-field">
+            <span>\u5c08\u5c6c\u7db2\u5740</span>
+            <input type="text" readonly value="${accessUrl.toString()}" data-link-value="${student.id}">
+          </label>
+          <label class="coach-link-field">
+            <span>\u5171\u7528\u5165\u53e3\u7db2\u5740</span>
+            <input type="text" readonly value="${sharedUrl}" data-shared-link-value="${student.id}">
+          </label>
+          <div class="coach-link-inline-meta">
+            <span class="status-pill">\u8acb\u5b78\u751f\u8f38\u5165\u4ee3\u78bc\uff1a${student.accessCode || "-"}</span>
+          </div>
+          <div class="coach-link-qr-block">
+            <div class="coach-link-qr-card">
+              <span>學生專屬 QR</span>
+              ${canGenerateScannableQr
+                ? `<img src="${qrImageUrl}" alt="${student.name} 的專屬 QR">`
+                : `<p class="muted-copy">需設定公開網址後才能產生 QR。</p>`}
+            </div>
+          </div>
+          <div class="coach-link-actions">
+            <button class="ghost-button" type="button" data-copy-student-link="${student.id}">\u8907\u88fd\u7db2\u5740</button>
+            <button class="ghost-button" type="button" data-copy-shared-link="${student.id}">\u8907\u88fd\u5171\u7528\u5165\u53e3</button>
+            <button class="ghost-button" type="button" data-copy-student-qr="${student.id}" data-qr-link="${accessUrl.toString()}">複製 QR 連結內容</button>
+            <button class="primary-button" type="button" data-copy-student-message="${student.id}" data-student-name="${student.name}" data-student-code="${student.accessCode || ""}" data-student-link="${accessUrl.toString()}" data-shared-url="${sharedUrl}">\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f</button>
+          </div>
+        </article>
+      `;
+    })
+    .join("");
+}
+
+function downloadHistoryImportTemplate() {
+  const rows = [
+    ["學生姓名", "日期", "動作", "分類", "類型", "目標組數", "目標次數", "實際重量", "備註"],
+    ["王小明", "2026-03-01", "深蹲", "主項目", "reps", "5", "5", "100", "狀況穩定"],
+    ["王小明", "2026-03-08", "深蹲", "主項目", "rm", "", "3", "110", "3RM 測試"],
+    ["陳泳蓁", "2026-03-08", "後腳抬高蹲", "輔助項", "time", "4", "60", "", ""]
+  ];
+  const csv = rows.map((row) => row.map(escapeCsvValue).join(",")).join("\r\n");
+  downloadBlob(new Blob([`\uFEFF${csv}`], { type: "text/csv;charset=utf-8;" }), "coachflow-history-import-template.csv");
+}
+
+function escapeCsvValue(value) {
+  const text = String(value ?? "");
+  if (/[",\r\n]/.test(text)) {
+    return `"${text.replace(/"/g, "\"\"")}"`;
+  }
+  return text;
+}
+
+function downloadBlob(blob, fileName) {
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = fileName;
+  document.body.appendChild(link);
+  link.click();
+  link.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 0);
+}
+
+function parseCsv(text) {
+  const rows = [];
+  let current = "";
+  let row = [];
+  let inQuotes = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    const next = text[index + 1];
+
+    if (char === "\"") {
+      if (inQuotes && next === "\"") {
+        current += "\"";
+        index += 1;
+      } else {
+        inQuotes = !inQuotes;
+      }
+      continue;
+    }
+
+    if (char === "," && !inQuotes) {
+      row.push(current);
+      current = "";
+      continue;
+    }
+
+    if ((char === "\n" || char === "\r") && !inQuotes) {
+      if (char === "\r" && next === "\n") {
+        index += 1;
+      }
+      row.push(current);
+      if (row.some((cell) => String(cell).trim() !== "")) {
+        rows.push(row);
+      }
+      row = [];
+      current = "";
+      continue;
+    }
+
+    current += char;
+  }
+
+  row.push(current);
+  if (row.some((cell) => String(cell).trim() !== "")) {
+    rows.push(row);
+  }
+
+  return rows;
+}
+
+function normalizeImportHeader(header) {
+  const normalized = String(header || "").trim().toLowerCase();
+  const aliases = {
+    "學生姓名": "student_name",
+    "student_name": "student_name",
+    "姓名": "student_name",
+    "日期": "date",
+    "date": "date",
+    "動作": "exercise",
+    "exercise": "exercise",
+    "分類": "category",
+    "category": "category",
+    "類型": "target_type",
+    "target_type": "target_type",
+    "目標組數": "target_sets",
+    "組數": "target_sets",
+    "target_sets": "target_sets",
+    "目標次數": "target_value",
+    "次數": "target_value",
+    "目標值": "target_value",
+    "target_value": "target_value",
+    "實際重量": "actual_weight",
+    "actual_weight": "actual_weight",
+    "實際組數": "actual_sets",
+    "actual_sets": "actual_sets",
+    "實際次數": "actual_reps",
+    "actual_reps": "actual_reps",
+    "備註": "student_note",
+    "student_note": "student_note",
+    "課表代碼": "program_code",
+    "program_code": "program_code"
+  };
+  return aliases[header] || aliases[normalized] || normalized;
+}
+
+function handleHistoryImportFile(event) {
+  const file = event.target?.files?.[0];
+  if (!file) {
+    return;
+  }
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      pendingHistoryImportRows = buildHistoryImportPreview(String(reader.result || ""));
+      renderHistoryImportPreview();
+    } catch (error) {
+      pendingHistoryImportRows = [];
+      renderHistoryImportPreview();
+      window.alert("CSV 解析失敗，請確認檔案格式。");
+    }
+  };
+  reader.readAsText(file, "utf-8");
+}
+
+function buildHistoryImportPreview(text) {
+  const rows = parseCsv(text.replace(/^\uFEFF/, ""));
+  if (!rows.length) {
+    return [];
+  }
+
+  const headers = rows[0].map((value) => normalizeImportHeader(String(value || "").trim()));
+  const dataRows = rows.slice(1);
+
+  return dataRows.map((row, index) => {
+    const raw = Object.fromEntries(headers.map((header, cellIndex) => [header, String(row[cellIndex] || "").trim()]));
+    const student = state.students.find((item) => item.name === raw.student_name);
+    const targetType = raw.target_type;
+    const targetSets = Number(raw.target_sets || 0);
+    const targetValue = Number(raw.target_value || 0);
+    const actualWeight = raw.actual_weight ? Number(raw.actual_weight) : "";
+    const actualSets = raw.actual_sets ? Number(raw.actual_sets) : "";
+    const actualReps = raw.actual_reps ? Number(raw.actual_reps) : "";
+
+    const errors = [];
+    if (!student) errors.push("找不到學生");
+    if (!raw.date) errors.push("缺少日期");
+    if (!raw.exercise) errors.push("缺少動作");
+    if (!["reps", "time", "rm"].includes(targetType)) errors.push("類型錯誤");
+
+    const valid = errors.length === 0;
+    return {
+      rowNumber: index + 2,
+      valid,
+      statusText: valid ? "可匯入" : errors.join("、"),
+      studentId: student?.id || "",
+      studentName: raw.student_name,
+      programDate: raw.date,
+      programCode: raw.program_code || "",
+      exercise: raw.exercise,
+      category: raw.category || "主項目",
+      targetType,
+      targetSets,
+      targetValue,
+      actualWeight,
+      actualSets,
+      actualReps,
+      studentNote: raw.student_note || ""
+    };
+  });
+}
+
+function renderHistoryImportPreview() {
+  if (!els.historyImportPreviewBody) {
+    return;
+  }
+
+  const validCount = pendingHistoryImportRows.filter((row) => row.valid).length;
+  if (els.historyImportCount) {
+    els.historyImportCount.textContent = pendingHistoryImportRows.length
+      ? `可匯入 ${validCount} / ${pendingHistoryImportRows.length} 筆`
+      : "尚未匯入";
+  }
+
+  if (els.confirmHistoryImportButton) {
+    els.confirmHistoryImportButton.disabled = validCount === 0;
+  }
+
+  els.historyImportPreviewBody.innerHTML = pendingHistoryImportRows.length
+    ? pendingHistoryImportRows
+        .slice(0, 12)
+        .map((row) => `
+          <tr>
+            <td>${row.studentName || "-"}</td>
+            <td>${row.programDate || "-"}</td>
+            <td>${row.exercise || "-"}</td>
+            <td>${formatTarget(row)}</td>
+            <td>${formatActual(row)}</td>
+            <td>${row.valid ? "可匯入" : row.statusText}</td>
+          </tr>
+        `)
+        .join("")
+    : `<tr><td colspan="6" class="empty-state">請先下載範本並上傳 CSV。</td></tr>`;
+}
+
+async function confirmHistoryImport() {
+  const validRows = pendingHistoryImportRows.filter((row) => row.valid);
+  if (!validRows.length) {
+    window.alert("目前沒有可匯入的資料。");
+    return;
+  }
+  let importedCount = validRows.length;
+
+  if (IS_CLOUD_MODE) {
+    try {
+      await importHistoryRowsToCloud(validRows);
+    } catch (error) {
+      console.warn("Cloud import history failed, falling back to local state:", error);
+      const importKeys = new Set(validRows.map((row) => `${row.studentId}::${row.programDate}::${row.exercise}`));
+      state.workoutLogs = state.workoutLogs.filter(
+        (log) => !importKeys.has(`${log.studentId}::${log.programDate}::${log.exercise}`)
+      );
+
+      const importedLogs = validRows.map((row, index) => ({
+        id: `import-log-${Date.now()}-${index}`,
+        programId: "",
+        programCode: row.programCode || "",
+        programDate: row.programDate,
+        studentId: row.studentId,
+        studentName: row.studentName,
+        category: row.category,
+        exercise: row.exercise,
+        targetSets: row.targetSets || "",
+        targetType: row.targetType,
+        targetValue: row.targetValue || "",
+        actualWeight: row.actualWeight || "",
+        actualSets: row.actualSets || "",
+        actualReps: row.actualReps || "",
+        studentNote: row.studentNote || "",
+        submittedAt: `${row.programDate} 00:00`
+      }));
+
+      state.workoutLogs = importedLogs.concat(state.workoutLogs);
+      importedCount = importedLogs.length;
+      persistState();
+    }
+  } else {
+    const importKeys = new Set(validRows.map((row) => `${row.studentId}::${row.programDate}::${row.exercise}`));
+    state.workoutLogs = state.workoutLogs.filter(
+      (log) => !importKeys.has(`${log.studentId}::${log.programDate}::${log.exercise}`)
+    );
+
+    const importedLogs = validRows.map((row, index) => ({
+      id: `import-log-${Date.now()}-${index}`,
+      programId: "",
+      programCode: row.programCode || "",
+      programDate: row.programDate,
+      studentId: row.studentId,
+      studentName: row.studentName,
+      category: row.category,
+      exercise: row.exercise,
+      targetSets: row.targetSets || "",
+      targetType: row.targetType,
+      targetValue: row.targetValue || "",
+      actualWeight: row.actualWeight || "",
+      actualSets: row.actualSets || "",
+      actualReps: row.actualReps || "",
+      studentNote: row.studentNote || "",
+      submittedAt: `${row.programDate} 00:00`
+    }));
+
+    state.workoutLogs = importedLogs.concat(state.workoutLogs);
+    importedCount = importedLogs.length;
+    persistState();
+  }
+  pendingHistoryImportRows = [];
+  if (els.historyImportFile) {
+    els.historyImportFile.value = "";
+  }
+  renderHistoryImportPreview();
+  renderCoachHistoryFilters();
+  renderCoachHistory();
+  renderCoachToday();
+  renderCoachStudentRoster();
+  renderCoachRoster();
+  renderStudentHistoryFilters();
+  renderStudentHistory();
+  renderStudentSummary();
+  window.alert(`已匯入 ${importedCount} 筆歷史紀錄。`);
+}
+
+function renderCoachStudentRoster() {
+  if (!els.coachStudentRoster) {
+    return;
+  }
+
+  const studentsPool = getCoachScopedStudents();
+  const coachLogs = getCoachScopedLogs();
+  const program = getPublishedProgram(getCurrentCoach()?.id);
+  const submittedIds = new Set(
+    (program ? coachLogs.filter((log) => log.programId === program.id) : []).map((log) => log.studentId)
+  );
+  const displayDate = program?.date
+    ? `${Number(program.date.slice(0, 4)) - 1911}.${Number(program.date.slice(5, 7))}.${Number(program.date.slice(8, 10))}`
+    : "\u4eca\u65e5";
+  const keyword = (els.coachStudentRosterSearch?.value || "").trim().toLowerCase();
+  const students = studentsPool.filter((student) => {
+    if (!keyword) {
+      return true;
+    }
+
+    return (
+      String(student.name || "").trim().toLowerCase().includes(keyword) ||
+      String(student.accessCode || "").trim().toLowerCase().includes(keyword)
+    );
+  });
+
+  if (els.coachStudentCount) {
+    els.coachStudentCount.textContent = `\u5171 ${studentsPool.length} \u4eba`;
+  }
+  if (els.coachStudentRosterSummary) {
+    els.coachStudentRosterSummary.textContent = `\u76ee\u524d\u986f\u793a ${students.length} / ${studentsPool.length} \u4eba`;
+  }
+
+  els.coachStudentRoster.innerHTML = students.length
+    ? students
+        .map((student) => {
+          const studentLogs = coachLogs
+            .filter((log) => log.studentId === student.id);
+          const lastLog = studentLogs
+            .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`))[0];
+          const lastLogDate = lastLog?.programDate
+            ? `${Number(lastLog.programDate.slice(0, 4)) - 1911}.${Number(lastLog.programDate.slice(5, 7))}.${Number(lastLog.programDate.slice(8, 10))}`
+            : "\u5c1a\u7121\u7d00\u9304";
+          const assignedCoach = state.coaches.find((coach) => coach.id === student.primaryCoachId);
+          const lastUsedText = formatUsageTimestamp(student.lastUsedAt);
+
+          return `
+            <article class="coach-link-card">
+              <div class="coach-link-top">
+                <div>
+                  <h4>${student.name}</h4>
+                  <p class="coach-student-meta">\u6700\u5f8c\u586b\u5beb\uff1a${lastLogDate}</p>
+                  <p class="coach-student-meta">最後使用：${lastUsedText}</p>
+                  <p class="coach-student-meta">\u6b77\u53f2\u7b46\u6578\uff1a${studentLogs.length}</p>
+                  ${APP_MODE === "admin" ? `<p class="coach-student-meta">主要教練：${assignedCoach?.name || "暫無教練"}</p>` : ""}
+                </div>
+                <div class="roster-pill-stack">
+                  <span class="status-pill">\u4ee3\u78bc\uff1a${student.accessCode || "-"}</span>
+                  <span class="status-pill ${student.status === "inactive" ? "is-muted" : "is-success"}">${student.status === "inactive" ? "\u5df2\u505c\u7528" : "\u4f7f\u7528\u4e2d"}</span>
+                  <span class="status-pill ${submittedIds.has(student.id) ? "is-success" : "is-muted"}">${displayDate} ${submittedIds.has(student.id) ? "\u5df2\u9001\u51fa" : "\u672a\u9001\u51fa"}</span>
+                </div>
+              </div>
+              <div class="coach-link-actions">
+                ${APP_MODE !== "admin" ? `<button class="ghost-button" type="button" data-open-student-link="${student.id}" data-student-name="${student.name}">\u67e5\u770b\u7db2\u5740</button>` : ""}
+                ${APP_MODE !== "admin" ? `<button class="ghost-button" type="button" data-open-student-history="${student.id}">\u67e5\u770b\u5168\u90e8\u7d00\u9304</button>` : ""}
+                ${APP_MODE === "admin" ? `<button class="ghost-button" type="button" data-assign-student-coach="${student.id}">指派教練</button>` : ""}
+                <button class="ghost-button" type="button" data-edit-student="${student.id}">\u4fee\u6539\u59d3\u540d</button>
+                <button class="ghost-button" type="button" data-copy-student-code="${student.id}" data-student-code="${student.accessCode || ""}">\u8907\u88fd\u4ee3\u78bc</button>
+                <button class="ghost-button" type="button" data-toggle-student-status="${student.id}">${student.status === "inactive" ? "\u555f\u7528\u5b78\u751f" : "\u505c\u7528\u5b78\u751f"}</button>
+                <button class="ghost-button" type="button" data-delete-student="${student.id}">\u522a\u9664\u5b78\u751f</button>
+              </div>
+            </article>
+          `;
+        })
+        .join("")
+    : `<div class="empty-card">\u76ee\u524d\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u7684\u5b78\u751f\u3002</div>`;
+}
+
+async function createCoachFromForm() {
+  const name = (els.newCoachName?.value || "").trim();
+  if (!name) {
+    window.alert("請先輸入教練姓名。");
+    els.newCoachName?.focus();
+    return;
+  }
+
+  const exists = (state.coaches || []).some((coach) => String(coach.name || "").trim() === name);
+  if (exists) {
+    window.alert("這位教練已經存在。");
+    els.newCoachName?.focus();
+    return;
+  }
+
+  const nextIndex = state.coaches.length + 1;
+  const accessCode = buildCoachAccessCode(name, nextIndex);
+  const tokenBase = String(name || "")
+    .replace(/\s+/g, "")
+    .toLowerCase()
+    .replace(/[^a-z0-9]/g, "");
+
+  const coach = {
+    id: `coach-${Date.now()}`,
+    name,
+    accessCode,
+    token: tokenBase || `coach${String(nextIndex).padStart(3, "0")}`,
+    status: "active",
+    role: "coach",
+    lastUsedAt: ""
+  };
+
+  if (IS_CLOUD_MODE) {
+    try {
+      const payload = await callCloudApi("upsertCoach", {
+        coach: {
+          coach_id: coach.id,
+          coach_name: coach.name,
+          access_code: coach.accessCode,
+          token: coach.token,
+          status: coach.status,
+          role: coach.role,
+          last_used_at: coach.lastUsedAt
+        }
+      });
+      applyCloudPayloadToState(payload);
+    } catch (error) {
+      console.warn("Cloud createCoach failed, falling back to local state:", error);
+      state.coaches.push(coach);
+      if (APP_MODE !== "admin") {
+        state.currentCoachId = coach.id;
+      }
+      persistState();
+    }
+  } else {
+    state.coaches.push(coach);
+    if (APP_MODE !== "admin") {
+      state.currentCoachId = coach.id;
+    }
+    persistState();
+  }
+  if (APP_MODE === "admin") {
+    refreshAdminWorkspace();
+    els.newCoachName.value = "";
+    switchCoachPanel("coach-coaches");
+    window.alert(`教練已新增，代碼為 ${coach.accessCode}。`);
+    return;
+  }
+  refreshCoachWorkspace();
+  els.newCoachName.value = "";
+  switchCoachPanel("coach-coaches");
+  window.alert(`教練已新增，代碼為 ${coach.accessCode}。`);
+}
+
+async function createStudentFromCoachForm() {
+  const name = (els.newStudentName?.value || "").trim();
+
+  if (!name) {
+    window.alert("\u8acb\u5148\u8f38\u5165\u5b78\u751f\u59d3\u540d\u3002");
+    els.newStudentName?.focus();
+    return;
+  }
+
+  const exists = state.students.some((student) => String(student.name || "").trim() === name);
+  if (exists) {
+    window.alert("\u9019\u4f4d\u5b78\u751f\u5df2\u7d93\u5b58\u5728\u3002");
+    els.newStudentName?.focus();
+    return;
+  }
+
+  const nextIndex = state.students.length + 1;
+  const tokenBase = `student${String(nextIndex).padStart(3, "0")}`;
+  const accessCode = buildAccessCode(name, nextIndex);
+  const nextStudentId = `stu-${Date.now()}`;
+  const defaultCoachId = APP_MODE === "admin" ? "" : (getCurrentCoach()?.id || "");
+
+  const studentRecord = {
+    id: nextStudentId,
+    name,
+    primaryCoachId: defaultCoachId,
+    status: "active",
+    accessCode,
+    token: tokenBase
+  };
+
+  if (IS_CLOUD_MODE) {
+    try {
+      const payload = await callCloudApi("upsertStudent", {
+        student: {
+          student_id: studentRecord.id,
+          student_name: studentRecord.name,
+          primary_coach_id: studentRecord.primaryCoachId,
+          status: studentRecord.status,
+          access_code: studentRecord.accessCode,
+          token: studentRecord.token
+        }
+      });
+      applyCloudPayloadToState(payload);
+    } catch (error) {
+      console.warn("Cloud createStudent failed, falling back to local state:", error);
+      state.students.push(studentRecord);
+      persistState();
+    }
+  } else {
+    state.students.push(studentRecord);
+    persistState();
+  }
+
+  switchCoachPanel("coach-students");
+  if (APP_MODE !== "admin" && els.coachStudentLinkName) {
+    els.coachStudentLinkName.value = name;
+  }
+  if (APP_MODE !== "admin" && els.coachStudentLinkSelect) {
+    els.coachStudentLinkSelect.value = name;
+  }
+  if (APP_MODE !== "admin") {
+    renderCoachStudentLinks();
+  }
+  if (APP_MODE === "admin") {
+    refreshAdminWorkspace();
+  } else {
+    renderCoachStudentRoster();
+    renderCoachRoster();
+    renderCoachToday();
+    renderCoachHistoryFilters();
+    renderStudentProgramOptions();
+    renderStudentHistoryFilters();
+  }
+
+  els.newStudentName.value = "";
+  window.alert("\u5b78\u751f\u5df2\u65b0\u589e\u3002");
+  const nextStudentCard = document.querySelector(`[data-student-card="${nextStudentId}"]`);
+  nextStudentCard?.scrollIntoView({ behavior: "smooth", block: "center" });
+  const activeTabButton = document.querySelector('.sub-tab[data-coach-tab="coach-students"]');
+  activeTabButton?.scrollIntoView({ behavior: "smooth", block: "nearest", inline: "center" });
+}
+
+function buildAccessCode(name, index) {
+  const latin = String(name || "")
+    .replace(/[^A-Za-z]/g, "")
+    .toUpperCase()
+    .slice(0, 2);
+
+  const prefix = latin || "ST";
+  return `${prefix}${String(index).padStart(3, "0")}`;
+}
+
+async function handleCoachRosterAction(event) {
+  const button = event.target.closest("[data-set-current-coach], [data-edit-coach], [data-toggle-coach-status], [data-delete-coach]");
+  if (!button) {
+    return;
+  }
+
+  if (button.dataset.setCurrentCoach) {
+    const coachId = button.dataset.setCurrentCoach;
+    const nextCoach = state.coaches.find((coach) => coach.id === coachId && coach.status !== "inactive");
+    if (!nextCoach) {
+      window.alert("這位教練目前已停用，請先啟用後再切換。");
+      return;
+    }
+    state.currentCoachId = coachId;
+    persistState();
+    renderCurrentCoachOptions();
+    renderCoachRoster();
+    editingProgramId = getDefaultEditingProgramId();
+    seedEditorFromProgram(editingProgramId);
+    renderProgramLibrary();
+    renderCoachStudentLinks();
+    renderCoachStudentRoster();
+    renderCoachToday();
+    renderCoachHistoryFilters();
+    renderCoachHistory();
+    renderStudentProgramOptions();
+    renderStudentHistoryFilters();
+    renderStudentHistory();
+    renderStudentSummary();
+    return;
+  }
+
+  if (button.dataset.editCoach) {
+    const coach = state.coaches.find((item) => item.id === button.dataset.editCoach);
+    if (!coach) {
+      return;
+    }
+    const nextName = window.prompt("請輸入新的教練姓名。", coach.name || "");
+    if (nextName === null) {
+      return;
+    }
+    const trimmed = nextName.trim();
+    if (!trimmed) {
+      window.alert("教練姓名不可空白。");
+      return;
+    }
+    const duplicated = state.coaches.some((item) => item.id !== coach.id && item.name === trimmed);
+    if (duplicated) {
+      window.alert("已有同名教練，請換一個名稱。");
+      return;
+    }
+    if (IS_CLOUD_MODE) {
+      try {
+        const payload = await callCloudApi("upsertCoach", {
+          coach: {
+            coach_id: coach.id,
+            coach_name: trimmed,
+            access_code: coach.accessCode,
+            token: coach.token,
+            status: coach.status,
+            role: coach.role,
+            last_used_at: coach.lastUsedAt
+          }
+        });
+        applyCloudPayloadToState(payload);
+      } catch (error) {
+        console.warn("Cloud editCoach failed, falling back to local state:", error);
+        coach.name = trimmed;
+        state.programs = state.programs.map((program) =>
+          program.coachId === coach.id ? { ...program, coachName: trimmed } : program
+        );
+        state.workoutLogs = state.workoutLogs.map((log) =>
+          log.coachId === coach.id ? { ...log, coachName: trimmed } : log
+        );
+        persistState();
+      }
+    } else {
+      coach.name = trimmed;
+      state.programs = state.programs.map((program) =>
+        program.coachId === coach.id ? { ...program, coachName: trimmed } : program
+      );
+      state.workoutLogs = state.workoutLogs.map((log) =>
+        log.coachId === coach.id ? { ...log, coachName: trimmed } : log
+      );
+      persistState();
+    }
+    if (APP_MODE === "admin") {
+      refreshAdminWorkspace();
+    } else {
+      renderCurrentCoachOptions();
+      renderCoachRoster();
+      renderProgramLibrary();
+      renderCoachStudentLinks();
+      renderCoachStudentRoster();
+      renderCoachHistoryFilters();
+      renderCoachToday();
+      renderCoachHistory();
+      renderStudentProgramOptions();
+      renderStudentHistoryFilters();
+      renderStudentHistory();
+      renderStudentSummary();
+      syncStudentAccessUI();
+    }
+    window.alert(`教練名稱已更新為 ${trimmed}。`);
+    return;
+  }
+
+  if (button.dataset.toggleCoachStatus) {
+    const coach = state.coaches.find((item) => item.id === button.dataset.toggleCoachStatus);
+    if (!coach) {
+      return;
+    }
+    const activeCoachCount = state.coaches.filter((item) => item.status !== "inactive").length;
+    const nextStatus = coach.status === "inactive" ? "active" : "inactive";
+    if (nextStatus === "inactive" && activeCoachCount <= 1) {
+      window.alert("至少要保留一位啟用中的教練。");
+      return;
+    }
+    if (IS_CLOUD_MODE) {
+      try {
+        const payload = await callCloudApi("setCoachStatus", {
+          coachId: coach.id,
+          status: nextStatus
+        });
+        applyCloudPayloadToState(payload);
+      } catch (error) {
+        console.warn("Cloud toggleCoachStatus failed, falling back to local state:", error);
+        coach.status = nextStatus;
+        if (state.currentCoachId === coach.id && nextStatus === "inactive") {
+          const fallbackCoach = state.coaches.find((item) => item.status !== "inactive" && item.id !== coach.id);
+          state.currentCoachId = fallbackCoach?.id || state.currentCoachId;
+        }
+        persistState();
+      }
+    } else {
+      coach.status = nextStatus;
+      if (state.currentCoachId === coach.id && nextStatus === "inactive") {
+        const fallbackCoach = state.coaches.find((item) => item.status !== "inactive" && item.id !== coach.id);
+        state.currentCoachId = fallbackCoach?.id || state.currentCoachId;
+      }
+      persistState();
+    }
+    if (APP_MODE === "admin") {
+      refreshAdminWorkspace();
+    } else {
+      renderCurrentCoachOptions();
+      renderCoachRoster();
+      editingProgramId = getDefaultEditingProgramId();
+      seedEditorFromProgram(editingProgramId);
+      renderProgramLibrary();
+      renderCoachStudentLinks();
+      renderCoachStudentRoster();
+      renderCoachToday();
+      renderCoachHistoryFilters();
+      renderCoachHistory();
+      renderStudentProgramOptions();
+      renderStudentHistoryFilters();
+      renderStudentHistory();
+      renderStudentSummary();
+    }
+    return;
+  }
+
+  if (button.dataset.deleteCoach) {
+    const coach = state.coaches.find((item) => item.id === button.dataset.deleteCoach);
+    if (!coach) {
+      return;
+    }
+    if ((state.coaches || []).length <= 1) {
+      window.alert("至少要保留一位教練。");
+      return;
+    }
+
+    const linkedStudentCount = state.students.filter((student) => (student.primaryCoachId || "") === coach.id).length;
+    const linkedProgramCount = state.programs.filter((program) => (program.coachId || "") === coach.id).length;
+    const linkedLogCount = state.workoutLogs.filter((log) => (log.coachId || "") === coach.id).length;
+    const confirmed = window.confirm(
+      `確定要刪除 ${coach.name} 嗎？\n\n名下學生：${linkedStudentCount} 人\n課表：${linkedProgramCount} 份\n紀錄：${linkedLogCount} 筆\n\n刪除後，原本學生會顯示為「暫無教練」。`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    if (IS_CLOUD_MODE) {
+      try {
+        const payload = await callCloudApi("deleteCoach", { coachId: coach.id });
+        applyCloudPayloadToState(payload);
+      } catch (error) {
+        console.warn("Cloud deleteCoach failed, falling back to local state:", error);
+        state.students = state.students.map((student) =>
+          student.primaryCoachId === coach.id ? { ...student, primaryCoachId: "" } : student
+        );
+        state.programs = state.programs.map((program) =>
+          program.coachId === coach.id ? { ...program, coachId: "" } : program
+        );
+        state.workoutLogs = state.workoutLogs.map((log) =>
+          log.coachId === coach.id ? { ...log, coachId: "" } : log
+        );
+        state.coaches = state.coaches.filter((item) => item.id !== coach.id);
+
+        if (state.currentCoachId === coach.id) {
+          state.currentCoachId = state.coaches[0]?.id || "";
+        }
+        if (authenticatedCoachId === coach.id) {
+          authenticatedCoachId = "";
+        }
+
+        persistState();
+      }
+    } else {
+      state.students = state.students.map((student) =>
+        student.primaryCoachId === coach.id ? { ...student, primaryCoachId: "" } : student
+      );
+      state.programs = state.programs.map((program) =>
+        program.coachId === coach.id ? { ...program, coachId: "" } : program
+      );
+      state.workoutLogs = state.workoutLogs.map((log) =>
+        log.coachId === coach.id ? { ...log, coachId: "" } : log
+      );
+      state.coaches = state.coaches.filter((item) => item.id !== coach.id);
+
+      if (state.currentCoachId === coach.id) {
+        state.currentCoachId = state.coaches[0]?.id || "";
+      }
+      if (authenticatedCoachId === coach.id) {
+        authenticatedCoachId = "";
+      }
+
+      persistState();
+    }
+    if (APP_MODE === "admin") {
+      refreshAdminWorkspace();
+    } else {
+      refreshCoachWorkspace();
+      refreshStudentWorkspace();
+    }
+    window.alert(`已刪除 ${coach.name}，其名下學生目前為暫無教練。`);
+  }
+}
+
+async function handleCoachStudentRosterAction(event) {
+  const button = event.target.closest("[data-delete-student], [data-copy-student-code], [data-edit-student], [data-open-student-link], [data-open-student-history], [data-toggle-student-status], [data-assign-student-coach]");
+  if (!button) {
+    return;
+  }
+
+  if (button.dataset.openStudentHistory) {
+    const studentId = button.dataset.openStudentHistory;
+    switchCoachPanel("coach-history");
+    els.coachHistoryStudent.value = studentId;
+    els.coachHistoryExercise.value = "";
+    renderCoachHistory();
+    document.querySelector("#coach-history").scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  if (button.dataset.openStudentLink) {
+    const studentName = button.dataset.studentName || "";
+    if (!studentName) {
+      return;
+    }
+
+    switchCoachPanel("coach-students");
+    if (els.coachStudentLinkName) {
+      els.coachStudentLinkName.value = studentName;
+    }
+    if (els.coachStudentLinkSelect) {
+      els.coachStudentLinkSelect.value = studentName;
+    }
+    renderCoachStudentLinks();
+    els.coachStudentLinkName?.scrollIntoView({ behavior: "smooth", block: "center" });
+    els.coachStudentLinkName?.focus();
+    return;
+  }
+
+  if (button.dataset.editStudent) {
+    const studentId = button.dataset.editStudent;
+    const student = state.students.find((item) => item.id === studentId);
+    if (!student) {
+      return;
+    }
+
+    const nextName = window.prompt("\u8acb\u8f38\u5165\u65b0\u7684\u5b78\u751f\u59d3\u540d\uff1a", student.name)?.trim();
+    if (!nextName || nextName === student.name) {
+      return;
+    }
+
+    const exists = state.students.some((item) => item.id !== studentId && String(item.name || "").trim() === nextName);
+    if (exists) {
+      window.alert("\u9019\u4f4d\u5b78\u751f\u540d\u7a31\u5df2\u7d93\u5b58\u5728\u3002");
+      return;
+    }
+    if (IS_CLOUD_MODE) {
+      try {
+        const payload = await callCloudApi("upsertStudent", {
+          student: {
+            student_id: student.id,
+            student_name: nextName,
+            access_code: student.accessCode,
+            token: student.token,
+            status: student.status,
+            primary_coach_id: student.primaryCoachId,
+            last_used_at: student.lastUsedAt
+          }
+        });
+        applyCloudPayloadToState(payload);
+      } catch (error) {
+        console.warn("Cloud editStudent failed, falling back to local state:", error);
+        state.students = state.students.map((item) =>
+          item.id === studentId
+            ? { ...item, name: nextName }
+            : item
+        );
+        state.workoutLogs = state.workoutLogs.map((log) =>
+          log.studentId === studentId
+            ? { ...log, studentName: nextName }
+            : log
+        );
+        persistState();
+      }
+    } else {
+      state.students = state.students.map((item) =>
+        item.id === studentId
+          ? { ...item, name: nextName }
+          : item
+      );
+      state.workoutLogs = state.workoutLogs.map((log) =>
+        log.studentId === studentId
+          ? { ...log, studentName: nextName }
+          : log
+      );
+      persistState();
+    }
+
+    if (currentStudentId === studentId) {
+      const currentStudent = state.students.find((item) => item.id === studentId);
+      if (currentStudent) {
+        els.studentAccessCode.value = currentStudent.accessCode || els.studentAccessCode.value;
+      }
+    }
+
+    if (APP_MODE === "admin") {
+      refreshAdminWorkspace();
+    } else {
+      renderCoachStudentLinks();
+      renderCoachStudentRoster();
+      renderCoachToday();
+      renderCoachHistoryFilters();
+      renderCoachHistory();
+      renderStudentProgramOptions();
+      renderStudentHistoryFilters();
+      renderStudentHistory();
+      renderStudentSummary();
+    }
+    return;
+  }
+
+  if (button.dataset.assignStudentCoach) {
+    openAssignCoachModal(button.dataset.assignStudentCoach);
+    return;
+  }
+
+  if (button.dataset.toggleStudentStatus) {
+    const studentId = button.dataset.toggleStudentStatus;
+    const student = state.students.find((item) => item.id === studentId);
+    if (!student) {
+      return;
+    }
+
+    const nextStatus = student.status === "inactive" ? "active" : "inactive";
+    if (IS_CLOUD_MODE) {
+      try {
+        const payload = await callCloudApi("setStudentStatus", {
+          studentId,
+          status: nextStatus
+        });
+        applyCloudPayloadToState(payload);
+      } catch (error) {
+        console.warn("Cloud toggleStudentStatus failed, falling back to local state:", error);
+        state.students = state.students.map((item) =>
+          item.id === studentId ? { ...item, status: nextStatus } : item
+        );
+
+        if (currentStudentId === studentId && nextStatus === "inactive") {
+          currentStudentId = "";
+          loadedStudentEntries = [];
+          lastSubmittedLogs = [];
+          studentSubmissionCompleted = false;
+        }
+
+        persistState();
+      }
+    } else {
+      state.students = state.students.map((item) =>
+        item.id === studentId ? { ...item, status: nextStatus } : item
+      );
+
+      if (currentStudentId === studentId && nextStatus === "inactive") {
+        currentStudentId = "";
+        loadedStudentEntries = [];
+        lastSubmittedLogs = [];
+        studentSubmissionCompleted = false;
+      }
+
+      persistState();
+    }
+    if (APP_MODE === "admin") {
+      refreshAdminWorkspace();
+    } else {
+      renderCoachStudentLinks();
+      renderCoachStudentRoster();
+      renderCoachToday();
+      renderCoachHistoryFilters();
+      renderCoachHistory();
+      renderStudentProgramOptions();
+      renderStudentHistoryFilters();
+      renderStudentHistory();
+      renderStudentSummary();
+      syncStudentAccessUI();
+    }
+    return;
+  }
+
+  if (button.dataset.copyStudentCode) {
+    const code = button.dataset.studentCode || "";
+    if (!code) {
+      return;
+    }
+
+    const resetText = () => {
+      window.setTimeout(() => {
+        button.textContent = "\u8907\u88fd\u4ee3\u78bc";
+      }, 1200);
+    };
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(code).then(() => {
+        button.textContent = "\u5df2\u8907\u88fd";
+        resetText();
+      }).catch(() => {
+        window.alert(`\u8acb\u624b\u52d5\u8907\u88fd\u4ee3\u78bc\uff1a${code}`);
+      });
+      return;
+    }
+
+    window.alert(`\u8acb\u624b\u52d5\u8907\u88fd\u4ee3\u78bc\uff1a${code}`);
+    return;
+  }
+
+  const studentId = button.dataset.deleteStudent;
+  const student = state.students.find((item) => item.id === studentId);
+  if (!student) {
+    return;
+  }
+
+  const hasLogs = state.workoutLogs.some((log) => log.studentId === studentId);
+  const confirmed = window.confirm(
+    hasLogs
+      ? `${student.name} \u5df2\u7d93\u6709\u6b77\u53f2\u7d00\u9304\uff0c\u522a\u9664\u5f8c\u6703\u4e00\u8d77\u79fb\u9664\u8a72\u5b78\u751f\u7684\u6b77\u53f2\u8cc7\u6599\u3002\u78ba\u5b9a\u8981\u522a\u9664\u55ce\uff1f`
+      : `\u78ba\u5b9a\u8981\u522a\u9664 ${student.name} \u55ce\uff1f`
+  );
+
+  if (!confirmed) {
+    return;
+  }
+
+    if (IS_CLOUD_MODE) {
+      try {
+        const payload = await callCloudApi("deleteStudent", { studentId });
+        applyCloudPayloadToState(payload);
+      } catch (error) {
+        console.warn("Cloud deleteStudent failed, falling back to local state:", error);
+        state.students = state.students.filter((item) => item.id !== studentId);
+        state.workoutLogs = state.workoutLogs.filter((log) => log.studentId !== studentId);
+
+        if (currentStudentId === studentId) {
+          currentStudentId = "";
+          loadedStudentEntries = [];
+          lastSubmittedLogs = [];
+          studentSubmissionCompleted = false;
+        }
+
+        persistState();
+      }
+    } else {
+      state.students = state.students.filter((item) => item.id !== studentId);
+      state.workoutLogs = state.workoutLogs.filter((log) => log.studentId !== studentId);
+
+      if (currentStudentId === studentId) {
+        currentStudentId = "";
+        loadedStudentEntries = [];
+        lastSubmittedLogs = [];
+        studentSubmissionCompleted = false;
+      }
+
+      persistState();
+    }
+  if (APP_MODE === "admin") {
+    refreshAdminWorkspace();
+  } else {
+    renderCoachStudentLinks();
+    renderCoachStudentRoster();
+    renderCoachToday();
+    renderCoachHistoryFilters();
+    renderCoachHistory();
+    renderStudentProgramOptions();
+    renderStudentHistoryFilters();
+    renderStudentHistory();
+    renderStudentSummary();
+    syncStudentAccessUI();
+  }
+}
+
+function handleCoachStudentLinkAction(event) {
+  const button = event.target.closest("[data-copy-student-link], [data-copy-shared-link], [data-copy-student-message], [data-copy-student-qr]");
+  if (!button) {
+    return;
+  }
+
+  if (button.dataset.copyStudentMessage) {
+    const message = `${button.dataset.studentName}\u4f60\u597d\uff0c
+\u4f60\u7684\u5c08\u5c6c\u7db2\u5740\uff1a${button.dataset.studentLink}
+\u5982\u679c\u4f7f\u7528\u5171\u7528\u5165\u53e3\uff0c\u8acb\u524d\u5f80\uff1a${button.dataset.sharedUrl}
+\u4e26\u8f38\u5165\u4ee3\u78bc\uff1a${button.dataset.studentCode}`;
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(message).then(() => {
+        button.textContent = "\u5df2\u8907\u88fd\u8a0a\u606f";
+        window.setTimeout(() => {
+          button.textContent = "\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f";
+        }, 1200);
+      }).catch(() => {
+        window.alert("\u8acb\u624b\u52d5\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f\u3002");
+      });
+      return;
+    }
+
+    window.alert(message);
+    return;
+  }
+
+  if (button.dataset.copyStudentQr) {
+    const qrValue = button.dataset.qrLink || "";
+    if (!qrValue) {
+      return;
+    }
+
+    if (navigator.clipboard?.writeText) {
+      navigator.clipboard.writeText(qrValue).then(() => {
+        button.textContent = "已複製 QR 連結";
+        window.setTimeout(() => {
+          button.textContent = "複製 QR 連結內容";
+        }, 1200);
+      }).catch(() => {
+        window.alert("請手動複製 QR 連結內容。");
+      });
+      return;
+    }
+
+    window.alert(qrValue);
+    return;
+  }
+
+  const studentId = button.dataset.copyStudentLink || button.dataset.copySharedLink;
+  const input = button.dataset.copyStudentLink
+    ? els.coachStudentLinks.querySelector(`[data-link-value="${studentId}"]`)
+    : els.coachStudentLinks.querySelector(`[data-shared-link-value="${studentId}"]`);
+  if (!input) {
+    return;
+  }
+
+  const defaultLabel = button.dataset.copyStudentLink ? "\u8907\u88fd\u7db2\u5740" : "\u8907\u88fd\u5171\u7528\u5165\u53e3";
+
+  const resetText = () => {
+    window.setTimeout(() => {
+      button.textContent = defaultLabel;
+    }, 1200);
+  };
+
+  if (navigator.clipboard?.writeText) {
+    navigator.clipboard.writeText(input.value).then(() => {
+      button.textContent = "\u5df2\u8907\u88fd";
+      resetText();
+    }).catch(() => {
+      input.focus();
+      input.select();
+      window.alert("\u5df2\u9078\u53d6\u7db2\u5740\uff0c\u8acb\u624b\u52d5\u8907\u88fd\u3002");
+    });
+    return;
+  }
+
+  input.focus();
+  input.select();
+  window.alert("\u5df2\u9078\u53d6\u7db2\u5740\uff0c\u8acb\u624b\u52d5\u8907\u88fd\u3002");
+}
+
+function getCoachHistoryLogs() {
+  const studentId = els.coachHistoryStudent?.value || "";
+  const exercise = els.coachHistoryExercise?.value || "";
+  const dateFrom = els.coachHistoryDateFrom?.value || "";
+  const dateTo = els.coachHistoryDateTo?.value || "";
+
+  return getCoachScopedLogs()
+    .filter((log) => !studentId || log.studentId === studentId)
+    .filter((log) => !exercise || log.exercise === exercise)
+    .filter((log) => !dateFrom || String(log.programDate) >= dateFrom)
+    .filter((log) => !dateTo || String(log.programDate) <= dateTo)
+    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`));
+}
+
+function renderCoachHistory() {
+  const logs = getCoachHistoryLogs();
+  const visibleLogs = logs.slice(0, coachHistoryVisibleCount);
+
+  if (els.coachHistoryCount) {
+    els.coachHistoryCount.textContent = `共 ${visibleLogs.length} / ${logs.length} 筆`;
+  }
+
+  els.coachHistoryBody.innerHTML = visibleLogs.length
+    ? visibleLogs
+        .map(
+          (log) => `
+            <tr>
+              <td>${log.programDate}</td>
+              <td>${log.studentName}</td>
+              <td>${log.category}</td>
+              <td>${log.exercise}</td>
+              <td>${formatTarget(log)}</td>
+              <td>${formatActual(log)}</td>
+              <td>${log.studentNote || "-"}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : `<tr><td colspan="7" class="empty-state">目前沒有符合條件的紀錄。</td></tr>`;
+
+  if (els.coachHistoryMore) {
+    const remaining = logs.length - visibleLogs.length;
+    const shouldHide = logs.length <= 6;
+    els.coachHistoryMore.dataset.empty = shouldHide ? "true" : "false";
+    els.coachHistoryMore.classList.toggle("is-hidden", shouldHide || (coachViewMode === "mobile" && !coachHistoryOpened));
+    if (!shouldHide) {
+      els.coachHistoryMore.textContent = remaining > 0 ? `查看更多（剩餘 ${remaining} 筆）` : "收合";
+    }
+  }
+}
+
+function resetCoachHistoryFilters() {
+  if (els.coachHistoryStudent) {
+    els.coachHistoryStudent.value = "";
+  }
+  if (els.coachHistoryExercise) {
+    els.coachHistoryExercise.value = "";
+  }
+  if (els.coachHistoryDateFrom) {
+    els.coachHistoryDateFrom.value = "";
+  }
+  if (els.coachHistoryDateTo) {
+    els.coachHistoryDateTo.value = "";
+  }
+  coachHistoryVisibleCount = 6;
+  renderCoachHistory();
+}
+
+function formatDateInputValue(date) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function applyCoachHistoryLast30Days() {
+  const end = new Date();
+  const start = new Date();
+  start.setDate(end.getDate() - 29);
+
+  if (els.coachHistoryDateFrom) {
+    els.coachHistoryDateFrom.value = formatDateInputValue(start);
+  }
+  if (els.coachHistoryDateTo) {
+    els.coachHistoryDateTo.value = formatDateInputValue(end);
+  }
+
+  coachHistoryVisibleCount = 6;
+  renderCoachHistory();
+}
+
+function renderStudentHistoryFilters() {
+  const student = getSelectedStudent();
+  const exercises = [...new Set(
+    state.workoutLogs
+      .filter((log) => !student || log.studentId === student.id)
+      .map((log) => log.exercise)
+  )].sort();
+  const currentValue = els.studentHistoryExercise.value;
+  els.studentHistoryExerciseOptions.innerHTML = exercises
+    .map((exercise) => `<option value="${exercise}"></option>`)
+    .join("");
+  els.studentHistoryExercise.value = exercises.includes(currentValue) ? currentValue : "";
+  studentHistoryVisibleCount = 1;
+}
+
+function renderStudentHistory() {
+  const student = getSelectedStudent();
+  const exercise = els.studentHistoryExercise.value;
+
+  if (!student) {
+    if (els.studentHistoryCount) {
+      els.studentHistoryCount.textContent = "共 0 筆";
+    }
+    els.studentHistoryBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5148\u78ba\u8a8d\u5b78\u751f\u8eab\u4efd\u3002</td></tr>`;
+    els.studentHistoryCardList.innerHTML = `<div class="empty-card">\u8acb\u5148\u78ba\u8a8d\u5b78\u751f\u8eab\u4efd\u3002</div>`;
+    els.studentHistoryMore?.classList.add("is-hidden");
+    return;
+  }
+
+  const logs = state.workoutLogs
+    .filter((log) => log.studentId === student.id)
+    .filter((log) => !exercise || log.exercise === exercise)
+    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`));
+
+  const visibleLogs = logs.slice(0, studentHistoryVisibleCount);
+
+  if (els.studentHistoryCount) {
+    els.studentHistoryCount.textContent = `共 ${visibleLogs.length} / ${logs.length} 筆`;
+  }
+
+  els.studentHistoryBody.innerHTML = visibleLogs.length
+    ? visibleLogs
+        .map(
+          (log) => `
+            <tr>
+              <td>${log.programDate}</td>
+              <td>${log.category}</td>
+              <td>${log.exercise}</td>
+              <td>${formatTarget(log)}</td>
+              <td>${formatActual(log)}</td>
+              <td>${log.studentNote || "-"}</td>
+            </tr>
+          `
+        )
+        .join("")
+    : `<tr><td colspan="6" class="empty-state">\u76ee\u524d\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u7684\u6b77\u53f2\u7d00\u9304\u3002</td></tr>`;
+
+  els.studentHistoryCardList.innerHTML = visibleLogs.length
+    ? visibleLogs
+        .map(
+          (log) => `
+            <article class="confirm-entry-card">
+              <div class="confirm-entry-top">
+                <span class="confirm-entry-category">${log.category}</span>
+                <span class="confirm-entry-target">${log.programDate}</span>
+              </div>
+              <h4>${log.exercise}</h4>
+              <p class="confirm-entry-result">${formatActual(log)}</p>
+              <p class="confirm-entry-note">${log.studentNote || "-"}</p>
+            </article>
+          `
+        )
+        .join("")
+    : `<div class="empty-card">\u76ee\u524d\u6c92\u6709\u7b26\u5408\u689d\u4ef6\u7684\u6b77\u53f2\u7d00\u9304\u3002</div>`;
+
+  if (els.studentHistoryMore) {
+    const shouldShowButton = logs.length > 1;
+    const hasMore = logs.length > studentHistoryVisibleCount;
+    els.studentHistoryMore.classList.toggle("is-hidden", !shouldShowButton);
+    const remainCount = Math.max(logs.length - visibleLogs.length, 0);
+    els.studentHistoryMore.textContent = hasMore ? `查看更多（剩餘 ${remainCount} 筆）` : "收合";
+  }
+}
+
+function toggleStudentHistoryVisibleCount() {
+  const student = getSelectedStudent();
+  const exercise = els.studentHistoryExercise?.value || "";
+  const total = state.workoutLogs
+    .filter((log) => !student || log.studentId === student.id)
+    .filter((log) => !exercise || log.exercise === exercise).length;
+
+  if (studentHistoryVisibleCount >= total) {
+    studentHistoryVisibleCount = 1;
+  } else {
+    studentHistoryVisibleCount += 5;
+  }
+
+  renderStudentHistory();
+}
+function exportProgramImage() {
+  const { program, items } = collectProgramPayload();
+
+  if (!program.code || !items.length) {
+    window.alert("\u8acb\u5148\u5b8c\u6210\u8ab2\u8868\u4ee3\u78bc\u8207\u8ab2\u8868\u9805\u76ee\uff0c\u518d\u532f\u51fa PNG\u3002");
+    return;
+  }
+
+  const width = 1200;
+  const headerHeight = 120;
+  const rowHeight = 94;
+  const height = headerHeight + items.length * rowHeight + 2;
+  const canvas = document.createElement("canvas");
+  const ctx = canvas.getContext("2d");
+
+  canvas.width = width;
+  canvas.height = height;
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, width, height);
+
+  ctx.strokeStyle = "#29231c";
+  ctx.lineWidth = 2;
+  ctx.strokeRect(0, 0, width, height);
+
+  ctx.font = "700 66px 'Noto Sans TC'";
+  ctx.fillStyle = "#111111";
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.fillText(program.code, width / 2, headerHeight / 2);
+
+  const categoryWidth = 260;
+  const targetWidth = 220;
+  const exerciseWidth = width - categoryWidth - targetWidth;
+
+  items.forEach((item, index) => {
+    const y = headerHeight + index * rowHeight;
+    ctx.fillStyle = index % 2 === 0 ? "#d7d7d7" : "#ffffff";
+    ctx.fillRect(0, y, width, rowHeight);
+
+    ctx.fillStyle = "#171717";
+    ctx.textBaseline = "middle";
+    ctx.textAlign = "center";
+    ctx.font = "500 38px 'Noto Sans TC'";
+    ctx.fillText(item.category, categoryWidth / 2, y + rowHeight / 2);
+    ctx.fillText(item.exercise, categoryWidth + exerciseWidth / 2, y + rowHeight / 2);
+    ctx.fillText(formatTarget(item), width - targetWidth / 2, y + rowHeight / 2);
+  });
+
+  const link = document.createElement("a");
+  link.href = canvas.toDataURL("image/png");
+  link.download = `${program.code || "program"}.png`;
+  link.click();
+}
+
+function getPublishedProgram(coachId = "") {
+  const scopedPrograms = coachId
+    ? state.programs.filter((program) => (program.coachId || "") === coachId)
+    : state.programs;
+  return scopedPrograms.find((program) => program.published) || null;
+}
+
+function getSelectedStudentProgram() {
+  const student = getSelectedStudent();
+  const studentCoachId = student?.primaryCoachId || "";
+  const scopedPrograms = [...state.programs]
+    .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
+    .sort((a, b) => b.date.localeCompare(a.date));
+  const selectedProgramId = els.studentProgramSelect?.value || "";
+  return state.programs.find((program) => program.id === selectedProgramId)
+    || getPublishedProgram(studentCoachId)
+    || scopedPrograms[0]
+    || null;
+}
+
+function findLatestReferenceLog(studentId, item) {
+  return state.workoutLogs
+    .filter((log) => log.studentId === studentId)
+    .filter((log) => log.exercise === item.exercise)
+    .filter((log) => log.targetType === item.targetType)
+    .filter((log) => Number(log.targetSets) === Number(item.targetSets))
+    .filter((log) => Number(log.targetValue) === Number(item.targetValue))
+    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`))[0] || null;
+}
+
+function getRecommendedWeightText(entry) {
+  const oneRm = getEntryBaseOneRm(entry);
+  if (!oneRm) {
+    return "";
+  }
+
+  const targetWeight = getRecommendedWeightFromOneRm(entry, oneRm);
+  if (!targetWeight) {
+    return "";
+  }
+
+  return `建議重量：${formatWeightToDisplay(targetWeight)} kg`;
+}
+
+function getEntryBaseOneRm(entry) {
+  const student = getSelectedStudent();
+  if (!student || entry.category !== "主項目") {
+    return null;
+  }
+
+  const candidateLogs = state.workoutLogs
+    .filter((log) => log.studentId === student.id)
+    .filter((log) => log.exercise === entry.exercise)
+    .filter((log) => Number(log.actualWeight) > 0)
+    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`));
+
+  for (const log of candidateLogs) {
+    const inferred = inferOneRmFromLog(log);
+    if (inferred) {
+      return inferred;
+    }
+  }
+
+  return null;
+}
+
+function inferOneRmFromLog(log) {
+  const weight = Number(log.actualWeight || 0);
+  if (!weight) {
+    return null;
+  }
+
+  if (log.targetType === "rm" && Number(log.targetValue) === 1) {
+    return weight;
+  }
+
+  if (log.targetType === "rm" && Number(log.targetValue) === 3) {
+    return weight / 0.9;
+  }
+
+  if (log.targetType === "reps" && Number(log.targetSets) === 3 && Number(log.targetValue) === 5) {
+    return weight / 0.85;
+  }
+
+  if (log.targetType === "reps" && Number(log.targetSets) === 5 && Number(log.targetValue) === 5) {
+    return weight / 0.8;
+  }
+
+  return null;
+}
+
+function getRecommendedWeightFromOneRm(entry, oneRm) {
+  if (entry.targetType === "rm" && Number(entry.targetValue) === 1) {
+    return roundToNearestPlate(oneRm);
+  }
+
+  if (entry.targetType === "rm" && Number(entry.targetValue) === 3) {
+    return roundToNearestPlate(oneRm * 0.9);
+  }
+
+  if (entry.targetType === "reps" && Number(entry.targetSets) === 3 && Number(entry.targetValue) === 5) {
+    return roundToNearestPlate(oneRm * 0.85);
+  }
+
+  if (entry.targetType === "reps" && Number(entry.targetSets) === 5 && Number(entry.targetValue) === 5) {
+    return roundToNearestPlate(oneRm * 0.8);
+  }
+
+  return null;
+}
+
+function roundToNearestPlate(value) {
+  const numeric = Number(value || 0);
+  if (!numeric) {
+    return null;
+  }
+  return Math.round(numeric / 2.5) * 2.5;
+}
+
+function formatWeightToDisplay(value) {
+  const numeric = Number(value || 0);
+  if (!numeric) {
+    return "";
+  }
+  return Number.isInteger(numeric) ? String(numeric) : numeric.toFixed(1).replace(/\.0$/, "");
+}
+
+function getProgramItems(programId) {
+  return state.programItems
+    .filter((item) => item.programId === programId)
+    .sort((a, b) => a.sortOrder - b.sortOrder);
+}
+
+function getSelectedStudent() {
+  return state.students.find((student) => student.id === currentStudentId) || null;
+}
+
+function resolveStudentByAccess(rawValue) {
+  const value = String(rawValue || "").trim().toLowerCase();
+  if (!value) {
+    return null;
+  }
+
+  return state.students.find((student) => {
+    const code = String(student.accessCode || "").trim().toLowerCase();
+    const token = String(student.token || "").trim().toLowerCase();
+    return student.status !== "inactive" && (value === code || value === token || value === String(student.id).toLowerCase());
+  }) || null;
+}
+
+function exportCoachHistoryCsv() {
+  const logs = getCoachHistoryLogs();
+
+  if (!logs.length) {
+    window.alert("\u76ee\u524d\u6c92\u6709\u53ef\u532f\u51fa\u7684\u6b77\u53f2\u7d00\u9304\u3002");
+    return;
+  }
+
+  const rows = [
+    ["日期", "學生", "分類", "動作", "目標", "實際結果", "備註"],
+    ...logs.map((log) => [
+      log.programDate,
+      log.studentName,
+      log.category,
+      log.exercise,
+      formatTarget(log),
+      formatActual(log),
+      log.studentNote || ""
+    ])
+  ];
+  const csv = rows
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\n");
+
+  const blob = new Blob(["\ufeff" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement("a");
+  link.href = url;
+  link.download = "coach-history-export.csv";
+  link.click();
+  URL.revokeObjectURL(url);
+}
+
+async function hydrateStudentAccessFromUrl() {
+  const params = new URLSearchParams(window.location.search);
+  const accessValue = params.get("student") || params.get("token") || params.get("code") || "";
+  let matchedStudent = null;
+  if (IS_CLOUD_MODE) {
+    try {
+      matchedStudent = await resolveStudentAccessFromCloud(accessValue);
+    } catch (error) {
+      console.warn("Student cloud hydrate failed, falling back to local state:", error);
+      matchedStudent = resolveStudentByAccess(accessValue);
+    }
+  } else {
+    matchedStudent = resolveStudentByAccess(accessValue);
+  }
+
+  if (matchedStudent) {
+    currentStudentId = matchedStudent.id;
+    els.studentAccessCode.value = matchedStudent.accessCode || accessValue;
+    return;
+  }
+
+  currentStudentId = "";
+}
+
+function formatTarget(item) {
+  if (item.targetType === "time") {
+    return `${item.targetSets}x${item.targetValue}sec`;
+  }
+  if (item.targetType === "rm") {
+    return item.targetValue ? `${item.targetValue}RM` : "RM";
+  }
+  return `${item.targetSets}x${item.targetValue}`;
+}
+
+function formatActual(log) {
+  if (log.targetType === "time") {
+    return `${log.actualSets || 0} \u7d44`;
+  }
+  if (log.targetType === "rm") {
+    return `${log.actualWeight || 0} kg`;
+  }
+  return `${log.actualWeight || 0} kg / ${log.actualSets || 0} \u7d44 / ${log.actualReps || 0} \u6b21`;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+function escapeXml(value) {
+  return String(value ?? "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+function truncateForSheet(value, maxLength) {
+  const text = String(value ?? "");
+  return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
+}
+
+function timestampNow() {
+  const now = new Date();
+  const date = now.toISOString().slice(0, 10);
+  const time = now.toTimeString().slice(0, 5);
+  return `${date} ${time}`;
+}

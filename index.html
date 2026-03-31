@@ -1,0 +1,839 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachFlow 重訓課表與紀錄系統</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="styles.css?v=20260331-0220">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="hero">
+      <div class="hero-copy">
+        <p class="eyebrow">CoachFlow 重訓課表與紀錄系統</p>
+        <h1>教練建立課表，學生完成紀錄</h1>
+      </div>
+      <div class="hero-note">
+        <span class="hero-chip">系統原型</span>
+        <h3>目前版本說明</h3>
+        <p>目前以本地資料模擬，後續可再接回 Google Sheets 與 Apps Script。</p>
+      </div>
+    </header>
+
+    <nav class="main-tabs" aria-label="Primary">
+      <button class="main-tab is-active" data-panel="coach-panel">教練管理</button>
+      <button class="main-tab" data-panel="student-panel">學生填寫</button>
+    </nav>
+
+    <main>
+      <section id="coach-panel" class="panel is-active">
+        <div class="panel-header">
+          <div>
+            <p class="section-kicker">教練管理工作台</p>
+            <h2>教練建立課表與管理紀錄</h2>
+            <p class="muted-copy">建立課表、查看今日紀錄、管理學生，並追蹤訓練歷史資料。</p>
+            <label class="coach-session-inline">
+              目前教練
+              <select id="current-coach-select"></select>
+            </label>
+          </div>
+          <div class="view-toggle" aria-label="Coach layout mode">
+            <button class="view-toggle-button is-active" id="coach-global-view-desktop" type="button">網頁版介面</button>
+            <button class="view-toggle-button" id="coach-global-view-mobile" type="button">手機版介面</button>
+          </div>
+        </div>
+
+        <div class="student-auth-shell" id="coach-auth-shell">
+          <article class="card compact-card" id="coach-auth-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">教練登入</p>
+                <h3>教練專屬入口</h3>
+              </div>
+            </div>
+            <label>
+              教練代碼
+              <input type="text" id="coach-access-code" placeholder="例如：CL001">
+            </label>
+            <p class="muted-copy">也可以直接使用教練專屬連結進入，系統會自動帶入你的身份。</p>
+            <div class="student-entry-submit">
+              <button class="ghost-button" id="confirm-coach-access" type="button">確認身份並進入教練工作台</button>
+            </div>
+            <div class="student-summary" id="coach-summary"></div>
+          </article>
+        </div>
+
+        <div class="coach-active-bar is-hidden" id="coach-active-bar">
+          <div class="coach-active-copy" id="coach-active-copy"></div>
+          <div class="coach-active-actions">
+            <button class="ghost-button" id="change-coach-access" type="button">切換教練</button>
+          </div>
+        </div>
+
+        <nav class="sub-tabs" aria-label="Coach sections">
+          <button class="sub-tab is-active" data-coach-tab="coach-editor">建立課表</button>
+          <button class="sub-tab" data-coach-tab="coach-coaches">教練管理</button>
+          <button class="sub-tab" data-coach-tab="coach-students">學生管理</button>
+          <button class="sub-tab" data-coach-tab="coach-today">今日紀錄</button>
+          <button class="sub-tab" data-coach-tab="coach-history">歷史查詢</button>
+        </nav>
+
+        <section id="coach-editor" class="sub-panel is-active">
+          <div class="editor-layout">
+            <article class="card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">課表編輯</p>
+                  <h3>建立今日共用課表</h3>
+                </div>
+              </div>
+
+              <div class="form-grid compact-form-grid">
+                <label>
+                  課表代碼
+                  <input type="text" id="program-code" placeholder="例如：0329A">
+                </label>
+                <label>
+                  課表日期
+                  <input type="date" id="program-date">
+                </label>
+                <label>
+                  教練名稱
+                  <input type="text" id="coach-name" placeholder="例如：Coach Lin">
+                </label>
+                <label class="span-full">
+                  課表備註
+                  <textarea id="program-notes" rows="3" placeholder="可填寫當日提醒或訓練重點"></textarea>
+                </label>
+              </div>
+
+              <div class="editor-topbar">
+                <div>
+                  <h3>課表項目</h3>
+                  <p class="muted-copy">可自行新增或刪除，圖片高度會跟著項目數量自動調整。</p>
+                </div>
+                <button class="ghost-button" id="add-program-item" type="button">新增一列</button>
+              </div>
+
+              <div class="table-wrap editor-table-wrap">
+                <table class="editor-table">
+                  <thead>
+                    <tr>
+                      <th>分類</th>
+                      <th>動作名稱</th>
+                      <th>組數</th>
+                      <th>類型</th>
+                      <th>次數</th>
+                      <th>備註</th>
+                      <th>排序</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="program-items-body"></tbody>
+                </table>
+              </div>
+
+              <div class="button-row">
+                <button class="ghost-button" id="save-program" type="button">儲存課表</button>
+                <button class="primary-button" id="publish-program" type="button">發布課表</button>
+              </div>
+            </article>
+
+            <article class="card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">歷史課表</p>
+                  <h3>歷史課表</h3>
+                </div>
+                <div class="library-heading-actions">
+                  <label class="sort-inline-label" for="program-library-sort">
+                    排序
+                    <select id="program-library-sort">
+                      <option value="date-desc">日期新到舊</option>
+                      <option value="date-asc">日期舊到新</option>
+                      <option value="code-asc">代碼 A-Z</option>
+                      <option value="code-desc">代碼 Z-A</option>
+                    </select>
+                  </label>
+                  <span class="status-pill" id="program-library-count">共 0 份</span>
+                </div>
+              </div>
+              <p class="muted-copy">可查看歷史課表內容，並載入編輯或重新設為目前課表。</p>
+              <div class="coach-link-search single-field">
+                <label>
+                  搜尋課表
+                  <input type="text" id="program-library-search" placeholder="可搜尋課表代碼或日期">
+                </label>
+              </div>
+              <div class="coach-link-list" id="program-library-list"></div>
+              <div class="button-row library-more-row">
+                <button class="ghost-button" id="program-library-more" type="button">顯示更多</button>
+              </div>
+            </article>
+          </div>
+        </section>
+
+        <section id="coach-coaches" class="sub-panel">
+          <article class="card compact-card" id="coach-roster-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">教練設定</p>
+                <h3>教練管理</h3>
+              </div>
+              <span class="status-pill" id="coach-roster-count">共 0 位</span>
+            </div>
+            <p class="muted-copy">可新增教練、修改名稱、停用教練，並查看每位教練的最後使用狀態。</p>
+            <div class="student-manager-toolbar">
+              <div class="student-manager-block">
+                <p class="student-manager-label">新增教練</p>
+                <div class="coach-link-search single-field">
+                  <label>
+                    教練姓名
+                    <input type="text" id="new-coach-name" placeholder="例如：王教練">
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button class="primary-button" id="add-coach" type="button">新增教練</button>
+                </div>
+              </div>
+
+              <div class="student-manager-block">
+                <p class="student-manager-label">目前登入</p>
+                <div class="coach-link-search single-field">
+                  <label>
+                    教練身份
+                    <input type="text" id="coach-session-name" placeholder="管理者模式不使用" readonly>
+                  </label>
+                </div>
+                <p class="muted-copy">正式版將由教練專屬入口登入，管理者頁不再切換目前教練。</p>
+              </div>
+            </div>
+            <div class="coach-link-list" id="coach-roster"></div>
+          </article>
+        </section>
+
+        <section id="coach-students" class="sub-panel">
+          <article class="card compact-card" id="coach-student-links-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">學生專屬網址</p>
+                <h3>學生專屬網址</h3>
+              </div>
+            </div>
+            <p class="muted-copy">可依學生姓名快速查看專屬網址與共用入口，方便傳給學生登入。</p>
+            <div class="coach-link-search">
+              <label>
+                學生姓名
+                    <input type="text" id="coach-student-link-name" list="coach-student-link-options" placeholder="請輸入學生姓名">
+              </label>
+              <label>
+                或直接選擇學生
+                <select id="coach-student-link-select">
+                  <option value="">請選擇學生</option>
+                </select>
+              </label>
+            </div>
+            <datalist id="coach-student-link-options"></datalist>
+            <div class="coach-link-list" id="coach-student-links"></div>
+          </article>
+
+          <article class="card compact-card" id="history-import-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">歷史資料匯入</p>
+                <h3>批次匯入訓練紀錄</h3>
+              </div>
+              <span class="status-pill" id="history-import-count">等待匯入</span>
+            </div>
+            <p class="muted-copy">可下載匯入範本 CSV，整理完成後再批次匯入舊訓練紀錄。</p>
+            <div class="student-manager-toolbar">
+              <div class="student-manager-block">
+                <p class="student-manager-label">步驟 1</p>
+                <div class="button-row">
+                  <button class="ghost-button" id="download-history-template" type="button">下載匯入範本</button>
+                </div>
+              </div>
+              <div class="student-manager-block">
+                <p class="student-manager-label">步驟 2</p>
+                <div class="coach-link-search single-field">
+                  <label>
+                    上傳 CSV 檔案
+                    <input type="file" id="history-import-file" accept=".csv,text/csv">
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>學生姓名</th>
+                    <th>日期</th>
+                    <th>動作</th>
+                    <th>分類</th>
+                    <th>目標格式</th>
+                    <th>匯入狀態</th>
+                  </tr>
+                </thead>
+                <tbody id="history-import-preview-body">
+                  <tr><td colspan="6" class="empty-state">請先下載範本並上傳 CSV。</td></tr>
+                </tbody>
+              </table>
+            </div>
+            <div class="button-row">
+              <button class="primary-button" id="confirm-history-import" type="button" disabled>確認匯入</button>
+            </div>
+          </article>
+
+          <article class="card wide-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">學生管理</p>
+                <h3>學生管理</h3>
+              </div>
+              <span class="status-pill" id="coach-student-count">共 0 人</span>
+            </div>
+            <p class="muted-copy">可新增學生、搜尋學生、查看學生狀態，並管理學生代碼與主要教練。</p>
+            <div class="student-manager-toolbar">
+              <div class="student-manager-block">
+                <p class="student-manager-label">新增學生</p>
+                <div class="coach-link-search single-field">
+                  <label>
+                    學生姓名
+                    <input type="text" id="new-student-name" placeholder="請輸入學生姓名">
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button class="primary-button" id="add-student" type="button">新增學生</button>
+                </div>
+              </div>
+
+              <div class="student-manager-block">
+                <p class="student-manager-label">搜尋學生</p>
+                <div class="coach-link-search single-field">
+                  <label>
+                    搜尋關鍵字
+                    <input type="text" id="coach-student-roster-search" placeholder="可搜尋學生姓名或代碼">
+                  </label>
+                </div>
+                <div class="button-row">
+                  <button class="ghost-button" id="clear-student-roster-search" type="button">清除搜尋</button>
+                </div>
+              </div>
+            </div>
+            <div class="card-heading student-roster-heading">
+              <div>
+                <p class="section-kicker">學生名單</p>
+                <h3>學生名單</h3>
+                <p class="muted-copy student-roster-summary" id="coach-student-roster-summary">目前顯示 0 / 0 人</p>
+              </div>
+              <p class="muted-copy">可直接查看網址、修改姓名、複製代碼、查看全部紀錄、停用或刪除學生。</p>
+            </div>
+            <div class="coach-link-list" id="coach-student-roster"></div>
+          </article>
+        </section>
+
+        <section id="coach-today" class="sub-panel">
+          <div class="stats-grid" id="coach-stats"></div>
+
+          <div class="split-layout">
+            <article class="card compact-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">提交狀況</p>
+                  <h3>提交狀況</h3>
+                </div>
+              </div>
+              <label>
+                查看日期
+                <input type="date" id="coach-today-date">
+              </label>
+              <div class="status-block">
+                <h4>已送出</h4>
+                <ul id="submitted-list" class="name-list"></ul>
+              </div>
+              <div class="status-block">
+                <h4>未送出</h4>
+                <ul id="pending-list" class="name-list"></ul>
+              </div>
+            </article>
+
+            <article class="card wide-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">今日紀錄</p>
+                  <h3>今日全班紀錄</h3>
+                </div>
+                <span class="status-pill" id="today-logs-count">共 0 筆</span>
+              </div>
+              <div class="coach-link-search single-field">
+                <label>
+                  搜尋今日紀錄
+                  <input type="text" id="today-logs-search" placeholder="可搜尋學生姓名或動作">
+                </label>
+              </div>
+              <div class="button-row coach-history-mobile-toggle">
+                <button class="ghost-button full-width" id="toggle-coach-history-results" type="button">查看歷史紀錄</button>
+              </div>
+              <div class="table-wrap" id="coach-history-results-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>學生</th>
+                      <th>分類</th>
+                      <th>動作</th>
+                      <th>目標</th>
+                      <th>實際結果</th>
+                      <th>備註</th>
+                      <th>送出時間</th>
+                    </tr>
+                  </thead>
+                  <tbody id="today-logs-body"></tbody>
+                </table>
+              </div>
+              <div class="button-row library-more-row">
+                <button class="ghost-button" id="today-logs-more" type="button">查看更多</button>
+              </div>
+            </article>
+          </div>
+
+          <article class="card" id="today-student-detail-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">學生當日紀錄</p>
+                <h3>學生當日完整紀錄</h3>
+              </div>
+              <span class="status-pill" id="today-student-detail-status">請先選擇學生</span>
+            </div>
+            <div class="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>分類</th>
+                    <th>動作</th>
+                    <th>目標</th>
+                    <th>實際結果</th>
+                    <th>備註</th>
+                    <th>送出時間</th>
+                  </tr>
+                </thead>
+                <tbody id="today-student-detail-body"></tbody>
+              </table>
+            </div>
+            <div class="button-row library-more-row">
+              <button class="ghost-button" id="today-student-detail-more" type="button">查看更多</button>
+            </div>
+          </article>
+        </section>
+
+        <section id="coach-history" class="sub-panel">
+          <div class="split-layout">
+            <article class="card compact-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">歷史查詢條件</p>
+                  <h3>歷史查詢</h3>
+                </div>
+              </div>
+              <label>
+                學生
+                <select id="coach-history-student"></select>
+              </label>
+              <label>
+                動作
+                <select id="coach-history-exercise"></select>
+              </label>
+              <label>
+                開始日期
+                <input type="date" id="coach-history-date-from">
+              </label>
+              <label>
+                結束日期
+                <input type="date" id="coach-history-date-to">
+              </label>
+              <div class="button-row">
+                <button class="ghost-button full-width" id="coach-history-last-30" type="button">最近 30 天</button>
+                <button class="ghost-button full-width" id="run-coach-history" type="button">查看歷史紀錄</button>
+                <button class="ghost-button full-width" id="reset-coach-history" type="button">清除條件</button>
+                <button class="primary-button full-width" id="export-coach-history" type="button">匯出 CSV</button>
+              </div>
+            </article>
+
+            <article class="card wide-card">
+              <div class="card-heading">
+                <div>
+                  <p class="section-kicker">歷史紀錄</p>
+                  <h3>學生／動作歷史紀錄</h3>
+                </div>
+                <span class="status-pill" id="coach-history-count">共 0 筆</span>
+              </div>
+              <div class="table-wrap">
+                <table>
+                  <thead>
+                    <tr>
+                      <th>日期</th>
+                      <th>學生</th>
+                      <th>分類</th>
+                      <th>動作</th>
+                      <th>目標</th>
+                      <th>實際結果</th>
+                      <th>備註</th>
+                    </tr>
+                  </thead>
+                  <tbody id="coach-history-body"></tbody>
+                </table>
+              </div>
+              <div class="button-row library-more-row">
+                <button class="ghost-button" id="coach-history-more" type="button">查看更多</button>
+              </div>
+            </article>
+          </div>
+        </section>
+      </section>
+
+      <section id="student-panel" class="panel">
+        <div class="panel-header">
+          <div>
+            <p class="section-kicker">學生填寫入口</p>
+            <h2>學生今日課表與訓練紀錄</h2>
+            <p class="muted-copy">可載入今日課表、填寫訓練內容，並查詢個人歷史紀錄。</p>
+          </div>
+          <div class="view-toggle" aria-label="Student layout mode">
+            <button class="view-toggle-button is-active" id="student-global-view-card" type="button">手機版介面</button>
+            <button class="view-toggle-button" id="student-global-view-table" type="button">網頁版介面</button>
+          </div>
+        </div>
+
+        <div class="student-auth-shell" id="student-auth-shell">
+          <article class="card compact-card" id="student-auth-card">
+            <div class="card-heading">
+              <div>
+                <p class="section-kicker">身份確認</p>
+                <h3>學生專屬入口</h3>
+              </div>
+            </div>
+            <label>
+              專屬代碼
+              <input type="text" id="student-access-code" placeholder="例如：WM001">
+            </label>
+            <p class="muted-copy">也可以直接使用專屬連結進入，網站會自動帶入你的身份。</p>
+            <select id="student-program-select" hidden aria-hidden="true"></select>
+            <div class="student-entry-submit">
+              <button class="ghost-button" id="confirm-student-access" type="button">確認身份並載入今日課表</button>
+            </div>
+            <div class="student-summary" id="student-summary"></div>
+          </article>
+        </div>
+
+        <div class="student-program-shell">
+          <article class="card wide-card" id="student-program-card">
+            <div class="card-heading">
+              <div>
+                  <p class="section-kicker">今日課表</p>
+                  <h3>今日訓練課表</h3>
+              </div>
+              <div class="student-view-tools">
+                <span class="status-pill" id="student-program-status">等待載入</span>
+                <div class="view-toggle" aria-label="Student view">
+                  <button class="view-toggle-button is-active" id="student-view-card" type="button">卡片版</button>
+                  <button class="view-toggle-button" id="student-view-table" type="button">表格版</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="student-active-bar is-hidden" id="student-active-bar">
+              <div class="student-active-copy" id="student-active-copy"></div>
+              <div class="student-active-actions">
+                <button class="primary-button" id="load-student-program-inline" type="button">載入今日課表</button>
+                <button class="ghost-button" id="edit-student-program" type="button">編輯課表項目</button>
+                <button class="ghost-button" id="change-student-access" type="button">切換身份 / 課表</button>
+              </div>
+            </div>
+
+            <div class="recorded-banner is-hidden" id="student-recorded-banner">本次訓練內容已記錄。</div>
+
+            <div class="student-phone-frame" id="student-phone-frame">
+              <div class="student-mobile-tools" id="student-mobile-tools">
+                <button class="primary-button full-width" id="load-student-program-mobile" type="button">載入今日課表</button>
+              </div>
+              <div class="student-card-list" id="student-card-list"></div>
+              <div class="student-mobile-secondary-actions" id="student-mobile-secondary-actions">
+                <button class="ghost-button full-width" id="edit-student-program-mobile" type="button">編輯課表項目</button>
+                <button class="ghost-button full-width" id="open-student-history-mobile" type="button">查看我的歷史紀錄</button>
+              </div>
+            </div>
+
+            <div class="table-wrap student-table-view" id="student-table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>分類</th>
+                    <th>動作</th>
+                    <th>目標</th>
+                    <th>填寫內容</th>
+                  </tr>
+                </thead>
+                <tbody id="student-program-body"></tbody>
+              </table>
+            </div>
+
+            <div class="button-row" id="student-desktop-actions">
+              <button class="primary-button" id="submit-student-log" type="button">確認本次填寫內容</button>
+              <button class="ghost-button" id="open-student-history" type="button">查看我的歷史紀錄</button>
+            </div>
+
+            <div class="student-mobile-submit-bar" id="student-mobile-submit-bar">
+              <button class="primary-button full-width" id="submit-student-log-mobile" type="button">確認本次填寫內容</button>
+            </div>
+          </article>
+        </div>
+
+        <article class="card" id="student-history-card">
+          <div class="card-heading">
+            <div>
+              <p class="section-kicker">歷史紀錄</p>
+              <h3>我的歷史紀錄</h3>
+            </div>
+            <span class="status-pill" id="student-history-count">共 0 筆</span>
+          </div>
+          <div class="history-toolbar">
+            <label>
+              項目
+              <input type="text" id="student-history-exercise" list="student-history-exercise-options" placeholder="請選擇或輸入項目">
+            </label>
+          </div>
+          <datalist id="student-history-exercise-options"></datalist>
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>日期</th>
+                  <th>分類</th>
+                  <th>動作</th>
+                  <th>目標</th>
+                  <th>實際結果</th>
+                  <th>備註</th>
+                </tr>
+              </thead>
+              <tbody id="student-history-body"></tbody>
+            </table>
+          </div>
+          <div class="student-history-card-list" id="student-history-card-list"></div>
+          <div class="button-row library-more-row">
+            <button class="ghost-button" id="student-history-more" type="button">查看更多</button>
+          </div>
+        </article>
+      </section>
+    </main>
+  </div>
+
+  <template id="program-item-template">
+    <tr>
+      <td>
+        <select class="category-input">
+          <option value="爆發力">爆發力</option>
+          <option value="主項目">主項目</option>
+          <option value="輔助項">輔助項</option>
+        </select>
+      </td>
+      <td><input type="text" class="exercise-input" placeholder="請輸入動作名稱" list="coach-exercise-options"></td>
+      <td><input type="number" class="sets-input" min="1" value="4"></td>
+      <td>
+        <select class="type-input">
+          <option value="reps">reps</option>
+          <option value="time">time</option>
+          <option value="rm">rm</option>
+        </select>
+      </td>
+      <td><input type="number" class="value-input" min="1" value="8"></td>
+      <td><input type="text" class="item-note-input" placeholder="可留空"></td>
+      <td><input type="number" class="sort-input" min="1" value="1"></td>
+      <td><button type="button" class="icon-button remove-item">刪除</button></td>
+    </tr>
+  </template>
+
+  <datalist id="coach-exercise-options"></datalist>
+
+  <template id="student-entry-template">
+    <tr>
+      <td class="entry-category"></td>
+      <td class="entry-exercise"></td>
+      <td class="entry-target"></td>
+      <td class="entry-fields"></td>
+    </tr>
+  </template>
+
+  <template id="student-program-edit-row-template">
+    <tr>
+      <td>
+        <select class="student-edit-category">
+          <option value="爆發力">爆發力</option>
+          <option value="主項目">主項目</option>
+          <option value="輔助項">輔助項</option>
+        </select>
+      </td>
+      <td><input type="text" class="student-edit-exercise" placeholder="請輸入動作名稱"></td>
+      <td><input type="number" class="student-edit-sets" min="1" value="4"></td>
+      <td>
+        <select class="student-edit-type">
+          <option value="reps">reps</option>
+          <option value="time">time</option>
+          <option value="rm">rm</option>
+        </select>
+      </td>
+      <td><input type="number" class="student-edit-value" min="1" value="8"></td>
+      <td><button type="button" class="icon-button remove-student-edit-row">刪除</button></td>
+    </tr>
+  </template>
+
+  <div class="modal-backdrop is-hidden" id="confirm-modal" aria-hidden="true">
+    <div class="modal-card" id="confirm-modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+      <div class="card-heading">
+        <div>
+          <p class="section-kicker">送出前確認</p>
+          <h3 id="confirm-title">確認本次填寫內容</h3>
+        </div>
+        <button class="icon-button" id="close-confirm-modal" type="button">關閉</button>
+      </div>
+      <p class="muted-copy" id="confirm-summary"></p>
+      <div class="confirm-card-list" id="confirm-card-list"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>分類</th>
+              <th>動作</th>
+              <th>目標</th>
+              <th>實際結果</th>
+              <th>備註</th>
+            </tr>
+          </thead>
+          <tbody id="confirm-body"></tbody>
+        </table>
+      </div>
+      <div class="button-row modal-row">
+        <button class="ghost-button" id="cancel-submit" type="button">返回修改</button>
+        <button class="primary-button" id="confirm-submit" type="button">確認送出</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop is-hidden" id="program-preview-modal" aria-hidden="true">
+    <div class="modal-card preview-modal-card" role="dialog" aria-modal="true" aria-labelledby="program-preview-title">
+      <div class="card-heading">
+        <div>
+          <p class="section-kicker">課表圖片預覽</p>
+          <h3 id="program-preview-title">課表圖片預覽</h3>
+        </div>
+        <button class="icon-button" id="close-program-preview-modal" type="button">關閉</button>
+      </div>
+      <p class="muted-copy">預覽完成後，可直接匯出 PNG 圖片檔。</p>
+      <div class="program-preview modal-program-preview">
+        <div class="program-preview-header" id="modal-preview-code">請先儲存課表</div>
+        <div class="program-preview-body" id="modal-program-preview-body">
+          <div class="program-preview-empty">請先輸入課表內容。</div>
+        </div>
+      </div>
+      <div class="button-row modal-row">
+        <button class="ghost-button" id="modal-export-program-image" type="button">匯出 PNG</button>
+        <button class="primary-button" id="modal-close-preview" type="button">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop is-hidden" id="success-modal" aria-hidden="true">
+    <div class="modal-card" id="success-modal-card" role="dialog" aria-modal="true" aria-labelledby="success-title">
+      <div class="card-heading">
+        <div>
+          <p class="section-kicker">完成送出</p>
+          <h3 id="success-title">課表已完成</h3>
+        </div>
+      </div>
+      <p class="muted-copy" id="success-summary"></p>
+      <div class="confirm-card-list" id="success-card-list"></div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>分類</th>
+              <th>動作</th>
+              <th>目標</th>
+              <th>實際結果</th>
+              <th>備註</th>
+            </tr>
+          </thead>
+          <tbody id="success-body"></tbody>
+        </table>
+      </div>
+      <div class="button-row modal-row">
+        <button class="ghost-button" id="download-success-image" type="button">下載圖片</button>
+        <button class="ghost-button" id="success-open-history" type="button">返回歷史紀錄</button>
+        <button class="primary-button" id="close-success-modal" type="button">完成</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop is-hidden" id="student-program-edit-modal" aria-hidden="true">
+    <div class="modal-card" id="student-program-edit-modal-card" role="dialog" aria-modal="true" aria-labelledby="student-program-edit-title">
+      <div class="card-heading">
+        <div>
+          <p class="section-kicker">課表編輯視窗</p>
+          <h3 id="student-program-edit-title">編輯課表項目</h3>
+        </div>
+        <button class="icon-button" id="close-student-program-edit-modal" type="button">關閉</button>
+      </div>
+      <p class="muted-copy">如需新增、刪除或調整項目，可先在這裡修改，再套用到本次課表。</p>
+      <div class="button-row modal-row student-edit-toolbar">
+        <button class="ghost-button" id="add-student-edit-row" type="button">新增一列</button>
+      </div>
+      <div class="table-wrap editor-table-wrap">
+        <table class="editor-table student-edit-table">
+          <thead>
+            <tr>
+              <th>分類</th>
+              <th>動作名稱</th>
+              <th>組數</th>
+              <th>類型</th>
+              <th>次數</th>
+              <th></th>
+            </tr>
+          </thead>
+          <tbody id="student-program-edit-body"></tbody>
+        </table>
+      </div>
+      <div class="student-edit-mobile-list" id="student-edit-mobile-list"></div>
+      <div class="button-row modal-row">
+        <button class="ghost-button" id="cancel-student-program-edit" type="button">取消</button>
+        <button class="primary-button" id="save-student-program-edit" type="button">套用到本次課表</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal-backdrop is-hidden" id="assign-coach-modal" aria-hidden="true">
+    <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="assign-coach-title">
+      <div class="card-heading">
+        <div>
+          <p class="section-kicker">學生指派</p>
+          <h3 id="assign-coach-title">指派主要教練</h3>
+        </div>
+        <button class="icon-button" id="close-assign-coach-modal" type="button">關閉</button>
+      </div>
+      <p class="muted-copy" id="assign-coach-summary">請選擇要指派給這位學生的主要教練。</p>
+      <label>
+        主要教練
+        <select id="assign-coach-select"></select>
+      </label>
+      <div class="button-row modal-row">
+        <button class="ghost-button" id="cancel-assign-coach" type="button">取消</button>
+        <button class="primary-button" id="save-assign-coach" type="button">儲存指派</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.js?v=20260331-0220"></script>
+  <script src="app.js?v=20260331-0220"></script>
+</body>
+</html>

@@ -1,0 +1,17 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachFlow 學生訓練紀錄</title>
+</head>
+<body>
+  <script>
+    const current = new URL(window.location.href);
+    const params = new URLSearchParams(current.search);
+    params.set("mode", "student");
+    params.set("v", "20260331-0220");
+    window.location.replace(`./index.html?${params.toString()}${current.hash || ""}`);
+  </script>
+</body>
+</html>
