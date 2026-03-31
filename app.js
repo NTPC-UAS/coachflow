@@ -1,5 +1,7 @@
 ﻿const STORAGE_KEY = "coachflow-v2-state";
 
+const SESSION_KEY = "coachflow-v2-session";
+
 const defaultState = {
   coaches: [
     { id: "coach-001", name: "Coach Lin", status: "active", role: "admin", accessCode: "CL001", token: "coachlin", lastUsedAt: "" },
@@ -115,6 +117,7 @@ let coachHistoryOpened = false;
 let pendingHistoryImportRows = [];
 let assigningStudentId = "";
 let authenticatedCoachId = "";
+let lastCloudSyncAt = 0;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -377,11 +380,29 @@ async function bootstrapCloudMode() {
   }
 
   if (APP_MODE === "coach") {
+    if (authenticatedCoachId) {
+      try {
+        const payload = await callCloudApi("bootstrapCoach", { coachId: authenticatedCoachId });
+        applyCloudPayloadToState(payload);
+        return;
+      } catch (error) {
+        console.warn("Coach cloud bootstrap by session failed, falling back to URL:", error);
+      }
+    }
     await hydrateCoachAccessFromUrl();
     return;
   }
 
   if (APP_MODE === "student") {
+    if (currentStudentId) {
+      try {
+        const payload = await callCloudApi("bootstrapStudent", { studentId: currentStudentId });
+        applyCloudPayloadToState(payload);
+        return;
+      } catch (error) {
+        console.warn("Student cloud bootstrap by session failed, falling back to URL:", error);
+      }
+    }
     await hydrateStudentAccessFromUrl();
   }
 }
@@ -1051,6 +1072,7 @@ async function init() {
   applyStaticCopy();
   applyAppMode();
   hydrateFromStorage();
+  hydrateSession();
   await bootstrapCloudMode();
   await hydrateCoachAccessFromUrl();
   await hydrateStudentAccessFromUrl();
@@ -1385,6 +1407,8 @@ function bindEvents() {
     }
   });
   window.addEventListener("storage", handleStorageSync);
+  window.addEventListener("focus", handleVisibilityRefresh);
+  document.addEventListener("visibilitychange", handleVisibilityRefresh);
 }
 
 function hydrateFromStorage() {
@@ -1449,6 +1473,34 @@ function hydrateFromStorage() {
 
 function persistState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+  persistSession();
+}
+
+function hydrateSession() {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    if (!raw) {
+      persistSession();
+      return;
+    }
+
+    const parsed = JSON.parse(raw);
+    authenticatedCoachId = String(parsed.authenticatedCoachId || "").trim();
+    currentStudentId = String(parsed.currentStudentId || "").trim();
+    coachViewMode = parsed.coachViewMode || coachViewMode;
+    studentViewMode = parsed.studentViewMode || studentViewMode;
+  } catch {
+    persistSession();
+  }
+}
+
+function persistSession() {
+  localStorage.setItem(SESSION_KEY, JSON.stringify({
+    authenticatedCoachId,
+    currentStudentId,
+    coachViewMode,
+    studentViewMode
+  }));
 }
 
 function switchMainPanel(panelId) {
@@ -1573,7 +1625,7 @@ function applyAppMode() {
 }
 
 function handleStorageSync(event) {
-  if (event.key !== STORAGE_KEY) {
+  if (event.key !== STORAGE_KEY && event.key !== SESSION_KEY) {
     return;
   }
 
@@ -1581,6 +1633,7 @@ function handleStorageSync(event) {
   const activeMainPanel = els.panels.find((panel) => panel.classList.contains("is-active"))?.id || (APP_MODE === "student" ? "student-panel" : "coach-panel");
 
   hydrateFromStorage();
+  hydrateSession();
   cleanupRedundantBlankPrograms();
 
   if (APP_MODE === "admin") {
@@ -1628,6 +1681,53 @@ function switchCoachPanel(panelId) {
   if (APP_MODE === "coach") {
     syncCoachAccessUI();
   }
+  if (APP_MODE === "student" && currentStudentId) {
+    loadStudentProgram({ silent: true });
+  }
+}
+
+async function syncCloudWorkspaceOnActivate() {
+  if (!IS_CLOUD_MODE) {
+    return;
+  }
+
+  const now = Date.now();
+  if (now - lastCloudSyncAt < 1200) {
+    return;
+  }
+  lastCloudSyncAt = now;
+
+  try {
+    if (APP_MODE === "admin") {
+      const payload = await callCloudApi("bootstrapAdmin", {}, "GET");
+      applyCloudPayloadToState(payload);
+      refreshAdminWorkspace();
+      return;
+    }
+
+    if (APP_MODE === "coach" && authenticatedCoachId) {
+      const payload = await callCloudApi("bootstrapCoach", { coachId: authenticatedCoachId });
+      applyCloudPayloadToState(payload);
+      refreshCoachWorkspace();
+      return;
+    }
+
+    if (APP_MODE === "student" && currentStudentId) {
+      const payload = await callCloudApi("bootstrapStudent", { studentId: currentStudentId });
+      applyCloudPayloadToState(payload);
+      refreshStudentWorkspace();
+      loadStudentProgram({ silent: true });
+    }
+  } catch (error) {
+    console.warn("Cloud workspace sync failed:", error);
+  }
+}
+
+function handleVisibilityRefresh() {
+  if (document.visibilityState && document.visibilityState !== "visible") {
+    return;
+  }
+  syncCloudWorkspaceOnActivate();
 }
 
 function handleCurrentCoachChange() {
@@ -2317,6 +2417,7 @@ function renderCoachSummary() {
 
 function resetCoachAccess() {
   authenticatedCoachId = "";
+  persistSession();
   if (els.coachAccessCode) {
     els.coachAccessCode.value = "";
   }
@@ -2388,6 +2489,7 @@ async function confirmCoachAccess() {
   authenticatedCoachId = matchedCoach?.id || "";
 
   if (!matchedCoach) {
+    persistSession();
     renderCoachSummary();
     window.alert("找不到這組教練代碼，請重新確認後再試一次。");
     return false;
@@ -2395,6 +2497,7 @@ async function confirmCoachAccess() {
 
   if (matchedCoach.status === "inactive") {
     authenticatedCoachId = "";
+    persistSession();
     renderCoachSummary();
     window.alert("這位教練帳號目前已停用。");
     return false;
@@ -2415,6 +2518,7 @@ async function confirmCoachAccess() {
     markCoachUsed(matchedCoach.id);
   }
   refreshCoachWorkspace();
+  persistSession();
   return true;
 }
 
@@ -2434,6 +2538,7 @@ async function confirmStudentAccess() {
   currentStudentId = matchedStudent?.id || "";
 
   if (!matchedStudent) {
+    persistSession();
     els.studentProgramStatus.textContent = "\u8eab\u4efd\u672a\u78ba\u8a8d";
     els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</td></tr>`;
     els.studentCardList.innerHTML = `<div class="empty-card">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</div>`;
@@ -2446,6 +2551,7 @@ async function confirmStudentAccess() {
 
   if (matchedStudent.status === "inactive") {
     currentStudentId = "";
+    persistSession();
     window.alert("\u9019\u4f4d\u5b78\u751f\u5e33\u865f\u76ee\u524d\u5df2\u505c\u7528\uff0c\u8acb\u806f\u7d61\u6559\u7df4\u3002");
     return false;
   }
@@ -2472,6 +2578,7 @@ async function confirmStudentAccess() {
   renderStudentHistoryFilters();
   renderStudentHistory();
   syncStudentAccessUI();
+  persistSession();
   return true;
 }
 
@@ -3196,11 +3303,13 @@ function saveStudentProgramEdits() {
 
 function setStudentViewMode(mode) {
   studentViewMode = mode;
+  persistSession();
   applyStudentViewMode();
 }
 
 function setCoachViewMode(mode) {
   coachViewMode = mode;
+  persistSession();
   applyCoachViewMode();
 }
 
@@ -3597,6 +3706,9 @@ async function hydrateCoachAccessFromUrl() {
   }
   const params = new URLSearchParams(window.location.search);
   const accessValue = params.get("coach") || params.get("token") || params.get("code") || "";
+  if (!String(accessValue || "").trim()) {
+    return;
+  }
   let matchedCoach = null;
   if (IS_CLOUD_MODE) {
     try {
@@ -3616,6 +3728,7 @@ async function hydrateCoachAccessFromUrl() {
   if (els.coachAccessCode) {
     els.coachAccessCode.value = matchedCoach.accessCode || accessValue;
   }
+  persistSession();
 }
 
 function renderCoachHistoryFilters() {
@@ -4515,6 +4628,7 @@ async function handleCoachRosterAction(event) {
         }
 
         persistState();
+        persistSession();
       }
     } else {
       state.students = state.students.map((student) =>
@@ -4536,6 +4650,7 @@ async function handleCoachRosterAction(event) {
       }
 
       persistState();
+      persistSession();
     }
     if (APP_MODE === "admin") {
       refreshAdminWorkspace();
@@ -4698,6 +4813,7 @@ async function handleCoachStudentRosterAction(event) {
         }
 
         persistState();
+        persistSession();
       }
     } else {
       state.students = state.students.map((item) =>
@@ -4712,6 +4828,7 @@ async function handleCoachStudentRosterAction(event) {
       }
 
       persistState();
+      persistSession();
     }
     if (APP_MODE === "admin") {
       refreshAdminWorkspace();
@@ -4790,6 +4907,7 @@ async function handleCoachStudentRosterAction(event) {
         }
 
         persistState();
+        persistSession();
       }
     } else {
       state.students = state.students.filter((item) => item.id !== studentId);
@@ -4803,6 +4921,7 @@ async function handleCoachStudentRosterAction(event) {
       }
 
       persistState();
+      persistSession();
     }
   if (APP_MODE === "admin") {
     refreshAdminWorkspace();
@@ -5333,6 +5452,9 @@ function exportCoachHistoryCsv() {
 async function hydrateStudentAccessFromUrl() {
   const params = new URLSearchParams(window.location.search);
   const accessValue = params.get("student") || params.get("token") || params.get("code") || "";
+  if (!String(accessValue || "").trim()) {
+    return;
+  }
   let matchedStudent = null;
   if (IS_CLOUD_MODE) {
     try {
@@ -5348,10 +5470,11 @@ async function hydrateStudentAccessFromUrl() {
   if (matchedStudent) {
     currentStudentId = matchedStudent.id;
     els.studentAccessCode.value = matchedStudent.accessCode || accessValue;
+    persistSession();
     return;
   }
-
   currentStudentId = "";
+  persistSession();
 }
 
 function formatTarget(item) {
