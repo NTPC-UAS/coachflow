@@ -117,6 +117,9 @@ let coachHistoryOpened = false;
 let pendingHistoryImportRows = [];
 let assigningStudentId = "";
 let authenticatedCoachId = "";
+let authenticatedCoachAccess = "";
+let currentStudentAccess = "";
+let coachEditorDirty = false;
 let lastCloudSyncAt = 0;
 
 function getAppMode() {
@@ -398,6 +401,24 @@ async function bootstrapCloudMode() {
         console.warn("Coach cloud bootstrap by session failed, falling back to URL:", error);
       }
     }
+    if (authenticatedCoachAccess) {
+      try {
+        const matchedCoach = await resolveCoachAccessFromCloud(authenticatedCoachAccess);
+        if (matchedCoach?.id) {
+          authenticatedCoachId = matchedCoach.id;
+          state.currentCoachId = matchedCoach.id;
+          if (els.coachAccessCode) {
+            els.coachAccessCode.value = matchedCoach.accessCode || authenticatedCoachAccess;
+          }
+          const payload = await callCloudApi("bootstrapCoach", { coachId: matchedCoach.id });
+          applyCloudPayloadToState(payload);
+          persistSession();
+          return;
+        }
+      } catch (error) {
+        console.warn("Coach cloud bootstrap by access failed, falling back to URL:", error);
+      }
+    }
     await hydrateCoachAccessFromUrl();
     return;
   }
@@ -410,6 +431,23 @@ async function bootstrapCloudMode() {
         return;
       } catch (error) {
         console.warn("Student cloud bootstrap by session failed, falling back to URL:", error);
+      }
+    }
+    if (currentStudentAccess) {
+      try {
+        const matchedStudent = await resolveStudentAccessFromCloud(currentStudentAccess);
+        if (matchedStudent?.id) {
+          currentStudentId = matchedStudent.id;
+          if (els.studentAccessCode) {
+            els.studentAccessCode.value = matchedStudent.accessCode || currentStudentAccess;
+          }
+          const payload = await callCloudApi("bootstrapStudent", { studentId: matchedStudent.id });
+          applyCloudPayloadToState(payload);
+          persistSession();
+          return;
+        }
+      } catch (error) {
+        console.warn("Student cloud bootstrap by access failed, falling back to URL:", error);
       }
     }
     await hydrateStudentAccessFromUrl();
@@ -1050,13 +1088,25 @@ function refreshAdminWorkspace() {
   renderCoachStudentRoster();
 }
 
-function refreshCoachWorkspace() {
-  editingProgramId = getDefaultEditingProgramId();
+function refreshCoachWorkspace(options = {}) {
+  const preserveEditor = options.preserveEditor ?? (APP_MODE === "coach" && coachEditorDirty);
+  const nextEditingProgramId = getDefaultEditingProgramId();
+  const canPreserveEditor = Boolean(
+    preserveEditor &&
+    editingProgramId &&
+    nextEditingProgramId &&
+    editingProgramId === nextEditingProgramId &&
+    state.programs.some((program) => program.id === editingProgramId)
+  );
+
+  editingProgramId = nextEditingProgramId;
   renderCurrentCoachOptions();
   renderCoachRoster();
   renderCoachExerciseOptions();
   getCoachTodayDate();
-  seedEditorFromProgram(editingProgramId);
+  if (!canPreserveEditor) {
+    seedEditorFromProgram(editingProgramId);
+  }
   renderCoachHistoryFilters();
   renderProgramLibrary();
   renderCoachStudentLinks();
@@ -1247,6 +1297,7 @@ function bindEvents() {
     addProgramItemRow();
     syncSortNumbers();
     syncEditorPreviewState();
+    setCoachEditorDirty(true);
   });
   document.querySelector("#save-program").addEventListener("click", saveProgram);
   document.querySelector("#publish-program").addEventListener("click", publishProgram);
@@ -1303,7 +1354,10 @@ function bindEvents() {
   els.studentViewTableButton.addEventListener("click", () => setStudentViewMode("table"));
 
   [els.programCode, els.programDate, els.coachName, els.programNotes].forEach((input) => {
-    input.addEventListener("input", syncEditorPreviewState);
+    input.addEventListener("input", () => {
+      setCoachEditorDirty(true);
+      syncEditorPreviewState();
+    });
   });
 
   els.studentAccessCode.addEventListener("keydown", (event) => {
@@ -1485,6 +1539,10 @@ function persistState() {
   persistSession();
 }
 
+function setCoachEditorDirty(value = true) {
+  coachEditorDirty = Boolean(value);
+}
+
 function hydrateSession() {
   try {
     const raw = localStorage.getItem(SESSION_KEY);
@@ -1495,7 +1553,9 @@ function hydrateSession() {
 
     const parsed = JSON.parse(raw);
     authenticatedCoachId = String(parsed.authenticatedCoachId || "").trim();
+    authenticatedCoachAccess = String(parsed.authenticatedCoachAccess || "").trim();
     currentStudentId = String(parsed.currentStudentId || "").trim();
+    currentStudentAccess = String(parsed.currentStudentAccess || "").trim();
     coachViewMode = parsed.coachViewMode || coachViewMode;
     studentViewMode = parsed.studentViewMode || studentViewMode;
   } catch {
@@ -1506,7 +1566,9 @@ function hydrateSession() {
 function persistSession() {
   localStorage.setItem(SESSION_KEY, JSON.stringify({
     authenticatedCoachId,
+    authenticatedCoachAccess,
     currentStudentId,
+    currentStudentAccess,
     coachViewMode,
     studentViewMode
   }));
@@ -1648,7 +1710,7 @@ function handleStorageSync(event) {
   if (APP_MODE === "admin") {
     refreshAdminWorkspace();
   } else {
-    refreshCoachWorkspace();
+    refreshCoachWorkspace({ preserveEditor: APP_MODE === "coach" && coachEditorDirty });
     refreshStudentWorkspace();
   }
 
@@ -1717,7 +1779,7 @@ async function syncCloudWorkspaceOnActivate() {
     if (APP_MODE === "coach" && authenticatedCoachId) {
       const payload = await callCloudApi("bootstrapCoach", { coachId: authenticatedCoachId });
       applyCloudPayloadToState(payload);
-      refreshCoachWorkspace();
+      refreshCoachWorkspace({ preserveEditor: coachEditorDirty });
       return;
     }
 
@@ -1813,6 +1875,8 @@ function seedEditorFromProgram(programId) {
     addProgramItemRow({ category: "\u8f14\u52a9\u9805", targetSets: 4, targetType: "time", targetValue: 60 });
     syncSortNumbers();
   }
+
+  setCoachEditorDirty(false);
 }
 
 function addProgramItemRow(item = {}) {
@@ -1836,10 +1900,12 @@ function addProgramItemRow(item = {}) {
 
   [category, exercise, sets, type, value, note, sort].forEach((input) => {
     input.addEventListener("input", () => {
+      setCoachEditorDirty(true);
       syncSortNumbers();
       syncEditorPreviewState();
     });
     input.addEventListener("change", () => {
+      setCoachEditorDirty(true);
       syncSortNumbers();
       syncEditorPreviewState();
     });
@@ -1852,6 +1918,7 @@ function addProgramItemRow(item = {}) {
 
   fragment.querySelector(".remove-item").addEventListener("click", () => {
     row.remove();
+    setCoachEditorDirty(true);
     syncSortNumbers();
     syncEditorPreviewState();
   });
@@ -2054,6 +2121,7 @@ async function saveProgram() {
   }
 
   editingProgramId = program.id;
+  setCoachEditorDirty(false);
   renderCoachExerciseOptions();
   syncEditorPreviewState();
   renderProgramLibrary();
@@ -2098,6 +2166,7 @@ async function publishProgram() {
   }
 
   editingProgramId = program.id;
+  setCoachEditorDirty(false);
   if (els.coachTodayDate) {
     els.coachTodayDate.value = program.date;
   }
@@ -2270,6 +2339,7 @@ function handleProgramLibraryAction(event) {
     const programId = button.dataset.loadProgram;
     editingProgramId = programId;
     seedEditorFromProgram(programId);
+    setCoachEditorDirty(false);
     syncEditorPreviewState();
     switchCoachPanel("coach-editor");
     document.querySelector("#coach-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -2292,6 +2362,7 @@ function handleProgramLibraryAction(event) {
     els.coachTodayDate.value = program.date;
   }
   seedEditorFromProgram(publishProgramId);
+  setCoachEditorDirty(false);
   syncEditorPreviewState();
   renderProgramLibrary();
   renderCoachToday();
@@ -2426,6 +2497,8 @@ function renderCoachSummary() {
 
 function resetCoachAccess() {
   authenticatedCoachId = "";
+  authenticatedCoachAccess = "";
+  setCoachEditorDirty(false);
   persistSession();
   if (els.coachAccessCode) {
     els.coachAccessCode.value = "";
@@ -2498,6 +2571,7 @@ async function confirmCoachAccess() {
   authenticatedCoachId = matchedCoach?.id || "";
 
   if (!matchedCoach) {
+    authenticatedCoachAccess = "";
     persistSession();
     renderCoachSummary();
     window.alert("找不到這組教練代碼，請重新確認後再試一次。");
@@ -2506,6 +2580,7 @@ async function confirmCoachAccess() {
 
   if (matchedCoach.status === "inactive") {
     authenticatedCoachId = "";
+    authenticatedCoachAccess = "";
     persistSession();
     renderCoachSummary();
     window.alert("這位教練帳號目前已停用。");
@@ -2515,6 +2590,7 @@ async function confirmCoachAccess() {
   if (els.coachAccessCode) {
     els.coachAccessCode.value = matchedCoach.accessCode || els.coachAccessCode.value;
   }
+  authenticatedCoachAccess = matchedCoach.accessCode || String(accessValue || "").trim();
   state.currentCoachId = matchedCoach.id;
   if (IS_CLOUD_MODE) {
     try {
@@ -2526,6 +2602,7 @@ async function confirmCoachAccess() {
   } else {
     markCoachUsed(matchedCoach.id);
   }
+  setCoachEditorDirty(false);
   refreshCoachWorkspace();
   persistSession();
   return true;
@@ -2547,6 +2624,7 @@ async function confirmStudentAccess() {
   currentStudentId = matchedStudent?.id || "";
 
   if (!matchedStudent) {
+    currentStudentAccess = "";
     persistSession();
     els.studentProgramStatus.textContent = "\u8eab\u4efd\u672a\u78ba\u8a8d";
     els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u8acb\u5148\u8f38\u5165\u6b63\u78ba\u7684\u5c08\u5c6c\u4ee3\u78bc\uff0c\u518d\u8f09\u5165\u8ab2\u8868\u3002</td></tr>`;
@@ -2560,12 +2638,14 @@ async function confirmStudentAccess() {
 
   if (matchedStudent.status === "inactive") {
     currentStudentId = "";
+    currentStudentAccess = "";
     persistSession();
     window.alert("\u9019\u4f4d\u5b78\u751f\u5e33\u865f\u76ee\u524d\u5df2\u505c\u7528\uff0c\u8acb\u806f\u7d61\u6559\u7df4\u3002");
     return false;
   }
 
   els.studentAccessCode.value = matchedStudent.accessCode || els.studentAccessCode.value;
+  currentStudentAccess = matchedStudent.accessCode || String(accessValue || "").trim();
   if (IS_CLOUD_MODE) {
     try {
       const payload = await callCloudApi("touchStudent", { studentId: matchedStudent.id });
@@ -3733,6 +3813,7 @@ async function hydrateCoachAccessFromUrl() {
     return;
   }
   authenticatedCoachId = matchedCoach.id;
+  authenticatedCoachAccess = matchedCoach.accessCode || String(accessValue || "").trim();
   state.currentCoachId = matchedCoach.id;
   if (els.coachAccessCode) {
     els.coachAccessCode.value = matchedCoach.accessCode || accessValue;
@@ -5482,11 +5563,13 @@ async function hydrateStudentAccessFromUrl() {
 
   if (matchedStudent) {
     currentStudentId = matchedStudent.id;
+    currentStudentAccess = matchedStudent.accessCode || String(accessValue || "").trim();
     els.studentAccessCode.value = matchedStudent.accessCode || accessValue;
     persistSession();
     return;
   }
   currentStudentId = "";
+  currentStudentAccess = "";
   persistSession();
 }
 
