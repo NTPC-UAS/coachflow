@@ -4299,6 +4299,10 @@ async function createCoachFromForm() {
         }
       });
       applyCloudPayloadToState(payload);
+      if (APP_MODE === "admin") {
+        const freshAdminPayload = await callCloudApi("bootstrapAdmin", {}, "GET");
+        applyCloudPayloadToState(freshAdminPayload);
+      }
     } catch (error) {
       console.warn("Cloud createCoach failed, falling back to local state:", error);
       state.coaches.push(coach);
