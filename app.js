@@ -329,6 +329,7 @@ async function callCloudApi(action, payload = {}, method = "POST") {
     let response;
     if (String(method).toUpperCase() === "GET") {
       url.searchParams.set("action", action);
+      url.searchParams.set("_ts", String(Date.now()));
       Object.entries(payload || {}).forEach(([key, value]) => {
         if (value !== undefined && value !== null) {
           url.searchParams.set(key, String(value));
@@ -336,13 +337,21 @@ async function callCloudApi(action, payload = {}, method = "POST") {
       });
       response = await fetch(url.toString(), {
         method: "GET",
+        cache: "no-store",
+        headers: {
+          "Cache-Control": "no-cache, no-store, max-age=0",
+          Pragma: "no-cache"
+        },
         signal: controller.signal
       });
     } else {
       response = await fetch(url.toString(), {
         method: "POST",
+        cache: "no-store",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
+          "Cache-Control": "no-cache, no-store, max-age=0",
+          Pragma: "no-cache"
         },
         body: JSON.stringify({ action, ...payload }),
         signal: controller.signal
