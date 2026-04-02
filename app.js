@@ -155,7 +155,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260402-2335";
+const PUBLIC_APP_VERSION = "20260403-0001";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -1693,22 +1693,10 @@ function updateModeAccessInUrl(mode, accessValue) {
   const url = new URL(window.location.href);
   ["code", "token", "coach", "student"].forEach((key) => url.searchParams.delete(key));
   if (mode === "coach" && value) {
-    const coach = getCurrentCoach();
-    const coachToken = String(coach?.token || "").trim().toLowerCase();
-    if (coachToken && value.toLowerCase() === coachToken) {
-      url.searchParams.set("token", value);
-    } else {
-      url.searchParams.set("code", value);
-    }
+    url.searchParams.set("code", value);
   }
   if (mode === "student" && value) {
-    const student = getSelectedStudent();
-    const studentToken = String(student?.token || "").trim().toLowerCase();
-    if (studentToken && value.toLowerCase() === studentToken) {
-      url.searchParams.set("token", value);
-    } else {
-      url.searchParams.set("code", value);
-    }
+    url.searchParams.set("code", value);
   }
   window.history.replaceState({}, "", url.toString());
 }
@@ -2809,7 +2797,7 @@ async function confirmStudentAccess() {
   const matchedCode = String(matchedStudent.accessCode || "").trim();
   const matchedToken = String(matchedStudent.token || "").trim();
   els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
-  currentStudentAccess = normalizedAccessValue || matchedCode || matchedToken;
+  currentStudentAccess = matchedCode || normalizedAccessValue || matchedToken;
   if (IS_CLOUD_MODE) {
     try {
       const payload = await callCloudApi("touchStudent", { studentId: matchedStudent.id });
@@ -4149,8 +4137,8 @@ function renderCoachStudentLinks() {
     .slice(0, 1)
     .map((student) => {
       const accessUrl = new URL(studentBaseUrl.toString());
-      const directAccessValue = student.token || student.accessCode || student.id;
-      accessUrl.searchParams.set(student.token ? "token" : "code", directAccessValue);
+      const directAccessValue = student.accessCode || student.id;
+      accessUrl.searchParams.set("code", directAccessValue);
       const sharedUrl = sharedBaseUrl.toString();
       const qrImageUrl = canGenerateScannableQr
         ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(accessUrl.toString())}`
@@ -5824,7 +5812,7 @@ async function hydrateStudentAccessFromUrl() {
     const normalizedAccessValue = String(accessValue || "").trim();
     const matchedCode = String(matchedStudent.accessCode || "").trim();
     const matchedToken = String(matchedStudent.token || "").trim();
-    currentStudentAccess = normalizedAccessValue || matchedCode || matchedToken;
+    currentStudentAccess = matchedCode || normalizedAccessValue || matchedToken;
     els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
     persistSession();
     return;
