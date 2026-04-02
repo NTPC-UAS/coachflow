@@ -101,6 +101,7 @@ let editingProgramId = null;
 let loadedStudentEntries = [];
 let pendingSubmission = null;
 let currentStudentId = "";
+let currentStudentProgramId = "";
 let studentViewMode = window.innerWidth <= 820 ? "card" : "table";
 let studentHistoryOpened = false;
 let lastSubmittedLogs = [];
@@ -123,6 +124,7 @@ let coachEditorDirty = false;
 let studentEntriesDirty = false;
 let loadedStudentProgramId = "";
 let lastCloudSyncAt = 0;
+let lastSubmittedSnapshot = null;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -1137,6 +1139,20 @@ async function init() {
   await bootstrapCloudMode();
   await hydrateCoachAccessFromUrl();
   await hydrateStudentAccessFromUrl();
+  if (APP_MODE === "coach" && !getCurrentCoach() && authenticatedCoachAccess) {
+    try {
+      await confirmCoachAccess();
+    } catch (error) {
+      console.warn("Coach session rehydrate failed:", error);
+    }
+  }
+  if (APP_MODE === "student" && !getSelectedStudent() && currentStudentAccess) {
+    try {
+      await confirmStudentAccess();
+    } catch (error) {
+      console.warn("Student session rehydrate failed:", error);
+    }
+  }
   if (!IS_CLOUD_MODE) {
     cleanupRedundantBlankPrograms();
   }
@@ -1572,13 +1588,14 @@ function hydrateSession() {
     }
 
     const parsed = JSON.parse(raw);
-    authenticatedCoachId = String(parsed.authenticatedCoachId || "").trim();
-    authenticatedCoachAccess = String(parsed.authenticatedCoachAccess || "").trim();
-    currentStudentId = String(parsed.currentStudentId || "").trim();
-    currentStudentAccess = String(parsed.currentStudentAccess || "").trim();
-    coachViewMode = parsed.coachViewMode || coachViewMode;
-    studentViewMode = parsed.studentViewMode || studentViewMode;
-  } catch {
+      authenticatedCoachId = String(parsed.authenticatedCoachId || "").trim();
+      authenticatedCoachAccess = String(parsed.authenticatedCoachAccess || "").trim();
+      currentStudentId = String(parsed.currentStudentId || "").trim();
+      currentStudentAccess = String(parsed.currentStudentAccess || "").trim();
+      currentStudentProgramId = String(parsed.currentStudentProgramId || "").trim();
+      coachViewMode = parsed.coachViewMode || coachViewMode;
+      studentViewMode = parsed.studentViewMode || studentViewMode;
+    } catch {
     persistSession();
   }
 }
@@ -1598,15 +1615,18 @@ function persistSession() {
     authenticatedCoachAccess: APP_MODE === "coach"
       ? String(authenticatedCoachAccess || "")
       : String(existing.authenticatedCoachAccess || ""),
-    currentStudentId: APP_MODE === "student"
-      ? String(currentStudentId || "")
-      : String(existing.currentStudentId || ""),
-    currentStudentAccess: APP_MODE === "student"
-      ? String(currentStudentAccess || "")
-      : String(existing.currentStudentAccess || ""),
-    coachViewMode: APP_MODE === "coach"
-      ? coachViewMode
-      : String(existing.coachViewMode || coachViewMode),
+      currentStudentId: APP_MODE === "student"
+        ? String(currentStudentId || "")
+        : String(existing.currentStudentId || ""),
+      currentStudentAccess: APP_MODE === "student"
+        ? String(currentStudentAccess || "")
+        : String(existing.currentStudentAccess || ""),
+      currentStudentProgramId: APP_MODE === "student"
+        ? String(currentStudentProgramId || "")
+        : String(existing.currentStudentProgramId || ""),
+      coachViewMode: APP_MODE === "coach"
+        ? coachViewMode
+        : String(existing.coachViewMode || coachViewMode),
     studentViewMode: APP_MODE === "student"
       ? studentViewMode
       : String(existing.studentViewMode || studentViewMode)
@@ -1636,15 +1656,57 @@ function captureStudentEntryDraftsFromDom() {
   });
 }
 
+function buildSubmittedSnapshot(logs, program = getSelectedStudentProgram(), student = getSelectedStudent()) {
+  if (!logs?.length) {
+    return null;
+  }
+
+  const firstLog = logs[0] || {};
+  return {
+    studentId: student?.id || firstLog.studentId || "",
+    studentName: student?.name || firstLog.studentName || "",
+    programId: program?.id || firstLog.programId || "",
+    programCode: program?.code || firstLog.programCode || "",
+    programDate: program?.date || firstLog.programDate || "",
+    submittedAt: firstLog.submittedAt || "",
+    logs: logs.map((log) => ({ ...log }))
+  };
+}
+
+function getActiveSubmittedSnapshot() {
+  if (lastSubmittedSnapshot?.logs?.length) {
+    return lastSubmittedSnapshot;
+  }
+
+  const logs = getLatestSubmittedLogsForCurrentStudentProgram();
+  if (!logs.length) {
+    return null;
+  }
+
+  return buildSubmittedSnapshot(logs);
+}
+
 function updateModeAccessInUrl(mode, accessValue) {
   const value = String(accessValue || "").trim();
   const url = new URL(window.location.href);
   ["code", "token", "coach", "student"].forEach((key) => url.searchParams.delete(key));
   if (mode === "coach" && value) {
-    url.searchParams.set("code", value);
+    const coach = getCurrentCoach();
+    const coachToken = String(coach?.token || "").trim().toLowerCase();
+    if (coachToken && value.toLowerCase() === coachToken) {
+      url.searchParams.set("token", value);
+    } else {
+      url.searchParams.set("code", value);
+    }
   }
   if (mode === "student" && value) {
-    url.searchParams.set("code", value);
+    const student = getSelectedStudent();
+    const studentToken = String(student?.token || "").trim().toLowerCase();
+    if (studentToken && value.toLowerCase() === studentToken) {
+      url.searchParams.set("token", value);
+    } else {
+      url.searchParams.set("code", value);
+    }
   }
   window.history.replaceState({}, "", url.toString());
 }
@@ -2497,6 +2559,7 @@ function renderStudentProgramOptions() {
   const student = getSelectedStudent();
   if (student?.status === "inactive") {
     els.studentProgramSelect.innerHTML = `<option value="">\u8a72\u5b78\u751f\u5df2\u505c\u7528</option>`;
+    currentStudentProgramId = "";
     return;
   }
 
@@ -2505,7 +2568,7 @@ function renderStudentProgramOptions() {
   const programs = [...state.programs]
     .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
     .sort((a, b) => b.date.localeCompare(a.date));
-  const currentValue = els.studentProgramSelect.value;
+  const currentValue = currentStudentProgramId || els.studentProgramSelect.value;
 
   els.studentProgramSelect.innerHTML = programs.length
     ? programs
@@ -2519,10 +2582,13 @@ function renderStudentProgramOptions() {
   if (programs.length) {
     const published = getPublishedProgram(studentCoachId);
     const fallbackProgram = published || programs[0];
-    els.studentProgramSelect.value =
+    currentStudentProgramId =
       programs.some((program) => program.id === currentValue)
         ? currentValue
         : fallbackProgram.id;
+    els.studentProgramSelect.value = currentStudentProgramId;
+  } else {
+    currentStudentProgramId = "";
   }
 }
 
@@ -2701,6 +2767,7 @@ async function confirmCoachAccess() {
 
 async function confirmStudentAccess() {
   const accessValue = els.studentAccessCode.value;
+  const normalizedAccessValue = String(accessValue || "").trim();
   let matchedStudent = null;
   if (IS_CLOUD_MODE) {
     try {
@@ -2737,8 +2804,10 @@ async function confirmStudentAccess() {
     return false;
   }
 
-  els.studentAccessCode.value = matchedStudent.accessCode || els.studentAccessCode.value;
-  currentStudentAccess = matchedStudent.accessCode || String(accessValue || "").trim();
+  const matchedCode = String(matchedStudent.accessCode || "").trim();
+  const matchedToken = String(matchedStudent.token || "").trim();
+  els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
+  currentStudentAccess = normalizedAccessValue || matchedCode || matchedToken;
   if (IS_CLOUD_MODE) {
     try {
       const payload = await callCloudApi("touchStudent", { studentId: matchedStudent.id });
@@ -2829,7 +2898,9 @@ function loadStudentProgram(options = {}) {
   studentSubmissionCompleted = false;
   lastSubmittedLogs = [];
   loadedStudentProgramId = nextProgramId;
+  currentStudentProgramId = nextProgramId;
   studentEntriesDirty = false;
+  persistSession();
   renderStudentProgramEntries();
   els.studentProgramStatus.textContent = `${student.name}\uff5c\u5df2\u8f09\u5165 ${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
   els.studentMobileSubmitBar.classList.toggle("is-visible", studentViewMode === "card" && loadedStudentEntries.length > 0);
@@ -2979,8 +3050,9 @@ function renderStudentProgramEntries() {
   els.editStudentProgramMobile.textContent = studentSubmissionCompleted ? "\u67e5\u770b\u672c\u6b21\u8a13\u7df4\u7d00\u9304" : "\u7de8\u8f2f\u8ab2\u8868\u9805\u76ee";
 
   if (!loadedStudentEntries.length) {
-    if (studentSubmissionCompleted && lastSubmittedLogs.length) {
-      els.studentProgramBody.innerHTML = lastSubmittedLogs
+    const completedLogs = lastSubmittedLogs.length ? lastSubmittedLogs : getLatestSubmittedLogsForCurrentStudentProgram();
+    if (studentSubmissionCompleted && completedLogs.length) {
+      els.studentProgramBody.innerHTML = completedLogs
         .map(
           (log) => `
             <tr>
@@ -2994,7 +3066,7 @@ function renderStudentProgramEntries() {
         .join("");
       els.studentCardList.innerHTML = `
         <div class="empty-card success-state-card">\u8ab2\u8868\u5df2\u5b8c\u6210</div>
-        ${lastSubmittedLogs.map((log) => formatLogForSummary(log)).join("")}
+        ${completedLogs.map((log) => formatLogForSummary(log)).join("")}
       `;
     } else {
       els.studentProgramBody.innerHTML = `<tr><td colspan="4" class="empty-state">\u8acb\u5148\u8f09\u5165\u4e00\u4efd\u8ab2\u8868\u3002</td></tr>`;
@@ -3186,10 +3258,13 @@ function closeConfirmModal() {
 }
 
 function openSuccessModal() {
-  const program = getSelectedStudentProgram();
-  els.successSummary.textContent = `${program?.date || ""}\uff5c${program?.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u672c\u6b21\u8a13\u7df4\u5167\u5bb9\u5df2\u8a18\u9304\u3002`;
-  els.successCardList.innerHTML = lastSubmittedLogs.map((log) => formatLogForSummary(log)).join("");
-  els.successBody.innerHTML = lastSubmittedLogs
+  const snapshot = getActiveSubmittedSnapshot();
+  const logs = snapshot?.logs || [];
+  const summaryDate = snapshot?.programDate || "";
+  const summaryCode = snapshot?.programCode || "\u76ee\u524d\u8ab2\u8868";
+  els.successSummary.textContent = `${summaryDate}\uff5c${summaryCode}\uff0c\u672c\u6b21\u8a13\u7df4\u5167\u5bb9\u5df2\u8a18\u9304\u3002`;
+  els.successCardList.innerHTML = logs.map((log) => formatLogForSummary(log)).join("");
+  els.successBody.innerHTML = logs
     .map(
       (log) => `
         <tr>
@@ -3220,17 +3295,23 @@ function buildSuccessImageFileName(student, program) {
 }
 
 async function downloadSuccessImage() {
-  if (!lastSubmittedLogs.length) {
+  const snapshot = getActiveSubmittedSnapshot();
+  const logs = snapshot?.logs || [];
+  if (!logs.length) {
     window.alert("目前沒有可下載的完成紀錄。");
     return;
   }
 
-  const student = getSelectedStudent();
-  const program = getSelectedStudentProgram();
+  const student = snapshot
+    ? { id: snapshot.studentId, name: snapshot.studentName }
+    : getSelectedStudent();
+  const program = snapshot
+    ? { id: snapshot.programId, code: snapshot.programCode, date: snapshot.programDate }
+    : getSelectedStudentProgram();
   const title = buildSuccessImageFileName(student, program);
 
   try {
-    const imageData = await renderSuccessSheetAsJpeg(student, program, lastSubmittedLogs);
+    const imageData = await renderSuccessSheetAsJpeg(student, program, logs);
     const link = document.createElement("a");
     link.href = imageData.data;
     link.download = `${title}.png`;
@@ -3384,7 +3465,7 @@ function closeProgramPreviewModal() {
 }
 
 function handleStudentDetailAction() {
-  if (studentSubmissionCompleted && lastSubmittedLogs.length) {
+  if (studentSubmissionCompleted && (lastSubmittedLogs.length || getLatestSubmittedLogsForCurrentStudentProgram().length)) {
     openSuccessModal();
     return;
   }
@@ -3666,9 +3747,11 @@ function showStudentAccessPanel() {
   studentHistoryOpened = false;
   loadedStudentEntries = [];
   loadedStudentProgramId = "";
+  currentStudentProgramId = "";
   studentEntriesDirty = false;
   studentSubmissionCompleted = false;
   lastSubmittedLogs = [];
+  lastSubmittedSnapshot = null;
   clearModeAccessInUrl();
   applyStudentViewMode();
   els.studentAuthShell.classList.remove("is-collapsed");
@@ -3682,11 +3765,18 @@ async function finalizeSubmission() {
     return;
   }
 
-  lastSubmittedLogs = [...pendingSubmission];
+  const submittedLogs = [...pendingSubmission];
+  lastSubmittedLogs = [...submittedLogs];
+  lastSubmittedSnapshot = buildSubmittedSnapshot(submittedLogs);
   studentSubmissionCompleted = true;
   if (IS_CLOUD_MODE) {
     try {
       await submitStudentLogsToCloud(pendingSubmission);
+      const cloudLogs = getLatestSubmittedLogsForCurrentStudentProgram();
+      if (cloudLogs.length) {
+        lastSubmittedLogs = [...cloudLogs];
+        lastSubmittedSnapshot = buildSubmittedSnapshot(cloudLogs);
+      }
     } catch (error) {
       console.warn("Cloud submit logs failed, falling back to local state:", error);
       const submissionKeys = new Set(
@@ -3695,8 +3785,9 @@ async function finalizeSubmission() {
       state.workoutLogs = state.workoutLogs.filter(
         (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${log.exercise}`)
       );
-      state.workoutLogs = pendingSubmission.concat(state.workoutLogs);
+      state.workoutLogs = submittedLogs.concat(state.workoutLogs);
       persistState();
+      lastSubmittedSnapshot = buildSubmittedSnapshot(submittedLogs);
     }
   } else {
     const submissionKeys = new Set(
@@ -3705,8 +3796,9 @@ async function finalizeSubmission() {
     state.workoutLogs = state.workoutLogs.filter(
       (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${log.exercise}`)
     );
-    state.workoutLogs = pendingSubmission.concat(state.workoutLogs);
+    state.workoutLogs = submittedLogs.concat(state.workoutLogs);
     persistState();
+    lastSubmittedSnapshot = buildSubmittedSnapshot(submittedLogs);
   }
   closeConfirmModal();
   renderCoachToday();
@@ -3718,8 +3810,9 @@ async function finalizeSubmission() {
   renderStudentHistoryFilters();
   renderStudentHistory();
   loadedStudentEntries = [];
-  loadedStudentProgramId = "";
+  loadedStudentProgramId = currentStudentProgramId || loadedStudentProgramId;
   studentEntriesDirty = false;
+  persistSession();
   renderStudentProgramEntries();
   els.studentProgramStatus.textContent = `\u672c\u6b21\u8a13\u7df4\u5df2\u8a18\u9304\uff5c\u6700\u5f8c\u66f4\u65b0 ${lastSubmittedLogs[0]?.submittedAt || ""}`;
   els.studentMobileSubmitBar.classList.remove("is-visible");
@@ -4052,7 +4145,8 @@ function renderCoachStudentLinks() {
     .slice(0, 1)
     .map((student) => {
       const accessUrl = new URL(studentBaseUrl.toString());
-      accessUrl.searchParams.set("token", student.token || student.accessCode || student.id);
+      const directAccessValue = student.token || student.accessCode || student.id;
+      accessUrl.searchParams.set(student.token ? "token" : "code", directAccessValue);
       const sharedUrl = sharedBaseUrl.toString();
       const qrImageUrl = canGenerateScannableQr
         ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(accessUrl.toString())}`
@@ -5509,11 +5603,35 @@ function getSelectedStudentProgram() {
   const scopedPrograms = [...state.programs]
     .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
     .sort((a, b) => b.date.localeCompare(a.date));
-  const selectedProgramId = els.studentProgramSelect?.value || "";
+  const selectedProgramId = currentStudentProgramId || els.studentProgramSelect?.value || "";
   return state.programs.find((program) => program.id === selectedProgramId)
     || getPublishedProgram(studentCoachId)
     || scopedPrograms[0]
     || null;
+}
+
+function getLatestSubmittedLogsForCurrentStudentProgram() {
+  const student = getSelectedStudent();
+  const program = getSelectedStudentProgram();
+  if (!student || !program) {
+    return [];
+  }
+
+  const matches = state.workoutLogs
+    .filter((log) => log.studentId === student.id)
+    .filter((log) => log.programId === program.id)
+    .sort((a, b) => `${b.submittedAt || ""} ${b.updatedAt || ""}`.localeCompare(`${a.submittedAt || ""} ${a.updatedAt || ""}`));
+
+  if (!matches.length) {
+    return [];
+  }
+
+  const latestSubmittedAt = matches[0].submittedAt || "";
+  if (!latestSubmittedAt) {
+    return matches;
+  }
+
+  return matches.filter((log) => String(log.submittedAt || "") === latestSubmittedAt);
 }
 
 function findLatestReferenceLog(studentId, item) {
@@ -5699,8 +5817,11 @@ async function hydrateStudentAccessFromUrl() {
 
   if (matchedStudent) {
     currentStudentId = matchedStudent.id;
-    currentStudentAccess = matchedStudent.accessCode || String(accessValue || "").trim();
-    els.studentAccessCode.value = matchedStudent.accessCode || accessValue;
+    const normalizedAccessValue = String(accessValue || "").trim();
+    const matchedCode = String(matchedStudent.accessCode || "").trim();
+    const matchedToken = String(matchedStudent.token || "").trim();
+    currentStudentAccess = normalizedAccessValue || matchedCode || matchedToken;
+    els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
     persistSession();
     return;
   }
