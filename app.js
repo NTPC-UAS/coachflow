@@ -155,6 +155,8 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
+const PUBLIC_APP_VERSION = "20260402-2335";
+
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
   !!String(APP_CONFIG.appsScriptUrl || "").trim();
@@ -4091,9 +4093,11 @@ function renderCoachStudentLinks() {
   studentBaseUrl.search = "";
   studentBaseUrl.hash = "";
   studentBaseUrl.searchParams.set("mode", "student");
+  studentBaseUrl.searchParams.set("v", PUBLIC_APP_VERSION);
   const sharedBaseUrl = new URL(studentBaseUrl.toString());
   sharedBaseUrl.search = "";
   sharedBaseUrl.searchParams.set("mode", "student");
+  sharedBaseUrl.searchParams.set("v", PUBLIC_APP_VERSION);
 
   const keyword = (els.coachStudentLinkName?.value || "").trim().toLowerCase();
   if (els.coachStudentLinkSelect && els.coachStudentLinkName?.value) {
