@@ -155,7 +155,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0001";
+const PUBLIC_APP_VERSION = "20260403-0004";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -347,10 +347,6 @@ async function callCloudApi(action, payload = {}, method = "POST") {
       response = await fetch(url.toString(), {
         method: "GET",
         cache: "no-store",
-        headers: {
-          "Cache-Control": "no-cache, no-store, max-age=0",
-          Pragma: "no-cache"
-        },
         signal: controller.signal
       });
     } else {
@@ -358,11 +354,9 @@ async function callCloudApi(action, payload = {}, method = "POST") {
         method: "POST",
         cache: "no-store",
         headers: {
-          "Content-Type": "application/json",
-          "Cache-Control": "no-cache, no-store, max-age=0",
-          Pragma: "no-cache"
+          "Content-Type": "text/plain;charset=UTF-8"
         },
-        body: JSON.stringify({ action, ...payload }),
+        body: JSON.stringify({ action, ...payload, _ts: Date.now() }),
         signal: controller.signal
       });
     }
@@ -398,6 +392,31 @@ async function bootstrapCloudMode() {
   }
 
   if (APP_MODE === "coach") {
+    const urlAccess = getModeAccessFromUrl("coach");
+    if (urlAccess) {
+      authenticatedCoachId = "";
+      authenticatedCoachAccess = String(urlAccess || "").trim();
+      if (els.coachAccessCode) {
+        els.coachAccessCode.value = authenticatedCoachAccess;
+      }
+      try {
+        const matchedCoach = await resolveCoachAccessFromCloud(authenticatedCoachAccess);
+        if (matchedCoach?.id) {
+          authenticatedCoachId = matchedCoach.id;
+          authenticatedCoachAccess = matchedCoach.accessCode || authenticatedCoachAccess;
+          state.currentCoachId = matchedCoach.id;
+          if (els.coachAccessCode) {
+            els.coachAccessCode.value = matchedCoach.accessCode || authenticatedCoachAccess;
+          }
+          const payload = await callCloudApi("bootstrapCoach", { coachId: matchedCoach.id });
+          applyCloudPayloadToState(payload);
+        }
+      } catch (error) {
+        console.warn("Coach cloud bootstrap by URL access failed:", error);
+      }
+      persistSession();
+      return;
+    }
     if (authenticatedCoachId) {
       try {
         const payload = await callCloudApi("bootstrapCoach", { coachId: authenticatedCoachId });
@@ -430,6 +449,30 @@ async function bootstrapCloudMode() {
   }
 
   if (APP_MODE === "student") {
+    const urlAccess = getModeAccessFromUrl("student");
+    if (urlAccess) {
+      currentStudentId = "";
+      currentStudentAccess = String(urlAccess || "").trim();
+      if (els.studentAccessCode) {
+        els.studentAccessCode.value = currentStudentAccess;
+      }
+      try {
+        const matchedStudent = await resolveStudentAccessFromCloud(currentStudentAccess);
+        if (matchedStudent?.id) {
+          currentStudentId = matchedStudent.id;
+          currentStudentAccess = matchedStudent.accessCode || currentStudentAccess;
+          if (els.studentAccessCode) {
+            els.studentAccessCode.value = matchedStudent.accessCode || currentStudentAccess;
+          }
+          const payload = await callCloudApi("bootstrapStudent", { studentId: matchedStudent.id });
+          applyCloudPayloadToState(payload);
+        }
+      } catch (error) {
+        console.warn("Student cloud bootstrap by URL access failed:", error);
+      }
+      persistSession();
+      return;
+    }
     if (currentStudentId) {
       try {
         const payload = await callCloudApi("bootstrapStudent", { studentId: currentStudentId });
@@ -458,6 +501,17 @@ async function bootstrapCloudMode() {
     }
     await hydrateStudentAccessFromUrl();
   }
+}
+
+function getModeAccessFromUrl(mode) {
+  const params = new URLSearchParams(window.location.search);
+  if (mode === "coach") {
+    return String(params.get("coach") || params.get("token") || params.get("code") || "").trim();
+  }
+  if (mode === "student") {
+    return String(params.get("student") || params.get("token") || params.get("code") || "").trim();
+  }
+  return "";
 }
 
 async function resolveStudentAccessFromCloud(accessValue) {
