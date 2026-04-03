@@ -155,7 +155,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0008";
+const PUBLIC_APP_VERSION = "20260403-0009";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -1316,10 +1316,16 @@ async function ensureCoachAccessOnInit() {
   }
 
   if (urlAccess || !getCurrentCoach()) {
-    let confirmed = await confirmCoachAccess({ silentError: true, skipTouch: true });
-    if (!confirmed) {
-      await delay(450);
+    let confirmed = false;
+    const retryDelays = [0, 700, 1500];
+    for (let i = 0; i < retryDelays.length; i += 1) {
+      if (retryDelays[i] > 0) {
+        await delay(retryDelays[i]);
+      }
       confirmed = await confirmCoachAccess({ silentError: true, skipTouch: true });
+      if (confirmed) {
+        break;
+      }
     }
     if (!confirmed) {
       authenticatedCoachId = "";
@@ -1346,10 +1352,16 @@ async function ensureStudentAccessOnInit() {
   }
 
   if (urlAccess || !getSelectedStudent()) {
-    let confirmed = await confirmStudentAccess({ silentError: true, skipTouch: true });
-    if (!confirmed) {
-      await delay(450);
+    let confirmed = false;
+    const retryDelays = [0, 700, 1500];
+    for (let i = 0; i < retryDelays.length; i += 1) {
+      if (retryDelays[i] > 0) {
+        await delay(retryDelays[i]);
+      }
       confirmed = await confirmStudentAccess({ silentError: true, skipTouch: true });
+      if (confirmed) {
+        break;
+      }
     }
     if (!confirmed) {
       currentStudentId = "";
@@ -1402,6 +1414,10 @@ async function init() {
     refreshCoachWorkspace();
   } else if (APP_MODE === "student") {
     refreshStudentWorkspace();
+    if (!getSelectedStudent() && getModeAccessFromUrl("student")) {
+      await ensureStudentAccessOnInit();
+      refreshStudentWorkspace();
+    }
   } else {
     refreshCoachWorkspace();
     refreshStudentWorkspace();
@@ -3396,12 +3412,17 @@ function getActiveEntryField(index, field) {
 
 function buildLogPayload(student, program, entry, index) {
   const read = (field) => getActiveEntryField(index, field);
+  const assignedCoach = state.coaches.find((coach) => coach.id === (student?.primaryCoachId || ""));
+  const effectiveCoachId = program?.coachId || assignedCoach?.id || "";
+  const effectiveCoachName = program?.coachName || assignedCoach?.name || "";
 
   return {
     id: `log-${Date.now()}-${index}`,
     programId: program.id,
     programCode: program.code,
     programDate: program.date,
+    coachId: effectiveCoachId,
+    coachName: effectiveCoachName,
     studentId: student.id,
     studentName: student.name,
     category: entry.category,
