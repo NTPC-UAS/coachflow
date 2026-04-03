@@ -155,7 +155,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0004";
+const PUBLIC_APP_VERSION = "20260403-0005";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -394,8 +394,9 @@ async function bootstrapCloudMode() {
   if (APP_MODE === "coach") {
     const urlAccess = getModeAccessFromUrl("coach");
     if (urlAccess) {
-      authenticatedCoachId = "";
-      authenticatedCoachAccess = String(urlAccess || "").trim();
+      const previousCoachId = authenticatedCoachId;
+      const previousCoachAccess = authenticatedCoachAccess;
+      authenticatedCoachAccess = normalizeAccessInput(urlAccess);
       if (els.coachAccessCode) {
         els.coachAccessCode.value = authenticatedCoachAccess;
       }
@@ -410,9 +411,16 @@ async function bootstrapCloudMode() {
           }
           const payload = await callCloudApi("bootstrapCoach", { coachId: matchedCoach.id });
           applyCloudPayloadToState(payload);
+        } else if (!previousCoachId) {
+          authenticatedCoachId = "";
+        } else {
+          authenticatedCoachId = previousCoachId;
+          authenticatedCoachAccess = previousCoachAccess || authenticatedCoachAccess;
         }
       } catch (error) {
         console.warn("Coach cloud bootstrap by URL access failed:", error);
+        authenticatedCoachId = previousCoachId;
+        authenticatedCoachAccess = previousCoachAccess || authenticatedCoachAccess;
       }
       persistSession();
       return;
@@ -451,8 +459,9 @@ async function bootstrapCloudMode() {
   if (APP_MODE === "student") {
     const urlAccess = getModeAccessFromUrl("student");
     if (urlAccess) {
-      currentStudentId = "";
-      currentStudentAccess = String(urlAccess || "").trim();
+      const previousStudentId = currentStudentId;
+      const previousStudentAccess = currentStudentAccess;
+      currentStudentAccess = normalizeAccessInput(urlAccess);
       if (els.studentAccessCode) {
         els.studentAccessCode.value = currentStudentAccess;
       }
@@ -466,9 +475,16 @@ async function bootstrapCloudMode() {
           }
           const payload = await callCloudApi("bootstrapStudent", { studentId: matchedStudent.id });
           applyCloudPayloadToState(payload);
+        } else if (!previousStudentId) {
+          currentStudentId = "";
+        } else {
+          currentStudentId = previousStudentId;
+          currentStudentAccess = previousStudentAccess || currentStudentAccess;
         }
       } catch (error) {
         console.warn("Student cloud bootstrap by URL access failed:", error);
+        currentStudentId = previousStudentId;
+        currentStudentAccess = previousStudentAccess || currentStudentAccess;
       }
       persistSession();
       return;
@@ -506,10 +522,10 @@ async function bootstrapCloudMode() {
 function getModeAccessFromUrl(mode) {
   const params = new URLSearchParams(window.location.search);
   if (mode === "coach") {
-    return String(params.get("coach") || params.get("token") || params.get("code") || "").trim();
+    return normalizeAccessInput(params.get("coach") || params.get("token") || params.get("code") || "");
   }
   if (mode === "student") {
-    return String(params.get("student") || params.get("token") || params.get("code") || "").trim();
+    return normalizeAccessInput(params.get("student") || params.get("token") || params.get("code") || "");
   }
   return "";
 }
@@ -868,8 +884,14 @@ function buildCoachAccessCode(name, index) {
   return `${prefix}${String(index).padStart(3, "0")}`;
 }
 
+function normalizeAccessInput(rawValue) {
+  return String(rawValue || "")
+    .replace(/[\u200B-\u200D\uFEFF]/g, "")
+    .trim();
+}
+
 function resolveCoachByAccess(rawValue) {
-  const value = String(rawValue || "").trim().toLowerCase();
+  const value = normalizeAccessInput(rawValue).toLowerCase();
   if (!value) {
     return null;
   }
@@ -1193,8 +1215,14 @@ async function init() {
   hydrateFromStorage();
   hydrateSession();
   await bootstrapCloudMode();
-  await hydrateCoachAccessFromUrl();
-  await hydrateStudentAccessFromUrl();
+  if (APP_MODE === "coach" && !authenticatedCoachId) {
+    await hydrateCoachAccessFromUrl();
+  } else if (APP_MODE === "student" && !currentStudentId) {
+    await hydrateStudentAccessFromUrl();
+  } else if (APP_MODE === "dual") {
+    await hydrateCoachAccessFromUrl();
+    await hydrateStudentAccessFromUrl();
+  }
   if (APP_MODE === "coach" && !getCurrentCoach() && authenticatedCoachAccess) {
     try {
       await confirmCoachAccess();
@@ -2755,7 +2783,10 @@ function syncCoachAccessUI() {
 }
 
 async function confirmCoachAccess() {
-  const accessValue = els.coachAccessCode?.value || "";
+  const accessValue = normalizeAccessInput(els.coachAccessCode?.value || "");
+  if (els.coachAccessCode) {
+    els.coachAccessCode.value = accessValue;
+  }
   let matchedCoach = null;
   if (IS_CLOUD_MODE) {
     try {
@@ -2793,12 +2824,9 @@ async function confirmCoachAccess() {
   authenticatedCoachAccess = matchedCoach.accessCode || String(accessValue || "").trim();
   state.currentCoachId = matchedCoach.id;
   if (IS_CLOUD_MODE) {
-    try {
-      const payload = await callCloudApi("touchCoach", { coachId: matchedCoach.id });
-      applyCloudPayloadToState(payload);
-    } catch {
-      markCoachUsed(matchedCoach.id);
-    }
+    callCloudApi("touchCoach", { coachId: matchedCoach.id })
+      .then((payload) => applyCloudPayloadToState(payload))
+      .catch(() => markCoachUsed(matchedCoach.id));
   } else {
     markCoachUsed(matchedCoach.id);
   }
@@ -2810,18 +2838,19 @@ async function confirmCoachAccess() {
 }
 
 async function confirmStudentAccess() {
-  const accessValue = els.studentAccessCode.value;
-  const normalizedAccessValue = String(accessValue || "").trim();
+  const accessValue = normalizeAccessInput(els.studentAccessCode.value);
+  const normalizedAccessValue = accessValue;
+  els.studentAccessCode.value = normalizedAccessValue;
   let matchedStudent = null;
   if (IS_CLOUD_MODE) {
     try {
-      matchedStudent = await resolveStudentAccessFromCloud(accessValue);
+      matchedStudent = await resolveStudentAccessFromCloud(normalizedAccessValue);
     } catch (error) {
       console.warn("Student cloud login failed, falling back to local state:", error);
-      matchedStudent = resolveStudentByAccess(accessValue);
+      matchedStudent = resolveStudentByAccess(normalizedAccessValue);
     }
   } else {
-    matchedStudent = resolveStudentByAccess(accessValue);
+    matchedStudent = resolveStudentByAccess(normalizedAccessValue);
   }
   currentStudentId = matchedStudent?.id || "";
 
@@ -2853,12 +2882,9 @@ async function confirmStudentAccess() {
   els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
   currentStudentAccess = matchedCode || normalizedAccessValue || matchedToken;
   if (IS_CLOUD_MODE) {
-    try {
-      const payload = await callCloudApi("touchStudent", { studentId: matchedStudent.id });
-      applyCloudPayloadToState(payload);
-    } catch {
-      markStudentUsed(matchedStudent.id);
-    }
+    callCloudApi("touchStudent", { studentId: matchedStudent.id })
+      .then((payload) => applyCloudPayloadToState(payload))
+      .catch(() => markStudentUsed(matchedStudent.id));
   } else {
     markStudentUsed(matchedStudent.id);
   }
@@ -4067,8 +4093,8 @@ async function hydrateCoachAccessFromUrl() {
     return;
   }
   const params = new URLSearchParams(window.location.search);
-  const accessValue = params.get("coach") || params.get("token") || params.get("code") || "";
-  if (!String(accessValue || "").trim()) {
+  const accessValue = normalizeAccessInput(params.get("coach") || params.get("token") || params.get("code") || "");
+  if (!accessValue) {
     return;
   }
   let matchedCoach = null;
@@ -5798,7 +5824,7 @@ function getSelectedStudent() {
 }
 
 function resolveStudentByAccess(rawValue) {
-  const value = String(rawValue || "").trim().toLowerCase();
+  const value = normalizeAccessInput(rawValue).toLowerCase();
   if (!value) {
     return null;
   }
@@ -5845,8 +5871,8 @@ function exportCoachHistoryCsv() {
 
 async function hydrateStudentAccessFromUrl() {
   const params = new URLSearchParams(window.location.search);
-  const accessValue = params.get("student") || params.get("token") || params.get("code") || "";
-  if (!String(accessValue || "").trim()) {
+  const accessValue = normalizeAccessInput(params.get("student") || params.get("token") || params.get("code") || "");
+  if (!accessValue) {
     return;
   }
   let matchedStudent = null;
@@ -5863,7 +5889,7 @@ async function hydrateStudentAccessFromUrl() {
 
   if (matchedStudent) {
     currentStudentId = matchedStudent.id;
-    const normalizedAccessValue = String(accessValue || "").trim();
+    const normalizedAccessValue = accessValue;
     const matchedCode = String(matchedStudent.accessCode || "").trim();
     const matchedToken = String(matchedStudent.token || "").trim();
     currentStudentAccess = matchedCode || normalizedAccessValue || matchedToken;
@@ -5871,9 +5897,10 @@ async function hydrateStudentAccessFromUrl() {
     persistSession();
     return;
   }
-  currentStudentId = "";
-  currentStudentAccess = "";
-  persistSession();
+  if (!currentStudentId) {
+    currentStudentAccess = "";
+    persistSession();
+  }
 }
 
 function formatTarget(item) {
