@@ -155,7 +155,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0005";
+const PUBLIC_APP_VERSION = "20260403-0006";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -531,15 +531,49 @@ function getModeAccessFromUrl(mode) {
 }
 
 async function resolveStudentAccessFromCloud(accessValue) {
-  const payload = await callCloudApi("resolveStudentAccess", { access: accessValue });
-  applyCloudPayloadToState(payload);
-  return payload.student ? normalizeCloudStudent(payload.student) : getSelectedStudent();
+  const candidates = buildAccessCandidates(accessValue);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const payload = await callCloudApi("resolveStudentAccess", { access: candidate });
+      applyCloudPayloadToState(payload);
+      const matched = payload.student ? normalizeCloudStudent(payload.student) : resolveStudentByAccess(candidate);
+      if (matched) {
+        return matched;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  return null;
 }
 
 async function resolveCoachAccessFromCloud(accessValue) {
-  const payload = await callCloudApi("resolveCoachAccess", { access: accessValue });
-  applyCloudPayloadToState(payload);
-  return payload.coach ? normalizeCloudCoach(payload.coach) : getCurrentCoach();
+  const candidates = buildAccessCandidates(accessValue);
+  let lastError = null;
+
+  for (const candidate of candidates) {
+    try {
+      const payload = await callCloudApi("resolveCoachAccess", { access: candidate });
+      applyCloudPayloadToState(payload);
+      const matched = payload.coach ? normalizeCloudCoach(payload.coach) : resolveCoachByAccess(candidate);
+      if (matched) {
+        return matched;
+      }
+    } catch (error) {
+      lastError = error;
+    }
+  }
+
+  if (lastError) {
+    throw lastError;
+  }
+  return null;
 }
 
 async function submitStudentLogsToCloud(logs) {
@@ -890,6 +924,14 @@ function normalizeAccessInput(rawValue) {
     .trim();
 }
 
+function buildAccessCandidates(rawValue) {
+  const normalized = normalizeAccessInput(rawValue);
+  if (!normalized) {
+    return [];
+  }
+  return [...new Set([normalized, normalized.toUpperCase(), normalized.toLowerCase()])];
+}
+
 function resolveCoachByAccess(rawValue) {
   const value = normalizeAccessInput(rawValue).toLowerCase();
   if (!value) {
@@ -1209,6 +1251,75 @@ function refreshStudentWorkspace() {
   syncStudentAccessUI();
 }
 
+function delay(ms) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+async function ensureCoachAccessOnInit() {
+  if (APP_MODE !== "coach") {
+    return;
+  }
+
+  const urlAccess = getModeAccessFromUrl("coach");
+  const candidateAccess = normalizeAccessInput(urlAccess || authenticatedCoachAccess || els.coachAccessCode?.value || "");
+  if (!candidateAccess) {
+    return;
+  }
+
+  if (els.coachAccessCode) {
+    els.coachAccessCode.value = candidateAccess;
+  }
+
+  if (urlAccess || !getCurrentCoach()) {
+    let confirmed = await confirmCoachAccess({ silentError: true, skipTouch: true });
+    if (!confirmed) {
+      await delay(450);
+      confirmed = await confirmCoachAccess({ silentError: true, skipTouch: true });
+    }
+    if (!confirmed) {
+      authenticatedCoachId = "";
+      authenticatedCoachAccess = candidateAccess;
+      persistSession();
+      syncCoachAccessUI();
+    }
+  }
+}
+
+async function ensureStudentAccessOnInit() {
+  if (APP_MODE !== "student") {
+    return;
+  }
+
+  const urlAccess = getModeAccessFromUrl("student");
+  const candidateAccess = normalizeAccessInput(urlAccess || currentStudentAccess || els.studentAccessCode?.value || "");
+  if (!candidateAccess) {
+    return;
+  }
+
+  if (els.studentAccessCode) {
+    els.studentAccessCode.value = candidateAccess;
+  }
+
+  if (urlAccess || !getSelectedStudent()) {
+    let confirmed = await confirmStudentAccess({ silentError: true, skipTouch: true });
+    if (!confirmed) {
+      await delay(450);
+      confirmed = await confirmStudentAccess({ silentError: true, skipTouch: true });
+    }
+    if (!confirmed) {
+      currentStudentId = "";
+      currentStudentAccess = candidateAccess;
+      persistSession();
+      syncStudentAccessUI();
+      return;
+    }
+  }
+
+  if (currentStudentId && !loadedStudentEntries.length) {
+    loadStudentProgram({ silent: true, preserveIfDirty: true });
+  }
+}
+
 async function init() {
   applyStaticCopy();
   applyAppMode();
@@ -1223,20 +1334,8 @@ async function init() {
     await hydrateCoachAccessFromUrl();
     await hydrateStudentAccessFromUrl();
   }
-  if (APP_MODE === "coach" && !getCurrentCoach() && authenticatedCoachAccess) {
-    try {
-      await confirmCoachAccess();
-    } catch (error) {
-      console.warn("Coach session rehydrate failed:", error);
-    }
-  }
-  if (APP_MODE === "student" && !getSelectedStudent() && currentStudentAccess) {
-    try {
-      await confirmStudentAccess();
-    } catch (error) {
-      console.warn("Student session rehydrate failed:", error);
-    }
-  }
+  await ensureCoachAccessOnInit();
+  await ensureStudentAccessOnInit();
   if (!IS_CLOUD_MODE) {
     cleanupRedundantBlankPrograms();
   }
@@ -2782,7 +2881,8 @@ function syncCoachAccessUI() {
   });
 }
 
-async function confirmCoachAccess() {
+async function confirmCoachAccess(options = {}) {
+  const { silentError = false, skipTouch = false } = options;
   const accessValue = normalizeAccessInput(els.coachAccessCode?.value || "");
   if (els.coachAccessCode) {
     els.coachAccessCode.value = accessValue;
@@ -2805,7 +2905,9 @@ async function confirmCoachAccess() {
     persistSession();
     clearModeAccessInUrl();
     renderCoachSummary();
-    window.alert("找不到這組教練代碼，請重新確認後再試一次。");
+    if (!silentError) {
+      window.alert("找不到這組教練代碼，請重新確認後再試一次。");
+    }
     return false;
   }
 
@@ -2814,7 +2916,9 @@ async function confirmCoachAccess() {
     authenticatedCoachAccess = "";
     persistSession();
     renderCoachSummary();
-    window.alert("這位教練帳號目前已停用。");
+    if (!silentError) {
+      window.alert("這位教練帳號目前已停用。");
+    }
     return false;
   }
 
@@ -2823,11 +2927,11 @@ async function confirmCoachAccess() {
   }
   authenticatedCoachAccess = matchedCoach.accessCode || String(accessValue || "").trim();
   state.currentCoachId = matchedCoach.id;
-  if (IS_CLOUD_MODE) {
+  if (IS_CLOUD_MODE && !skipTouch) {
     callCloudApi("touchCoach", { coachId: matchedCoach.id })
       .then((payload) => applyCloudPayloadToState(payload))
       .catch(() => markCoachUsed(matchedCoach.id));
-  } else {
+  } else if (!skipTouch) {
     markCoachUsed(matchedCoach.id);
   }
   setCoachEditorDirty(false);
@@ -2837,7 +2941,8 @@ async function confirmCoachAccess() {
   return true;
 }
 
-async function confirmStudentAccess() {
+async function confirmStudentAccess(options = {}) {
+  const { silentError = false, skipTouch = false } = options;
   const accessValue = normalizeAccessInput(els.studentAccessCode.value);
   const normalizedAccessValue = accessValue;
   els.studentAccessCode.value = normalizedAccessValue;
@@ -2864,7 +2969,9 @@ async function confirmStudentAccess() {
     renderStudentSummary();
     renderStudentHistoryFilters();
     renderStudentHistory();
-    window.alert("\u627e\u4e0d\u5230\u9019\u7d44\u5c08\u5c6c\u4ee3\u78bc\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u5f8c\u518d\u8a66\u4e00\u6b21\u3002");
+    if (!silentError) {
+      window.alert("\u627e\u4e0d\u5230\u9019\u7d44\u5c08\u5c6c\u4ee3\u78bc\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u5f8c\u518d\u8a66\u4e00\u6b21\u3002");
+    }
     return false;
   }
 
@@ -2873,7 +2980,9 @@ async function confirmStudentAccess() {
     currentStudentAccess = "";
     persistSession();
     clearModeAccessInUrl();
-    window.alert("\u9019\u4f4d\u5b78\u751f\u5e33\u865f\u76ee\u524d\u5df2\u505c\u7528\uff0c\u8acb\u806f\u7d61\u6559\u7df4\u3002");
+    if (!silentError) {
+      window.alert("\u9019\u4f4d\u5b78\u751f\u5e33\u865f\u76ee\u524d\u5df2\u505c\u7528\uff0c\u8acb\u806f\u7d61\u6559\u7df4\u3002");
+    }
     return false;
   }
 
@@ -2881,11 +2990,11 @@ async function confirmStudentAccess() {
   const matchedToken = String(matchedStudent.token || "").trim();
   els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
   currentStudentAccess = matchedCode || normalizedAccessValue || matchedToken;
-  if (IS_CLOUD_MODE) {
+  if (IS_CLOUD_MODE && !skipTouch) {
     callCloudApi("touchStudent", { studentId: matchedStudent.id })
       .then((payload) => applyCloudPayloadToState(payload))
       .catch(() => markStudentUsed(matchedStudent.id));
-  } else {
+  } else if (!skipTouch) {
     markStudentUsed(matchedStudent.id);
   }
   els.studentProgramStatus.textContent = `${matchedStudent.name} \u8eab\u4efd\u5df2\u78ba\u8a8d`;
