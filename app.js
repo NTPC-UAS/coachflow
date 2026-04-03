@@ -3,96 +3,12 @@
 const SESSION_KEY = "coachflow-v2-session";
 
 const defaultState = {
-  coaches: [
-    { id: "coach-001", name: "Coach Lin", status: "active", role: "admin", accessCode: "CL001", token: "coachlin", lastUsedAt: "" },
-    { id: "coach-002", name: "Coach Chen", status: "active", role: "coach", accessCode: "CC002", token: "coachchen", lastUsedAt: "" }
-  ],
-  currentCoachId: "coach-001",
-  students: [
-    { id: "stu-001", name: "\u738b\u5c0f\u660e", className: "\u529b\u91cf A \u73ed", status: "active", accessCode: "WM001", token: "wm001", primaryCoachId: "coach-001" },
-    { id: "stu-002", name: "\u9673\u6cf3\u84c1", className: "\u529b\u91cf A \u73ed", status: "active", accessCode: "CY002", token: "cy002", primaryCoachId: "coach-001" },
-    { id: "stu-003", name: "\u6797\u67cf\u5b87", className: "\u529b\u91cf B \u73ed", status: "active", accessCode: "LB003", token: "lb003", primaryCoachId: "coach-002" }
-  ],
-  programs: [
-    {
-      id: "program-2026-03-29",
-      code: "0329A",
-      date: "2026-03-29",
-      title: "\u4e0b\u80a2\u529b\u91cf\u65e5",
-      coachId: "coach-001",
-      coachName: "Coach Lin",
-      notes: "\u4e3b\u9805\u76ee\u4fdd\u7559 2 \u4e0b\u9918\u88d5\u3002",
-      published: true,
-      createdAt: "2026-03-29T08:30:00+08:00"
-    }
-  ],
-  programItems: [
-    { id: "item-1", programId: "program-2026-03-29", sortOrder: 1, category: "\u7206\u767c\u529b", exercise: "\u7206\u767c\u9ad8\u62c9", targetSets: 4, targetType: "reps", targetValue: 8, itemNote: "" },
-    { id: "item-2", programId: "program-2026-03-29", sortOrder: 2, category: "\u4e3b\u9805\u76ee", exercise: "\u6df1\u8e72", targetSets: 5, targetType: "reps", targetValue: 5, itemNote: "" },
-    { id: "item-3", programId: "program-2026-03-29", sortOrder: 3, category: "\u8f14\u52a9\u9805", exercise: "\u5f8c\u8173\u62ac\u9ad8\u8e72", targetSets: 4, targetType: "time", targetValue: 60, itemNote: "" }
-  ],
-  workoutLogs: [
-    {
-      id: "log-1",
-      programId: "program-2026-03-29",
-      programCode: "0329A",
-      programDate: "2026-03-29",
-      coachId: "coach-001",
-      coachName: "Coach Lin",
-      studentId: "stu-001",
-      studentName: "\u738b\u5c0f\u660e",
-      category: "\u4e3b\u9805\u76ee",
-      exercise: "\u6df1\u8e72",
-      targetSets: 5,
-      targetType: "reps",
-      targetValue: 5,
-      actualWeight: 100,
-      actualSets: 5,
-      actualReps: 5,
-      studentNote: "",
-      submittedAt: "2026-03-29 09:14"
-    },
-    {
-      id: "log-2",
-      programId: "program-2026-03-29",
-      programCode: "0329A",
-      programDate: "2026-03-29",
-      coachId: "coach-001",
-      coachName: "Coach Lin",
-      studentId: "stu-002",
-      studentName: "\u9673\u6cf3\u84c1",
-      category: "\u4e3b\u9805\u76ee",
-      exercise: "\u6df1\u8e72",
-      targetSets: 5,
-      targetType: "reps",
-      targetValue: 5,
-      actualWeight: 82.5,
-      actualSets: 5,
-      actualReps: 5,
-      studentNote: "\u6700\u5f8c\u4e00\u7d44\u8f03\u5403\u529b",
-      submittedAt: "2026-03-29 09:21"
-    },
-    {
-      id: "log-3",
-      programId: "program-2026-03-22",
-      programCode: "0322B",
-      programDate: "2026-03-22",
-      coachId: "coach-001",
-      coachName: "Coach Lin",
-      studentId: "stu-001",
-      studentName: "\u738b\u5c0f\u660e",
-      category: "\u4e3b\u9805\u76ee",
-      exercise: "\u6df1\u8e72",
-      targetSets: 5,
-      targetType: "reps",
-      targetValue: 5,
-      actualWeight: 95,
-      actualSets: 5,
-      actualReps: 5,
-      studentNote: "\u6574\u9ad4\u72c0\u6cc1\u7a69\u5b9a",
-      submittedAt: "2026-03-22 09:08"
-    }
-  ]
+  coaches: [],
+  currentCoachId: "",
+  students: [],
+  programs: [],
+  programItems: [],
+  workoutLogs: []
 };
 
 const state = structuredClone(defaultState);
@@ -156,7 +72,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0014";
+const PUBLIC_APP_VERSION = "20260403-0015";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
