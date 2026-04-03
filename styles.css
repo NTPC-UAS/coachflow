@@ -42,9 +42,9 @@ textarea {
 
 .hero {
   display: grid;
-  grid-template-columns: 1.45fr 0.9fr;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 300px);
   gap: 20px;
-  align-items: stretch;
+  align-items: end;
 }
 
 .hero-copy,
@@ -127,20 +127,28 @@ td {
 .hero-note {
   display: flex;
   flex-direction: column;
-  justify-content: flex-start;
-  gap: 14px;
-  min-height: 210px;
+  justify-content: center;
+  gap: 6px;
+  min-height: 0;
+  max-width: 300px;
+  justify-self: end;
+  align-self: end;
+  padding: 12px 14px;
+  border-radius: 16px;
+  box-shadow: none;
+  opacity: 0.8;
 }
 
 .hero-note h3 {
-  font-size: 1.15rem;
-  color: var(--ink);
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink-soft);
 }
 
 .hero-note p {
-  font-size: 1rem;
-  line-height: 1.6;
-  max-width: 30ch;
+  font-size: 0.76rem;
+  line-height: 1.45;
+  max-width: 28ch;
 }
 
 .hero-chip,
@@ -154,6 +162,12 @@ td {
   color: var(--brand-deep);
   font-size: 0.9rem;
   font-weight: 800;
+}
+
+.hero-note .hero-chip {
+  padding: 5px 9px;
+  font-size: 0.72rem;
+  font-weight: 700;
 }
 
 .main-tabs,
@@ -1475,6 +1489,11 @@ tr.is-selected-log td {
     grid-template-columns: 1fr;
   }
 
+  .hero-note {
+    justify-self: end;
+    max-width: 320px;
+  }
+
   .preview-row {
     grid-template-columns: 148px 1fr 132px;
   }
@@ -1483,6 +1502,12 @@ tr.is-selected-log td {
 @media (max-width: 820px) {
   .app-shell {
     width: min(100% - 20px, 100%);
+  }
+
+  .hero-note {
+    max-width: 250px;
+    margin-left: auto;
+    padding: 10px 12px;
   }
 
   .button-row,

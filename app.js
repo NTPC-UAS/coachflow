@@ -156,7 +156,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0010";
+const PUBLIC_APP_VERSION = "20260403-0011";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -746,9 +746,9 @@ function applyStaticCopy() {
 
   setNodeText(document.querySelector(".hero-copy .eyebrow"), "CoachFlow 重訓課表與紀錄系統");
   setNodeText(document.querySelector(".hero-copy h1"), "教練建立課表，學生完成紀錄");
-  setNodeText(document.querySelector(".hero-note .hero-chip"), "系統原型");
-  setNodeText(document.querySelector(".hero-note h3"), "目前版本說明");
-  setNodeText(document.querySelector(".hero-note p"), "目前以本地資料模擬，後續可再接回 Google Sheets 與 Apps Script。");
+  setNodeText(document.querySelector(".hero-note .hero-chip"), "系統資訊");
+  setNodeText(document.querySelector(".hero-note h3"), "雲端模式");
+  setNodeText(document.querySelector(".hero-note p"), "目前已連接 Google Sheets 與 Apps Script，首次登入可能短暫等待。");
 
   if (els.mainTabs[0]) setNodeText(els.mainTabs[0], "教練管理");
   if (els.mainTabs[1]) setNodeText(els.mainTabs[1], "學生填寫");
