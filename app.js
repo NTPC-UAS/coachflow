@@ -156,7 +156,8 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0011";
+const PUBLIC_APP_VERSION = "20260403-0012";
+const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -1575,7 +1576,7 @@ function getCoachActiveStudents() {
 }
 
 function getCoachTodayDate() {
-  const fallback = getPublishedProgram(getCurrentCoach()?.id)?.date || new Date().toISOString().slice(0, 10);
+  const fallback = getPublishedProgram(getCurrentCoach()?.id)?.date || getTodayDateInAppZone();
   if (els.coachTodayDate && !els.coachTodayDate.value) {
     els.coachTodayDate.value = fallback;
   }
@@ -2251,7 +2252,7 @@ function handleCurrentCoachChange() {
 }
 
 function createBlankProgram() {
-  const today = new Date().toISOString().slice(0, 10);
+  const today = getTodayDateInAppZone();
   const currentCoach = getCurrentCoach();
   const program = {
     id: `program-${Date.now()}`,
@@ -2276,7 +2277,7 @@ function seedEditorFromProgram(programId) {
 
   if (!programId) {
     els.programCode.value = "";
-    els.programDate.value = new Date().toISOString().slice(0, 10);
+    els.programDate.value = getTodayDateInAppZone();
     els.coachName.value = getCurrentCoach()?.name || "";
     els.programNotes.value = "";
     els.programItemsBody.innerHTML = "";
@@ -2287,7 +2288,7 @@ function seedEditorFromProgram(programId) {
   const items = getProgramItems(program.id);
 
   els.programCode.value = program.code || "";
-  els.programDate.value = program.date || new Date().toISOString().slice(0, 10);
+  els.programDate.value = program.date || getTodayDateInAppZone();
   els.coachName.value = program.coachName || "";
   els.programNotes.value = program.notes || "";
 
@@ -6166,9 +6167,37 @@ function truncateForSheet(value, maxLength) {
   return text.length > maxLength ? `${text.slice(0, maxLength - 1)}…` : text;
 }
 
+function getDateTimePartsInAppZone(date = new Date()) {
+  const parts = new Intl.DateTimeFormat("en-CA", {
+    timeZone: APP_TIME_ZONE,
+    hourCycle: "h23",
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit"
+  }).formatToParts(date);
+
+  const map = {};
+  parts.forEach((part) => {
+    map[part.type] = part.value;
+  });
+
+  return {
+    year: map.year || "0000",
+    month: map.month || "01",
+    day: map.day || "01",
+    hour: map.hour || "00",
+    minute: map.minute || "00"
+  };
+}
+
+function getTodayDateInAppZone() {
+  const { year, month, day } = getDateTimePartsInAppZone(new Date());
+  return `${year}-${month}-${day}`;
+}
+
 function timestampNow() {
-  const now = new Date();
-  const date = now.toISOString().slice(0, 10);
-  const time = now.toTimeString().slice(0, 5);
-  return `${date} ${time}`;
+  const { year, month, day, hour, minute } = getDateTimePartsInAppZone(new Date());
+  return `${year}-${month}-${day} ${hour}:${minute}`;
 }
