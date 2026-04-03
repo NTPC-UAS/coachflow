@@ -125,6 +125,7 @@ let studentEntriesDirty = false;
 let loadedStudentProgramId = "";
 let lastCloudSyncAt = 0;
 let lastSubmittedSnapshot = null;
+let studentAutoLoginPending = false;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -155,7 +156,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0009";
+const PUBLIC_APP_VERSION = "20260403-0010";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -168,6 +169,7 @@ const RETRYABLE_CLOUD_ACTIONS = new Set([
   "bootstrapCoach",
   "bootstrapStudent",
   "bootstrap",
+  "submitWorkoutLogs",
   "touchCoach",
   "touchStudent"
 ]);
@@ -622,7 +624,7 @@ async function resolveCoachAccessFromCloud(accessValue) {
 }
 
 async function submitStudentLogsToCloud(logs) {
-  const payload = await callCloudApi("submitWorkoutLogs", {
+  const payload = await callCloudApiCritical("submitWorkoutLogs", {
     logs: logs.map((log) => ({
       log_id: log.id,
       program_id: log.programId,
@@ -643,7 +645,7 @@ async function submitStudentLogsToCloud(logs) {
       student_note: log.studentNote,
       submitted_at: log.submittedAt
     }))
-  });
+  }, "POST", 2);
   applyCloudPayloadToState(payload);
 }
 
@@ -1185,6 +1187,7 @@ const els = {
   studentAccessCode: document.querySelector("#student-access-code"),
   studentProgramSelect: document.querySelector("#student-program-select"),
   studentSummary: document.querySelector("#student-summary"),
+  studentAutoLoginBanner: document.querySelector("#student-autologin-banner"),
   studentAuthShell: document.querySelector("#student-auth-shell"),
   studentAuthCard: document.querySelector("#student-auth-card"),
   studentProgramShell: document.querySelector(".student-program-shell"),
@@ -1300,6 +1303,21 @@ function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+function setStudentAutoLoginPending(pending, message = "正在自動登入並載入課表，請稍候...") {
+  studentAutoLoginPending = Boolean(pending);
+  if (els.studentAutoLoginBanner) {
+    els.studentAutoLoginBanner.textContent = message;
+    els.studentAutoLoginBanner.classList.toggle("is-visible", studentAutoLoginPending);
+    els.studentAutoLoginBanner.classList.toggle("is-hidden", !studentAutoLoginPending);
+  }
+  if (els.studentAuthShell) {
+    els.studentAuthShell.classList.toggle("is-autologin", studentAutoLoginPending);
+  }
+  if (studentAutoLoginPending && els.studentProgramStatus) {
+    els.studentProgramStatus.textContent = "正在自動登入...";
+  }
+}
+
 async function ensureCoachAccessOnInit() {
   if (APP_MODE !== "coach") {
     return;
@@ -1351,25 +1369,37 @@ async function ensureStudentAccessOnInit() {
     els.studentAccessCode.value = candidateAccess;
   }
 
+  let shouldAutoLogin = false;
+
   if (urlAccess || !getSelectedStudent()) {
+    shouldAutoLogin = true;
+    setStudentAutoLoginPending(true);
     let confirmed = false;
     const retryDelays = [0, 700, 1500];
-    for (let i = 0; i < retryDelays.length; i += 1) {
-      if (retryDelays[i] > 0) {
-        await delay(retryDelays[i]);
+    try {
+      for (let i = 0; i < retryDelays.length; i += 1) {
+        if (retryDelays[i] > 0) {
+          await delay(retryDelays[i]);
+        }
+        confirmed = await confirmStudentAccess({ silentError: true, skipTouch: true });
+        if (confirmed) {
+          break;
+        }
       }
-      confirmed = await confirmStudentAccess({ silentError: true, skipTouch: true });
-      if (confirmed) {
-        break;
+      if (!confirmed) {
+        currentStudentId = "";
+        currentStudentAccess = candidateAccess;
+        persistSession();
+        syncStudentAccessUI();
+        return;
       }
+    } finally {
+      setStudentAutoLoginPending(false);
     }
-    if (!confirmed) {
-      currentStudentId = "";
-      currentStudentAccess = candidateAccess;
-      persistSession();
-      syncStudentAccessUI();
-      return;
-    }
+  }
+
+  if (!shouldAutoLogin) {
+    setStudentAutoLoginPending(false);
   }
 
   if (currentStudentId && !loadedStudentEntries.length) {
@@ -3960,6 +3990,11 @@ function syncStudentAccessUI() {
   const isCard = studentViewMode === "card";
   const hasLoadedProgram = loadedStudentEntries.length > 0;
   document.body.dataset.studentAuth = hasStudent ? "authenticated" : "anonymous";
+  els.studentAuthShell.classList.toggle("is-autologin", studentAutoLoginPending);
+  if (els.studentAutoLoginBanner) {
+    els.studentAutoLoginBanner.classList.toggle("is-visible", studentAutoLoginPending);
+    els.studentAutoLoginBanner.classList.toggle("is-hidden", !studentAutoLoginPending);
+  }
   els.studentAuthShell.classList.toggle("is-collapsed", hasStudent);
   els.studentAuthShell.classList.toggle("is-mobile-preview", isCard && !hasStudent);
   if (els.studentProgramSelect) {
@@ -4002,6 +4037,7 @@ function syncStudentAccessUI() {
 }
 
 function showStudentAccessPanel() {
+  setStudentAutoLoginPending(false);
   studentHistoryOpened = false;
   loadedStudentEntries = [];
   loadedStudentProgramId = "";
@@ -4026,7 +4062,7 @@ async function finalizeSubmission() {
   const submittedLogs = [...pendingSubmission];
   lastSubmittedLogs = [...submittedLogs];
   lastSubmittedSnapshot = buildSubmittedSnapshot(submittedLogs);
-  studentSubmissionCompleted = true;
+  studentSubmissionCompleted = false;
   if (IS_CLOUD_MODE) {
     try {
       await submitStudentLogsToCloud(pendingSubmission);
@@ -4035,17 +4071,12 @@ async function finalizeSubmission() {
         lastSubmittedLogs = [...cloudLogs];
         lastSubmittedSnapshot = buildSubmittedSnapshot(cloudLogs);
       }
+      studentSubmissionCompleted = true;
     } catch (error) {
-      console.warn("Cloud submit logs failed, falling back to local state:", error);
-      const submissionKeys = new Set(
-        pendingSubmission.map((log) => `${log.programId}::${log.studentId}::${log.exercise}`)
-      );
-      state.workoutLogs = state.workoutLogs.filter(
-        (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${log.exercise}`)
-      );
-      state.workoutLogs = submittedLogs.concat(state.workoutLogs);
-      persistState();
-      lastSubmittedSnapshot = buildSubmittedSnapshot(submittedLogs);
+      console.error("Cloud submit logs failed:", error);
+      closeConfirmModal();
+      window.alert("送出失敗，雲端尚未儲存。請稍候再試一次。");
+      return;
     }
   } else {
     const submissionKeys = new Set(
@@ -4057,6 +4088,7 @@ async function finalizeSubmission() {
     state.workoutLogs = submittedLogs.concat(state.workoutLogs);
     persistState();
     lastSubmittedSnapshot = buildSubmittedSnapshot(submittedLogs);
+    studentSubmissionCompleted = true;
   }
   closeConfirmModal();
   renderCoachToday();

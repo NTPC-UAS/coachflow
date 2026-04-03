@@ -297,6 +297,28 @@ body[data-app-mode="admin"] .main-tabs {
   display: none;
 }
 
+.auto-login-banner {
+  display: none;
+  margin: 0;
+  padding: 10px 12px;
+  border: 1px dashed var(--line);
+  border-radius: 12px;
+  background: rgba(255, 255, 255, 0.72);
+  color: var(--text-secondary);
+  font-weight: 600;
+}
+
+.auto-login-banner.is-visible {
+  display: block;
+}
+
+.student-auth-shell.is-autologin #student-auth-card label,
+.student-auth-shell.is-autologin #student-auth-card .student-entry-submit,
+.student-auth-shell.is-autologin #student-auth-card .muted-copy,
+.student-auth-shell.is-autologin #student-auth-card .student-summary {
+  display: none;
+}
+
 #coach-auth-shell {
   margin-bottom: 20px;
 }
