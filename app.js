@@ -156,7 +156,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0012";
+const PUBLIC_APP_VERSION = "20260403-0013";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -175,6 +175,173 @@ const RETRYABLE_CLOUD_ACTIONS = new Set([
   "touchStudent"
 ]);
 
+function padDateNumber(value, length = 2) {
+  return String(Math.max(0, Number(value) || 0)).padStart(length, "0");
+}
+
+function parseDateTimeInAppZone(rawValue) {
+  if (rawValue instanceof Date && !Number.isNaN(rawValue.getTime())) {
+    const parts = getDateTimePartsInAppZone(rawValue);
+    return {
+      ...parts,
+      second: "00",
+      hasTime: true
+    };
+  }
+
+  const text = String(rawValue ?? "").trim();
+  if (!text) {
+    return null;
+  }
+
+  const literalMatch = text.match(
+    /^(\d{4})[-/](\d{1,2})[-/](\d{1,2})(?:\s*[T ]\s*(\d{1,2})(?::(\d{1,2}))?(?::(\d{1,2}))?)?$/
+  );
+  if (literalMatch) {
+    const [, year, month, day, hour, minute, second] = literalMatch;
+    const yearNumber = Number(year);
+    const monthNumber = Number(month);
+    const dayNumber = Number(day);
+    const hourNumber = hour === undefined ? 0 : Number(hour);
+    const minuteNumber = minute === undefined ? 0 : Number(minute);
+    const secondNumber = second === undefined ? 0 : Number(second);
+    if (
+      !Number.isFinite(yearNumber) ||
+      monthNumber < 1 || monthNumber > 12 ||
+      dayNumber < 1 || dayNumber > 31 ||
+      hourNumber < 0 || hourNumber > 23 ||
+      minuteNumber < 0 || minuteNumber > 59 ||
+      secondNumber < 0 || secondNumber > 59
+    ) {
+      return null;
+    }
+    return {
+      year: padDateNumber(yearNumber, 4),
+      month: padDateNumber(monthNumber),
+      day: padDateNumber(dayNumber),
+      hour: padDateNumber(hourNumber),
+      minute: padDateNumber(minuteNumber),
+      second: padDateNumber(secondNumber),
+      hasTime: hour !== undefined
+    };
+  }
+
+  if (/^\d{10,13}$/.test(text)) {
+    const epoch = Number(text);
+    const millis = text.length === 13 ? epoch : epoch * 1000;
+    const parsedEpoch = new Date(millis);
+    if (!Number.isNaN(parsedEpoch.getTime())) {
+      const parts = getDateTimePartsInAppZone(parsedEpoch);
+      return {
+        ...parts,
+        second: "00",
+        hasTime: true
+      };
+    }
+  }
+
+  const parsed = new Date(text);
+  if (Number.isNaN(parsed.getTime())) {
+    return null;
+  }
+
+  const parts = getDateTimePartsInAppZone(parsed);
+  return {
+    ...parts,
+    second: "00",
+    hasTime: true
+  };
+}
+
+function normalizeDateKey(rawValue) {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    return "";
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day}`;
+}
+
+function normalizeDateTimeValue(rawValue) {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    return "";
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day} ${parsed.hour}:${parsed.minute}`;
+}
+
+function formatDateDisplay(rawValue, fallback = "-") {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    const text = String(rawValue ?? "").trim();
+    return text || fallback;
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day}`;
+}
+
+function formatDateTimeDisplay(rawValue, fallback = "-") {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    const text = String(rawValue ?? "").trim();
+    return text || fallback;
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day} ${parsed.hour}:${parsed.minute}`;
+}
+
+function formatRocDateDisplay(rawValue, fallback = "尚無紀錄") {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    const text = String(rawValue ?? "").trim();
+    return text || fallback;
+  }
+  return `${Number(parsed.year) - 1911}.${Number(parsed.month)}.${Number(parsed.day)}`;
+}
+
+function formatRocDateTimeDisplay(rawValue, fallback = "尚無紀錄") {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    const text = String(rawValue ?? "").trim();
+    return text || fallback;
+  }
+  return `${Number(parsed.year) - 1911}.${Number(parsed.month)}.${Number(parsed.day)} ${parsed.hour}:${parsed.minute}`;
+}
+
+function getComparableDateKey(rawValue) {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    return "";
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day}`;
+}
+
+function getComparableDateTimeKey(rawValue) {
+  const parsed = parseDateTimeInAppZone(rawValue);
+  if (!parsed) {
+    return "";
+  }
+  return `${parsed.year}-${parsed.month}-${parsed.day} ${parsed.hour}:${parsed.minute}:${parsed.second}`;
+}
+
+function getLogDateTimeSortKey(log) {
+  const submitted = getComparableDateTimeKey(log?.submittedAt);
+  if (submitted) {
+    return submitted;
+  }
+  const updated = getComparableDateTimeKey(log?.updatedAt);
+  if (updated) {
+    return updated;
+  }
+  const date = getComparableDateKey(log?.programDate);
+  return date ? `${date} 00:00:00` : "";
+}
+
+function compareLogsByDateTimeDesc(a, b) {
+  return getLogDateTimeSortKey(b).localeCompare(getLogDateTimeSortKey(a));
+}
+
+function compareLogsByDateTimeAsc(a, b) {
+  return getLogDateTimeSortKey(a).localeCompare(getLogDateTimeSortKey(b));
+}
+
 function normalizeCloudCoach(row, index = 0) {
   const name = row.coach_name || row.name || `Coach ${index + 1}`;
   return {
@@ -184,7 +351,7 @@ function normalizeCloudCoach(row, index = 0) {
     role: row.role || "coach",
     accessCode: row.access_code || row.accessCode || buildCoachAccessCode(name, index + 1),
     token: row.token || "",
-    lastUsedAt: row.last_used_at || row.lastUsedAt || ""
+    lastUsedAt: normalizeDateTimeValue(row.last_used_at || row.lastUsedAt || "")
   };
 }
 
@@ -203,7 +370,7 @@ function normalizeCloudStudent(row, index = 0) {
     token: row.token || "",
     primaryCoachId: row.primary_coach_id || row.primaryCoachId || "",
     primaryCoachName: row.primary_coach_name || row.primaryCoachName || "",
-    lastUsedAt: row.last_used_at || row.lastUsedAt || ""
+    lastUsedAt: normalizeDateTimeValue(row.last_used_at || row.lastUsedAt || "")
   };
 }
 
@@ -215,14 +382,14 @@ function normalizeCloudProgram(row, index = 0) {
   return {
     id: row.program_id || row.id || `program-${index + 1}`,
     code: row.program_code || row.code || "",
-    date: row.program_date || row.date || "",
+    date: normalizeDateKey(row.program_date || row.date || ""),
     title: row.title || "",
     coachId: row.coach_id || row.coachId || "",
     coachName: row.coach_name || row.coachName || "",
     notes: row.notes || "",
     published: String(row.published || "").toLowerCase() === "true" || row.published === true,
-    createdAt: row.created_at || row.createdAt || "",
-    updatedAt: row.updated_at || row.updatedAt || ""
+    createdAt: normalizeDateTimeValue(row.created_at || row.createdAt || ""),
+    updatedAt: normalizeDateTimeValue(row.updated_at || row.updatedAt || "")
   };
 }
 
@@ -241,7 +408,7 @@ function normalizeCloudProgramItem(row, index = 0) {
     targetType: row.target_type || row.targetType || "reps",
     targetValue: Number(row.target_value || row.targetValue || 0),
     itemNote: row.item_note || row.itemNote || "",
-    updatedAt: row.updated_at || row.updatedAt || ""
+    updatedAt: normalizeDateTimeValue(row.updated_at || row.updatedAt || "")
   };
 }
 
@@ -256,7 +423,7 @@ function normalizeCloudLog(row, index = 0) {
     id: row.log_id || row.id || `log-${index + 1}`,
     programId: row.program_id || row.programId || "",
     programCode: row.program_code || row.programCode || "",
-    programDate: row.program_date || row.programDate || "",
+    programDate: normalizeDateKey(row.program_date || row.programDate || ""),
     coachId: row.coach_id || row.coachId || "",
     coachName: row.coach_name || row.coachName || "",
     studentId: row.student_id || row.studentId || "",
@@ -270,8 +437,8 @@ function normalizeCloudLog(row, index = 0) {
     actualSets: Number(row.actual_sets || row.actualSets || 0),
     actualReps: Number(row.actual_reps || row.actualReps || 0),
     studentNote: row.student_note || row.studentNote || "",
-    submittedAt: row.submitted_at || row.submittedAt || "",
-    updatedAt: row.updated_at || row.updatedAt || ""
+    submittedAt: normalizeDateTimeValue(row.submitted_at || row.submittedAt || ""),
+    updatedAt: normalizeDateTimeValue(row.updated_at || row.updatedAt || "")
   };
 }
 
@@ -924,13 +1091,7 @@ function applyStaticCopy() {
 }
 
 function formatUsageTimestamp(value) {
-  const text = String(value || "").trim();
-  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})\s+(\d{2}:\d{2})$/);
-  if (!match) {
-    return text || "尚無紀錄";
-  }
-  const [, year, month, day, time] = match;
-  return `${Number(year) - 1911}.${Number(month)}.${Number(day)} ${time}`;
+  return formatRocDateTimeDisplay(value, "尚無紀錄");
 }
 
 function markCoachUsed(coachId) {
@@ -1576,11 +1737,11 @@ function getCoachActiveStudents() {
 }
 
 function getCoachTodayDate() {
-  const fallback = getPublishedProgram(getCurrentCoach()?.id)?.date || getTodayDateInAppZone();
+  const fallback = normalizeDateKey(getPublishedProgram(getCurrentCoach()?.id)?.date || getTodayDateInAppZone()) || getTodayDateInAppZone();
   if (els.coachTodayDate && !els.coachTodayDate.value) {
     els.coachTodayDate.value = fallback;
   }
-  return els.coachTodayDate?.value || fallback;
+  return normalizeDateKey(els.coachTodayDate?.value || fallback) || fallback;
 }
 
 function bindEvents() {
@@ -1809,7 +1970,7 @@ function hydrateFromStorage() {
         ...coach,
         accessCode: coach.accessCode || fallback.accessCode || generatedAccessCode,
         token: coach.token || fallback.token || generatedToken || `coach${index + 1}`,
-        lastUsedAt: coach.lastUsedAt || fallback.lastUsedAt || "",
+        lastUsedAt: normalizeDateTimeValue(coach.lastUsedAt || fallback.lastUsedAt || ""),
         status: coach.status || fallback.status || "active",
         role: coach.role || fallback.role || "coach"
       };
@@ -1820,7 +1981,7 @@ function hydrateFromStorage() {
       return {
         ...fallback,
         ...student,
-        lastUsedAt: student.lastUsedAt || fallback.lastUsedAt || "",
+        lastUsedAt: normalizeDateTimeValue(student.lastUsedAt || fallback.lastUsedAt || ""),
         accessCode: student.accessCode || fallback.accessCode || `CODE${index + 1}`,
         token: student.token || fallback.token || `token${index + 1}`,
         primaryCoachId: student.primaryCoachId || fallback.primaryCoachId || state.currentCoachId
@@ -1828,6 +1989,9 @@ function hydrateFromStorage() {
     });
     state.programs = (parsed.programs || structuredClone(defaultState.programs)).map((program) => ({
       ...program,
+      date: normalizeDateKey(program.date || ""),
+      createdAt: normalizeDateTimeValue(program.createdAt || ""),
+      updatedAt: normalizeDateTimeValue(program.updatedAt || ""),
       coachId: program.coachId || state.currentCoachId,
       coachName: program.coachName || getCurrentCoach()?.name || ""
     }));
@@ -1839,6 +2003,9 @@ function hydrateFromStorage() {
       const coachName = log.coachName || state.coaches.find((coach) => coach.id === coachId)?.name || "";
       return {
         ...log,
+        programDate: normalizeDateKey(log.programDate || ""),
+        submittedAt: normalizeDateTimeValue(log.submittedAt || ""),
+        updatedAt: normalizeDateTimeValue(log.updatedAt || ""),
         coachId,
         coachName
       };
@@ -1955,8 +2122,8 @@ function buildSubmittedSnapshot(logs, program = getSelectedStudentProgram(), stu
     studentName: student?.name || firstLog.studentName || "",
     programId: program?.id || firstLog.programId || "",
     programCode: program?.code || firstLog.programCode || "",
-    programDate: program?.date || firstLog.programDate || "",
-    submittedAt: firstLog.submittedAt || "",
+    programDate: normalizeDateKey(program?.date || firstLog.programDate || ""),
+    submittedAt: normalizeDateTimeValue(firstLog.submittedAt || ""),
     logs: logs.map((log) => ({ ...log }))
   };
 }
@@ -2288,7 +2455,7 @@ function seedEditorFromProgram(programId) {
   const items = getProgramItems(program.id);
 
   els.programCode.value = program.code || "";
-  els.programDate.value = program.date || getTodayDateInAppZone();
+  els.programDate.value = normalizeDateKey(program.date || getTodayDateInAppZone()) || getTodayDateInAppZone();
   els.coachName.value = program.coachName || "";
   els.programNotes.value = program.notes || "";
 
@@ -2495,7 +2662,7 @@ function collectProgramPayload() {
   const program = {
     id: editingProgramId || `program-${Date.now()}`,
     code: els.programCode.value.trim(),
-    date: els.programDate.value,
+    date: normalizeDateKey(els.programDate.value),
     coachId: getCurrentCoach()?.id || "",
     coachName: getCurrentCoach()?.name || els.coachName.value.trim(),
     notes: els.programNotes.value.trim(),
@@ -2594,7 +2761,7 @@ async function publishProgram() {
   editingProgramId = program.id;
   setCoachEditorDirty(false);
   if (els.coachTodayDate) {
-    els.coachTodayDate.value = program.date;
+    els.coachTodayDate.value = normalizeDateKey(program.date) || getTodayDateInAppZone();
   }
   renderCoachExerciseOptions();
   syncEditorPreviewState();
@@ -2660,7 +2827,7 @@ function renderProgramLibrary() {
               <div class="coach-link-top">
                 <div>
                   <h4>${program.code || "未命名課表"}</h4>
-                  <p class="coach-student-meta">${program.date || "-"}｜${itemCount} 個項目</p>
+                  <p class="coach-student-meta">${formatDateDisplay(program.date)}｜${itemCount} 個項目</p>
                 </div>
                 <div class="roster-pill-stack">
                   <span class="status-pill ${program.published ? "is-success" : "is-muted"}">${program.published ? "目前課表" : "未發布"}</span>
@@ -2710,12 +2877,12 @@ function toggleProgramLibraryVisibleCount() {
 }
 
 function comparePrograms(a, b, sortBy) {
-  const dateA = String(a.date || "");
-  const dateB = String(b.date || "");
+  const dateA = getComparableDateKey(a.date) || String(a.date || "");
+  const dateB = getComparableDateKey(b.date) || String(b.date || "");
   const codeA = String(a.code || "");
   const codeB = String(b.code || "");
-  const createdA = String(a.createdAt || "");
-  const createdB = String(b.createdAt || "");
+  const createdA = getComparableDateTimeKey(a.createdAt) || String(a.createdAt || "");
+  const createdB = getComparableDateTimeKey(b.createdAt) || String(b.createdAt || "");
 
   if (sortBy === "date-asc") {
     const dateCompare = dateA.localeCompare(dateB);
@@ -2843,13 +3010,13 @@ function renderStudentProgramOptions() {
   const assignedCoach = state.coaches.find((coach) => coach.id === studentCoachId);
   const programs = [...state.programs]
     .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort((a, b) => (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || ""));
   const currentValue = currentStudentProgramId || els.studentProgramSelect.value;
 
   els.studentProgramSelect.innerHTML = programs.length
     ? programs
         .map((program) => {
-          const label = `${program.date} | ${program.code || "\u76ee\u524d\u8ab2\u8868"}${assignedCoach?.name ? ` | ${assignedCoach.name}` : ""}${program.published ? " | \u76ee\u524d\u8ab2\u8868" : ""}`;
+          const label = `${formatDateDisplay(program.date)} | ${program.code || "\u76ee\u524d\u8ab2\u8868"}${assignedCoach?.name ? ` | ${assignedCoach.name}` : ""}${program.published ? " | \u76ee\u524d\u8ab2\u8868" : ""}`;
           return `<option value="${program.id}">${label}</option>`;
         })
         .join("")
@@ -2902,7 +3069,7 @@ function renderStudentSummary() {
     <p>\u6559\u7df4\uff1a${assignedCoachName}</p>
     <p>\u5c08\u5c6c\u4ee3\u78bc\uff1a${student.accessCode}</p>
     <p>\u8ab2\u8868\uff1a${program.code || "\u76ee\u524d\u8ab2\u8868"}</p>
-    <p>${program.date}${program.published ? "\uff5c\u5df2\u767c\u5e03" : "\uff5c\u672a\u767c\u5e03"}</p>
+    <p>${formatDateDisplay(program.date)}${program.published ? "\uff5c\u5df2\u767c\u5e03" : "\uff5c\u672a\u767c\u5e03"}</p>
   `;
   els.studentActiveCopy.textContent = `${student.name}\uff5c${assignedCoachName}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
   syncStudentAccessUI();
@@ -3413,8 +3580,8 @@ function openSubmissionConfirm() {
 
   pendingSubmission = loadedStudentEntries.map((entry, index) => buildLogPayload(student, program, entry, index));
   els.confirmSummary.textContent = alreadySubmitted
-    ? `${student.name}\uff5c${program.date}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u78ba\u8a8d\u5f8c\u6703\u8986\u84cb\u4f60\u539f\u672c\u7684\u540c\u4efd\u8ab2\u8868\u7d00\u9304\u3002`
-    : `${student.name}\uff5c${program.date}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u8acb\u78ba\u8a8d\u9019\u6b21\u586b\u5beb\u5167\u5bb9\u3002`;
+    ? `${student.name}\uff5c${formatDateDisplay(program.date)}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u78ba\u8a8d\u5f8c\u6703\u8986\u84cb\u4f60\u539f\u672c\u7684\u540c\u4efd\u8ab2\u8868\u7d00\u9304\u3002`
+    : `${student.name}\uff5c${formatDateDisplay(program.date)}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u8acb\u78ba\u8a8d\u9019\u6b21\u586b\u5beb\u5167\u5bb9\u3002`;
   els.confirmCardList.innerHTML = pendingSubmission.map((log) => formatLogForSummary(log)).join("");
   els.confirmBody.innerHTML = pendingSubmission
     .map(
@@ -3451,7 +3618,7 @@ function buildLogPayload(student, program, entry, index) {
     id: `log-${Date.now()}-${index}`,
     programId: program.id,
     programCode: program.code,
-    programDate: program.date,
+    programDate: normalizeDateKey(program.date),
     coachId: effectiveCoachId,
     coachName: effectiveCoachName,
     studentId: student.id,
@@ -3549,7 +3716,7 @@ function closeConfirmModal() {
 function openSuccessModal() {
   const snapshot = getActiveSubmittedSnapshot();
   const logs = snapshot?.logs || [];
-  const summaryDate = snapshot?.programDate || "";
+  const summaryDate = formatDateDisplay(snapshot?.programDate || "", "");
   const summaryCode = snapshot?.programCode || "\u76ee\u524d\u8ab2\u8868";
   els.successSummary.textContent = `${summaryDate}\uff5c${summaryCode}\uff0c\u672c\u6b21\u8a13\u7df4\u5167\u5bb9\u5df2\u8a18\u9304\u3002`;
   els.successCardList.innerHTML = logs.map((log) => formatLogForSummary(log)).join("");
@@ -3648,7 +3815,7 @@ async function renderSuccessSheetAsJpeg(student, program, logs) {
       <rect x="20" y="20" width="${width - 40}" height="${height - 40}" rx="28" fill="#ffffff" stroke="#e6d8c7" />
       <text x="60" y="78" font-size="18" font-weight="800" fill="#8a552f">CoachFlow 完成紀錄</text>
       <text x="60" y="128" font-size="38" font-weight="800" fill="#2f241c">${escapeXml(student?.name || "學生")}｜${escapeXml(program?.code || "課表")}</text>
-      <text x="60" y="168" font-size="22" fill="#8e8171">日期：${escapeXml(program?.date || "-")}　送出時間：${escapeXml(logs[0]?.submittedAt || "-")}</text>
+      <text x="60" y="168" font-size="22" fill="#8e8171">日期：${escapeXml(formatDateDisplay(program?.date || "-"))}　送出時間：${escapeXml(formatDateTimeDisplay(logs[0]?.submittedAt || "-"))}</text>
       ${rowsSvg}
     </svg>
   `;
@@ -3929,7 +4096,8 @@ function toggleCoachHistoryResults() {
 
 function toggleTodayLogsVisibleCount() {
   const viewDate = getCoachTodayDate();
-  const allTodayLogs = state.workoutLogs.filter((log) => log.programDate === viewDate);
+  const viewDateKey = getComparableDateKey(viewDate);
+  const allTodayLogs = state.workoutLogs.filter((log) => getComparableDateKey(log.programDate) === viewDateKey);
   const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
   const filteredLogs = allTodayLogs.filter((log) => {
     if (!keyword) {
@@ -3951,13 +4119,14 @@ function toggleCoachHistoryVisibleCount() {
 
 function toggleTodayStudentDetailVisibleCount() {
   const viewDate = getCoachTodayDate();
+  const viewDateKey = getComparableDateKey(viewDate);
   const studentLogs = state.workoutLogs
-    .filter((log) => log.programDate === viewDate)
+    .filter((log) => getComparableDateKey(log.programDate) === viewDateKey)
     .filter((log) => log.studentId === selectedTodayStudentId)
-    .sort((a, b) => `${a.programDate} ${a.submittedAt}`.localeCompare(`${b.programDate} ${b.submittedAt}`));
+    .sort(compareLogsByDateTimeAsc);
 
   todayStudentDetailVisibleCount = todayStudentDetailVisibleCount < studentLogs.length ? todayStudentDetailVisibleCount + 6 : 6;
-  renderTodayStudentDetail(state.workoutLogs.filter((log) => log.programDate === viewDate));
+  renderTodayStudentDetail(state.workoutLogs.filter((log) => getComparableDateKey(log.programDate) === viewDateKey));
 }
 
 function applyStudentViewMode() {
@@ -4105,7 +4274,7 @@ async function finalizeSubmission() {
   studentEntriesDirty = false;
   persistSession();
   renderStudentProgramEntries();
-  els.studentProgramStatus.textContent = `\u672c\u6b21\u8a13\u7df4\u5df2\u8a18\u9304\uff5c\u6700\u5f8c\u66f4\u65b0 ${lastSubmittedLogs[0]?.submittedAt || ""}`;
+  els.studentProgramStatus.textContent = `\u672c\u6b21\u8a13\u7df4\u5df2\u8a18\u9304\uff5c\u6700\u5f8c\u66f4\u65b0 ${formatDateTimeDisplay(lastSubmittedLogs[0]?.submittedAt || "", "")}`;
   els.studentMobileSubmitBar.classList.remove("is-visible");
   els.studentMobileTools.classList.remove("is-visible");
   els.studentMobileSecondaryActions.classList.add("is-visible");
@@ -4114,13 +4283,14 @@ async function finalizeSubmission() {
 
 function renderCoachToday() {
   const viewDate = getCoachTodayDate();
+  const viewDateKey = getComparableDateKey(viewDate);
   const coachPrograms = getCoachScopedPrograms();
   const coachLogs = getCoachScopedLogs();
   const coachStudents = getCoachActiveStudents();
-  const dayProgram = coachPrograms.find((program) => program.date === viewDate && program.published)
-    || coachPrograms.find((program) => program.date === viewDate)
+  const dayProgram = coachPrograms.find((program) => getComparableDateKey(program.date) === viewDateKey && program.published)
+    || coachPrograms.find((program) => getComparableDateKey(program.date) === viewDateKey)
     || null;
-  const allTodayLogs = coachLogs.filter((log) => log.programDate === viewDate);
+  const allTodayLogs = coachLogs.filter((log) => getComparableDateKey(log.programDate) === viewDateKey);
   const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
   const todayLogs = allTodayLogs.filter((log) => {
     if (!keyword) {
@@ -4137,7 +4307,7 @@ function renderCoachToday() {
   const pendingStudents = allStudents.filter((name) => !allTodayLogs.map((log) => log.studentName).includes(name));
 
   const statItems = [
-    { label: "\u67e5\u770b\u65e5\u671f", value: viewDate || "-" },
+    { label: "\u67e5\u770b\u65e5\u671f", value: formatDateDisplay(viewDate || "-", "-") },
     { label: "\u7576\u65e5\u8ab2\u8868", value: dayProgram ? `${dayProgram.code || "\u672a\u547d\u540d"}` : "\u5c1a\u672a\u5efa\u7acb" },
     { label: "\u5df2\u9001\u51fa", value: `${new Set(allTodayLogs.map((log) => log.studentName)).size} \u4eba` },
     { label: "\u672a\u9001\u51fa", value: `${pendingStudents.length} \u4eba` },
@@ -4188,7 +4358,7 @@ function renderCoachToday() {
               <td>${formatTarget(log)}</td>
               <td>${formatActual(log)}</td>
               <td>${log.studentNote || "-"}</td>
-              <td>${log.submittedAt}</td>
+              <td>${formatDateTimeDisplay(log.submittedAt)}</td>
             </tr>
           `
         )
@@ -4272,7 +4442,7 @@ function renderTodayStudentDetail(todayLogs = []) {
 
   const studentLogs = todayLogs
     .filter((log) => log.studentId === selectedTodayStudentId)
-    .sort((a, b) => `${a.programDate} ${a.submittedAt}`.localeCompare(`${b.programDate} ${b.submittedAt}`));
+    .sort(compareLogsByDateTimeAsc);
   const studentName = studentLogs[0]?.studentName || "";
 
   if (!studentLogs.length) {
@@ -4293,7 +4463,7 @@ function renderTodayStudentDetail(todayLogs = []) {
           <td>${formatTarget(log)}</td>
           <td>${formatActual(log)}</td>
           <td>${log.studentNote || "-"}</td>
-          <td>${log.submittedAt}</td>
+          <td>${formatDateTimeDisplay(log.submittedAt)}</td>
         </tr>
       `
     )
@@ -4640,10 +4810,13 @@ function buildHistoryImportPreview(text) {
     const actualWeight = raw.actual_weight ? Number(raw.actual_weight) : "";
     const actualSets = raw.actual_sets ? Number(raw.actual_sets) : "";
     const actualReps = raw.actual_reps ? Number(raw.actual_reps) : "";
+    const normalizedDate = normalizeDateKey(raw.date || "");
+    const hasValidDate = Boolean(parseDateTimeInAppZone(raw.date || ""));
 
     const errors = [];
     if (!student) errors.push("找不到學生");
     if (!raw.date) errors.push("缺少日期");
+    if (raw.date && !hasValidDate) errors.push("日期格式錯誤");
     if (!raw.exercise) errors.push("缺少動作");
     if (!["reps", "time", "rm"].includes(targetType)) errors.push("類型錯誤");
 
@@ -4654,7 +4827,7 @@ function buildHistoryImportPreview(text) {
       statusText: valid ? "可匯入" : errors.join("、"),
       studentId: student?.id || "",
       studentName: raw.student_name,
-      programDate: raw.date,
+      programDate: normalizedDate,
       programCode: raw.program_code || "",
       exercise: raw.exercise,
       category: raw.category || "主項目",
@@ -4691,7 +4864,7 @@ function renderHistoryImportPreview() {
         .map((row) => `
           <tr>
             <td>${row.studentName || "-"}</td>
-            <td>${row.programDate || "-"}</td>
+            <td>${formatDateDisplay(row.programDate || "-")}</td>
             <td>${row.exercise || "-"}</td>
             <td>${formatTarget(row)}</td>
             <td>${formatActual(row)}</td>
@@ -4736,7 +4909,7 @@ async function confirmHistoryImport() {
         actualSets: row.actualSets || "",
         actualReps: row.actualReps || "",
         studentNote: row.studentNote || "",
-        submittedAt: `${row.programDate} 00:00`
+        submittedAt: normalizeDateTimeValue(`${row.programDate} 00:00`)
       }));
 
       state.workoutLogs = importedLogs.concat(state.workoutLogs);
@@ -4765,7 +4938,7 @@ async function confirmHistoryImport() {
       actualSets: row.actualSets || "",
       actualReps: row.actualReps || "",
       studentNote: row.studentNote || "",
-      submittedAt: `${row.programDate} 00:00`
+      submittedAt: normalizeDateTimeValue(`${row.programDate} 00:00`)
     }));
 
     state.workoutLogs = importedLogs.concat(state.workoutLogs);
@@ -4800,7 +4973,7 @@ function renderCoachStudentRoster() {
     (program ? coachLogs.filter((log) => log.programId === program.id) : []).map((log) => log.studentId)
   );
   const displayDate = program?.date
-    ? `${Number(program.date.slice(0, 4)) - 1911}.${Number(program.date.slice(5, 7))}.${Number(program.date.slice(8, 10))}`
+    ? formatRocDateDisplay(program.date, "\u4eca\u65e5")
     : "\u4eca\u65e5";
   const keyword = (els.coachStudentRosterSearch?.value || "").trim().toLowerCase();
   const students = studentsPool.filter((student) => {
@@ -4827,9 +5000,9 @@ function renderCoachStudentRoster() {
           const studentLogs = coachLogs
             .filter((log) => log.studentId === student.id);
           const lastLog = studentLogs
-            .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`))[0];
+            .sort(compareLogsByDateTimeDesc)[0];
           const lastLogDate = lastLog?.programDate
-            ? `${Number(lastLog.programDate.slice(0, 4)) - 1911}.${Number(lastLog.programDate.slice(5, 7))}.${Number(lastLog.programDate.slice(8, 10))}`
+            ? formatRocDateDisplay(lastLog.programDate, "\u5c1a\u7121\u7d00\u9304")
             : "\u5c1a\u7121\u7d00\u9304";
           const assignedCoach = state.coaches.find((coach) => coach.id === student.primaryCoachId);
           const lastUsedText = formatUsageTimestamp(student.lastUsedAt);
@@ -5648,9 +5821,9 @@ function getCoachHistoryLogs() {
   return getCoachScopedLogs()
     .filter((log) => !studentId || log.studentId === studentId)
     .filter((log) => !exercise || log.exercise === exercise)
-    .filter((log) => !dateFrom || String(log.programDate) >= dateFrom)
-    .filter((log) => !dateTo || String(log.programDate) <= dateTo)
-    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`));
+    .filter((log) => !dateFrom || getComparableDateKey(log.programDate) >= dateFrom)
+    .filter((log) => !dateTo || getComparableDateKey(log.programDate) <= dateTo)
+    .sort(compareLogsByDateTimeDesc);
 }
 
 function renderCoachHistory() {
@@ -5666,7 +5839,7 @@ function renderCoachHistory() {
         .map(
           (log) => `
             <tr>
-              <td>${log.programDate}</td>
+              <td>${formatDateDisplay(log.programDate)}</td>
               <td>${log.studentName}</td>
               <td>${log.category}</td>
               <td>${log.exercise}</td>
@@ -5708,16 +5881,13 @@ function resetCoachHistoryFilters() {
 }
 
 function formatDateInputValue(date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
+  const { year, month, day } = getDateTimePartsInAppZone(date);
   return `${year}-${month}-${day}`;
 }
 
 function applyCoachHistoryLast30Days() {
   const end = new Date();
-  const start = new Date();
-  start.setDate(end.getDate() - 29);
+  const start = new Date(end.getTime() - 29 * 24 * 60 * 60 * 1000);
 
   if (els.coachHistoryDateFrom) {
     els.coachHistoryDateFrom.value = formatDateInputValue(start);
@@ -5762,7 +5932,7 @@ function renderStudentHistory() {
   const logs = state.workoutLogs
     .filter((log) => log.studentId === student.id)
     .filter((log) => !exercise || log.exercise === exercise)
-    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`));
+    .sort(compareLogsByDateTimeDesc);
 
   const visibleLogs = logs.slice(0, studentHistoryVisibleCount);
 
@@ -5775,7 +5945,7 @@ function renderStudentHistory() {
         .map(
           (log) => `
             <tr>
-              <td>${log.programDate}</td>
+              <td>${formatDateDisplay(log.programDate)}</td>
               <td>${log.category}</td>
               <td>${log.exercise}</td>
               <td>${formatTarget(log)}</td>
@@ -5794,7 +5964,7 @@ function renderStudentHistory() {
             <article class="confirm-entry-card">
               <div class="confirm-entry-top">
                 <span class="confirm-entry-category">${log.category}</span>
-                <span class="confirm-entry-target">${log.programDate}</span>
+                <span class="confirm-entry-target">${formatDateDisplay(log.programDate)}</span>
               </div>
               <h4>${log.exercise}</h4>
               <p class="confirm-entry-result">${formatActual(log)}</p>
@@ -5895,7 +6065,7 @@ function getSelectedStudentProgram() {
   const studentCoachId = student?.primaryCoachId || "";
   const scopedPrograms = [...state.programs]
     .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
-    .sort((a, b) => b.date.localeCompare(a.date));
+    .sort((a, b) => (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || ""));
   const selectedProgramId = currentStudentProgramId || els.studentProgramSelect?.value || "";
   return state.programs.find((program) => program.id === selectedProgramId)
     || getPublishedProgram(studentCoachId)
@@ -5913,18 +6083,18 @@ function getLatestSubmittedLogsForCurrentStudentProgram() {
   const matches = state.workoutLogs
     .filter((log) => log.studentId === student.id)
     .filter((log) => log.programId === program.id)
-    .sort((a, b) => `${b.submittedAt || ""} ${b.updatedAt || ""}`.localeCompare(`${a.submittedAt || ""} ${a.updatedAt || ""}`));
+    .sort(compareLogsByDateTimeDesc);
 
   if (!matches.length) {
     return [];
   }
 
-  const latestSubmittedAt = matches[0].submittedAt || "";
+  const latestSubmittedAt = normalizeDateTimeValue(matches[0].submittedAt || "");
   if (!latestSubmittedAt) {
     return matches;
   }
 
-  return matches.filter((log) => String(log.submittedAt || "") === latestSubmittedAt);
+  return matches.filter((log) => normalizeDateTimeValue(log.submittedAt || "") === latestSubmittedAt);
 }
 
 function findLatestReferenceLog(studentId, item) {
@@ -5934,7 +6104,7 @@ function findLatestReferenceLog(studentId, item) {
     .filter((log) => log.targetType === item.targetType)
     .filter((log) => Number(log.targetSets) === Number(item.targetSets))
     .filter((log) => Number(log.targetValue) === Number(item.targetValue))
-    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`))[0] || null;
+    .sort(compareLogsByDateTimeDesc)[0] || null;
 }
 
 function getRecommendedWeightText(entry) {
@@ -5961,7 +6131,7 @@ function getEntryBaseOneRm(entry) {
     .filter((log) => log.studentId === student.id)
     .filter((log) => log.exercise === entry.exercise)
     .filter((log) => Number(log.actualWeight) > 0)
-    .sort((a, b) => `${b.programDate} ${b.submittedAt}`.localeCompare(`${a.programDate} ${a.submittedAt}`));
+    .sort(compareLogsByDateTimeDesc);
 
   for (const log of candidateLogs) {
     const inferred = inferOneRmFromLog(log);
@@ -6068,7 +6238,7 @@ function exportCoachHistoryCsv() {
   const rows = [
     ["日期", "學生", "分類", "動作", "目標", "實際結果", "備註"],
     ...logs.map((log) => [
-      log.programDate,
+      formatDateDisplay(log.programDate),
       log.studentName,
       log.category,
       log.exercise,
@@ -6175,7 +6345,8 @@ function getDateTimePartsInAppZone(date = new Date()) {
     month: "2-digit",
     day: "2-digit",
     hour: "2-digit",
-    minute: "2-digit"
+    minute: "2-digit",
+    second: "2-digit"
   }).formatToParts(date);
 
   const map = {};
@@ -6188,7 +6359,8 @@ function getDateTimePartsInAppZone(date = new Date()) {
     month: map.month || "01",
     day: map.day || "01",
     hour: map.hour || "00",
-    minute: map.minute || "00"
+    minute: map.minute || "00",
+    second: map.second || "00"
   };
 }
 
