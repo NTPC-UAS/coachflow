@@ -155,11 +155,22 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0006";
+const PUBLIC_APP_VERSION = "20260403-0007";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
   !!String(APP_CONFIG.appsScriptUrl || "").trim();
+
+const RETRYABLE_CLOUD_ACTIONS = new Set([
+  "resolveCoachAccess",
+  "resolveStudentAccess",
+  "bootstrapAdmin",
+  "bootstrapCoach",
+  "bootstrapStudent",
+  "bootstrap",
+  "touchCoach",
+  "touchStudent"
+]);
 
 function normalizeCloudCoach(row, index = 0) {
   const name = row.coach_name || row.name || `Coach ${index + 1}`;
@@ -376,6 +387,40 @@ async function callCloudApi(action, payload = {}, method = "POST") {
   }
 }
 
+function shouldRetryCloudError(error) {
+  const message = String(error?.message || "");
+  if (!message) {
+    return false;
+  }
+
+  if (/找不到|停用|Unsupported action|目前不是雲端模式/i.test(message)) {
+    return false;
+  }
+
+  return /逾時|timeout|network|failed to fetch|load failed|unexpected end|cloud|request/i.test(message);
+}
+
+async function callCloudApiCritical(action, payload = {}, method = "POST", retryCount = 2) {
+  const canRetry = RETRYABLE_CLOUD_ACTIONS.has(String(action || ""));
+  const attempts = canRetry ? Math.max(0, Number(retryCount || 0)) + 1 : 1;
+  let lastError = null;
+
+  for (let index = 0; index < attempts; index += 1) {
+    try {
+      return await callCloudApi(action, payload, method);
+    } catch (error) {
+      lastError = error;
+      const shouldRetry = canRetry && index < attempts - 1 && shouldRetryCloudError(error);
+      if (!shouldRetry) {
+        throw error;
+      }
+      await delay(400 * (index + 1));
+    }
+  }
+
+  throw lastError || new Error("雲端連線失敗。");
+}
+
 async function bootstrapCloudMode() {
   if (!IS_CLOUD_MODE) {
     return;
@@ -383,7 +428,7 @@ async function bootstrapCloudMode() {
 
   if (APP_MODE === "admin") {
     try {
-      const payload = await callCloudApi("bootstrapAdmin", {}, "GET");
+      const payload = await callCloudApiCritical("bootstrapAdmin", {}, "GET", 3);
       applyCloudPayloadToState(payload);
     } catch (error) {
       console.warn("Admin cloud bootstrap failed, using local state:", error);
@@ -409,7 +454,7 @@ async function bootstrapCloudMode() {
           if (els.coachAccessCode) {
             els.coachAccessCode.value = matchedCoach.accessCode || authenticatedCoachAccess;
           }
-          const payload = await callCloudApi("bootstrapCoach", { coachId: matchedCoach.id });
+          const payload = await callCloudApiCritical("bootstrapCoach", { coachId: matchedCoach.id }, "POST", 3);
           applyCloudPayloadToState(payload);
         } else if (!previousCoachId) {
           authenticatedCoachId = "";
@@ -427,7 +472,7 @@ async function bootstrapCloudMode() {
     }
     if (authenticatedCoachId) {
       try {
-        const payload = await callCloudApi("bootstrapCoach", { coachId: authenticatedCoachId });
+        const payload = await callCloudApiCritical("bootstrapCoach", { coachId: authenticatedCoachId }, "POST", 2);
         applyCloudPayloadToState(payload);
         return;
       } catch (error) {
@@ -443,7 +488,7 @@ async function bootstrapCloudMode() {
           if (els.coachAccessCode) {
             els.coachAccessCode.value = matchedCoach.accessCode || authenticatedCoachAccess;
           }
-          const payload = await callCloudApi("bootstrapCoach", { coachId: matchedCoach.id });
+          const payload = await callCloudApiCritical("bootstrapCoach", { coachId: matchedCoach.id }, "POST", 2);
           applyCloudPayloadToState(payload);
           persistSession();
           return;
@@ -473,7 +518,7 @@ async function bootstrapCloudMode() {
           if (els.studentAccessCode) {
             els.studentAccessCode.value = matchedStudent.accessCode || currentStudentAccess;
           }
-          const payload = await callCloudApi("bootstrapStudent", { studentId: matchedStudent.id });
+          const payload = await callCloudApiCritical("bootstrapStudent", { studentId: matchedStudent.id }, "POST", 3);
           applyCloudPayloadToState(payload);
         } else if (!previousStudentId) {
           currentStudentId = "";
@@ -491,7 +536,7 @@ async function bootstrapCloudMode() {
     }
     if (currentStudentId) {
       try {
-        const payload = await callCloudApi("bootstrapStudent", { studentId: currentStudentId });
+        const payload = await callCloudApiCritical("bootstrapStudent", { studentId: currentStudentId }, "POST", 2);
         applyCloudPayloadToState(payload);
         return;
       } catch (error) {
@@ -506,7 +551,7 @@ async function bootstrapCloudMode() {
           if (els.studentAccessCode) {
             els.studentAccessCode.value = matchedStudent.accessCode || currentStudentAccess;
           }
-          const payload = await callCloudApi("bootstrapStudent", { studentId: matchedStudent.id });
+          const payload = await callCloudApiCritical("bootstrapStudent", { studentId: matchedStudent.id }, "POST", 2);
           applyCloudPayloadToState(payload);
           persistSession();
           return;
@@ -536,7 +581,7 @@ async function resolveStudentAccessFromCloud(accessValue) {
 
   for (const candidate of candidates) {
     try {
-      const payload = await callCloudApi("resolveStudentAccess", { access: candidate });
+      const payload = await callCloudApiCritical("resolveStudentAccess", { access: candidate }, "POST", 3);
       applyCloudPayloadToState(payload);
       const matched = payload.student ? normalizeCloudStudent(payload.student) : resolveStudentByAccess(candidate);
       if (matched) {
@@ -559,7 +604,7 @@ async function resolveCoachAccessFromCloud(accessValue) {
 
   for (const candidate of candidates) {
     try {
-      const payload = await callCloudApi("resolveCoachAccess", { access: candidate });
+      const payload = await callCloudApiCritical("resolveCoachAccess", { access: candidate }, "POST", 3);
       applyCloudPayloadToState(payload);
       const matched = payload.coach ? normalizeCloudCoach(payload.coach) : resolveCoachByAccess(candidate);
       if (matched) {
@@ -1323,7 +1368,11 @@ async function ensureStudentAccessOnInit() {
 async function init() {
   applyStaticCopy();
   applyAppMode();
-  hydrateFromStorage();
+  if (IS_CLOUD_MODE) {
+    resetStateForCloudBootstrap();
+  } else {
+    hydrateFromStorage();
+  }
   hydrateSession();
   await bootstrapCloudMode();
   if (APP_MODE === "coach" && !authenticatedCoachId) {
@@ -1753,6 +1802,15 @@ function hydrateFromStorage() {
   }
 }
 
+function resetStateForCloudBootstrap() {
+  state.coaches = [];
+  state.currentCoachId = "";
+  state.students = [];
+  state.programs = [];
+  state.programItems = [];
+  state.workoutLogs = [];
+}
+
 function persistState() {
   localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
   persistSession();
@@ -2091,21 +2149,21 @@ async function syncCloudWorkspaceOnActivate() {
 
   try {
     if (APP_MODE === "admin") {
-      const payload = await callCloudApi("bootstrapAdmin", {}, "GET");
+      const payload = await callCloudApiCritical("bootstrapAdmin", {}, "GET", 2);
       applyCloudPayloadToState(payload);
       refreshAdminWorkspace();
       return;
     }
 
     if (APP_MODE === "coach" && authenticatedCoachId) {
-      const payload = await callCloudApi("bootstrapCoach", { coachId: authenticatedCoachId });
+      const payload = await callCloudApiCritical("bootstrapCoach", { coachId: authenticatedCoachId }, "POST", 2);
       applyCloudPayloadToState(payload);
       refreshCoachWorkspace({ preserveEditor: coachEditorDirty });
       return;
     }
 
     if (APP_MODE === "student" && currentStudentId) {
-      const payload = await callCloudApi("bootstrapStudent", { studentId: currentStudentId });
+      const payload = await callCloudApiCritical("bootstrapStudent", { studentId: currentStudentId }, "POST", 2);
       applyCloudPayloadToState(payload);
       refreshStudentWorkspace();
       loadStudentProgram({ silent: true, preserveIfDirty: true });
@@ -2928,7 +2986,7 @@ async function confirmCoachAccess(options = {}) {
   authenticatedCoachAccess = matchedCoach.accessCode || String(accessValue || "").trim();
   state.currentCoachId = matchedCoach.id;
   if (IS_CLOUD_MODE && !skipTouch) {
-    callCloudApi("touchCoach", { coachId: matchedCoach.id })
+    callCloudApiCritical("touchCoach", { coachId: matchedCoach.id }, "POST", 2)
       .then((payload) => applyCloudPayloadToState(payload))
       .catch(() => markCoachUsed(matchedCoach.id));
   } else if (!skipTouch) {
@@ -2991,7 +3049,7 @@ async function confirmStudentAccess(options = {}) {
   els.studentAccessCode.value = matchedCode || matchedToken || normalizedAccessValue;
   currentStudentAccess = matchedCode || normalizedAccessValue || matchedToken;
   if (IS_CLOUD_MODE && !skipTouch) {
-    callCloudApi("touchStudent", { studentId: matchedStudent.id })
+    callCloudApiCritical("touchStudent", { studentId: matchedStudent.id }, "POST", 2)
       .then((payload) => applyCloudPayloadToState(payload))
       .catch(() => markStudentUsed(matchedStudent.id));
   } else if (!skipTouch) {
