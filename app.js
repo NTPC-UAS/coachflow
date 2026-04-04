@@ -42,6 +42,7 @@ let loadedStudentProgramId = "";
 let lastCloudSyncAt = 0;
 let lastSubmittedSnapshot = null;
 let studentAutoLoginPending = false;
+let studentEditNoticeTimer = null;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -72,7 +73,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260403-0015";
+const PUBLIC_APP_VERSION = "20260404-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -1309,6 +1310,7 @@ const els = {
   studentProgramEditModalCard: document.querySelector("#student-program-edit-modal-card"),
   studentProgramEditBody: document.querySelector("#student-program-edit-body"),
   studentEditMobileList: document.querySelector("#student-edit-mobile-list"),
+  studentProgramEditNotice: document.querySelector("#student-program-edit-notice"),
   studentProgramEditRowTemplate: document.querySelector("#student-program-edit-row-template"),
   programPreviewModal: document.querySelector("#program-preview-modal"),
   modalPreviewCode: document.querySelector("#modal-preview-code"),
@@ -1722,7 +1724,10 @@ function bindEvents() {
   document.querySelector("#close-student-program-edit-modal").addEventListener("click", closeStudentProgramEditModal);
   document.querySelector("#cancel-student-program-edit").addEventListener("click", closeStudentProgramEditModal);
   document.querySelector("#save-student-program-edit").addEventListener("click", saveStudentProgramEdits);
-  document.querySelector("#add-student-edit-row").addEventListener("click", () => addStudentProgramEditRow());
+  document.querySelector("#add-student-edit-row").addEventListener("click", () => {
+    addStudentProgramEditRow();
+    showStudentProgramEditNotice("已新增 1 個課表項目，記得按「套用到本次課表」。");
+  });
   els.closeAssignCoachModal?.addEventListener("click", closeAssignCoachModal);
   els.cancelAssignCoach?.addEventListener("click", closeAssignCoachModal);
   els.saveAssignCoach?.addEventListener("click", saveAssignedCoach);
@@ -1864,6 +1869,7 @@ function bindEvents() {
   window.addEventListener("storage", handleStorageSync);
   window.addEventListener("focus", handleVisibilityRefresh);
   document.addEventListener("visibilitychange", handleVisibilityRefresh);
+  window.addEventListener("beforeunload", handleBeforeUnload);
 }
 
 function hydrateFromStorage() {
@@ -2201,6 +2207,9 @@ function handleStorageSync(event) {
   if (event.key !== STORAGE_KEY && event.key !== SESSION_KEY) {
     return;
   }
+  if (hasUnsavedDraft()) {
+    return;
+  }
 
   const activeCoachPanel = els.coachPanels.find((panel) => panel.classList.contains("is-active"))?.id || (APP_MODE === "admin" ? "coach-coaches" : "coach-editor");
   const activeMainPanel = els.panels.find((panel) => panel.classList.contains("is-active"))?.id || (APP_MODE === "student" ? "student-panel" : "coach-panel");
@@ -2307,7 +2316,39 @@ function handleVisibilityRefresh() {
   if (document.visibilityState && document.visibilityState !== "visible") {
     return;
   }
+  if (hasUnsavedDraft()) {
+    return;
+  }
   syncCloudWorkspaceOnActivate();
+}
+
+function hasUnsavedDraft() {
+  if (APP_MODE === "coach") {
+    return coachEditorDirty;
+  }
+  if (APP_MODE === "student") {
+    return studentEntriesDirty;
+  }
+  if (APP_MODE === "dual") {
+    const coachActive = Boolean(els.coachPanel?.classList.contains("is-active"));
+    const studentActive = Boolean(els.studentPanel?.classList.contains("is-active"));
+    if (coachActive && !studentActive) {
+      return coachEditorDirty;
+    }
+    if (studentActive && !coachActive) {
+      return studentEntriesDirty;
+    }
+    return coachEditorDirty || studentEntriesDirty;
+  }
+  return false;
+}
+
+function handleBeforeUnload(event) {
+  if (!hasUnsavedDraft()) {
+    return;
+  }
+  event.preventDefault();
+  event.returnValue = "";
 }
 
 function handleCurrentCoachChange() {
@@ -2522,7 +2563,16 @@ function addStudentProgramEditRow(item = {}) {
     };
 
     type.addEventListener("change", sync);
-    card.querySelector(".remove-student-edit-row").addEventListener("click", () => card.remove());
+    card.querySelector(".remove-student-edit-row").addEventListener("click", () => {
+      card.remove();
+      const count = getStudentProgramEditRowCount();
+      showStudentProgramEditNotice(
+        count > 0
+          ? "已刪除 1 個課表項目。"
+          : "已刪除最後一個項目，至少保留 1 筆才能套用。",
+        count > 0 ? "info" : "warning"
+      );
+    });
     sync();
     els.studentEditMobileList.appendChild(card);
     return;
@@ -2560,9 +2610,23 @@ function addStudentProgramEditRow(item = {}) {
   type.addEventListener("change", sync);
   fragment.querySelector(".remove-student-edit-row").addEventListener("click", () => {
     row.remove();
+    const count = getStudentProgramEditRowCount();
+    showStudentProgramEditNotice(
+      count > 0
+        ? "已刪除 1 個課表項目。"
+        : "已刪除最後一個項目，至少保留 1 筆才能套用。",
+      count > 0 ? "info" : "warning"
+    );
   });
   sync();
   els.studentProgramEditBody.appendChild(fragment);
+}
+
+function getStudentProgramEditRowCount() {
+  if (studentViewMode === "card") {
+    return els.studentEditMobileList?.querySelectorAll(".student-edit-mobile-card").length || 0;
+  }
+  return els.studentProgramEditBody?.querySelectorAll("tr").length || 0;
 }
 
 function syncSortNumbers() {
@@ -3852,6 +3916,7 @@ function openStudentProgramEditModal() {
 
   els.studentProgramEditBody.innerHTML = "";
   els.studentEditMobileList.innerHTML = "";
+  clearStudentProgramEditNotice();
   loadedStudentEntries.forEach((entry) => addStudentProgramEditRow(entry));
   els.studentProgramEditModal.classList.toggle("is-mobile-preview", studentViewMode === "card");
   els.studentProgramEditModalCard.classList.toggle("is-mobile-preview", studentViewMode === "card");
@@ -3860,10 +3925,34 @@ function openStudentProgramEditModal() {
 }
 
 function closeStudentProgramEditModal() {
+  clearStudentProgramEditNotice();
   els.studentProgramEditModal.classList.add("is-hidden");
   els.studentProgramEditModal.classList.remove("is-mobile-preview");
   els.studentProgramEditModalCard.classList.remove("is-mobile-preview");
   els.studentProgramEditModal.setAttribute("aria-hidden", "true");
+}
+
+function showStudentProgramEditNotice(message, tone = "info") {
+  if (!els.studentProgramEditNotice) {
+    return;
+  }
+  els.studentProgramEditNotice.textContent = String(message || "").trim();
+  els.studentProgramEditNotice.classList.add("is-visible");
+  els.studentProgramEditNotice.classList.toggle("is-warning", tone === "warning");
+  window.clearTimeout(studentEditNoticeTimer);
+  studentEditNoticeTimer = window.setTimeout(() => {
+    clearStudentProgramEditNotice();
+  }, 2200);
+}
+
+function clearStudentProgramEditNotice() {
+  window.clearTimeout(studentEditNoticeTimer);
+  studentEditNoticeTimer = null;
+  if (!els.studentProgramEditNotice) {
+    return;
+  }
+  els.studentProgramEditNotice.textContent = "";
+  els.studentProgramEditNotice.classList.remove("is-visible", "is-warning");
 }
 
 function openAssignCoachModal(studentId) {

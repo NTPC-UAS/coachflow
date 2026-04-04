@@ -1292,6 +1292,23 @@ tr.is-selected-log td {
   justify-content: flex-start;
 }
 
+.student-edit-notice {
+  min-height: 1.3em;
+  margin: 6px 4px 10px;
+  font-size: 0.92rem;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 0.18s ease;
+}
+
+.student-edit-notice.is-visible {
+  opacity: 1;
+}
+
+.student-edit-notice.is-warning {
+  color: #a04827;
+}
+
 #student-program-edit-modal.is-mobile-preview {
   padding: 14px;
 }
