@@ -73,7 +73,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260404-0001";
+const PUBLIC_APP_VERSION = "20260404-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -3933,16 +3933,26 @@ function closeStudentProgramEditModal() {
 }
 
 function showStudentProgramEditNotice(message, tone = "info") {
-  if (!els.studentProgramEditNotice) {
+  const text = String(message || "").trim();
+  if (!text) {
     return;
   }
-  els.studentProgramEditNotice.textContent = String(message || "").trim();
+
+  if (!els.studentProgramEditNotice) {
+    window.alert(text);
+    return;
+  }
+  els.studentProgramEditNotice.textContent = text;
   els.studentProgramEditNotice.classList.add("is-visible");
   els.studentProgramEditNotice.classList.toggle("is-warning", tone === "warning");
+  if (els.studentProgramStatus) {
+    els.studentProgramStatus.textContent = text;
+  }
+  window.alert(text);
   window.clearTimeout(studentEditNoticeTimer);
   studentEditNoticeTimer = window.setTimeout(() => {
     clearStudentProgramEditNotice();
-  }, 2200);
+  }, 3200);
 }
 
 function clearStudentProgramEditNotice() {
