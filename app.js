@@ -43,6 +43,7 @@ let lastCloudSyncAt = 0;
 let lastSubmittedSnapshot = null;
 let studentAutoLoginPending = false;
 let studentEditNoticeTimer = null;
+let sessionStudentDraft = null;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -73,7 +74,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260404-0002";
+const PUBLIC_APP_VERSION = "20260405-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -1970,6 +1971,9 @@ function hydrateSession() {
       currentStudentId = String(parsed.currentStudentId || "").trim();
       currentStudentAccess = String(parsed.currentStudentAccess || "").trim();
       currentStudentProgramId = String(parsed.currentStudentProgramId || "").trim();
+      sessionStudentDraft = parsed.studentDraft && typeof parsed.studentDraft === "object"
+        ? parsed.studentDraft
+        : null;
       coachViewMode = parsed.coachViewMode || coachViewMode;
       studentViewMode = parsed.studentViewMode || studentViewMode;
     } catch {
@@ -2006,10 +2010,70 @@ function persistSession() {
         : String(existing.coachViewMode || coachViewMode),
     studentViewMode: APP_MODE === "student"
       ? studentViewMode
-      : String(existing.studentViewMode || studentViewMode)
+      : String(existing.studentViewMode || studentViewMode),
+    studentDraft: APP_MODE === "student"
+      ? buildCurrentStudentDraftSession()
+      : (existing.studentDraft && typeof existing.studentDraft === "object" ? existing.studentDraft : null)
   };
 
+  sessionStudentDraft = nextSession.studentDraft || null;
   localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
+}
+
+function sanitizeStudentDraftEntries(entries = []) {
+  return entries
+    .map((entry) => ({
+      itemId: String(entry.itemId || `draft-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`),
+      category: String(entry.category || "主項目"),
+      exercise: String(entry.exercise || "").trim(),
+      targetSets: Number(entry.targetSets || 0),
+      targetType: entry.targetType === "time" || entry.targetType === "rm" ? entry.targetType : "reps",
+      targetValue: Number(entry.targetType === "rm" ? 0 : (entry.targetValue || 0)),
+      itemNote: String(entry.itemNote || ""),
+      actualWeight: String(entry.actualWeight || ""),
+      actualSets: String(entry.actualSets || ""),
+      actualReps: String(entry.actualReps || ""),
+      studentNote: String(entry.studentNote || "")
+    }))
+    .filter((entry) => entry.exercise && entry.targetSets > 0 && (entry.targetType === "rm" || entry.targetValue > 0));
+}
+
+function buildCurrentStudentDraftSession() {
+  const studentId = String(currentStudentId || "").trim();
+  const programId = String(currentStudentProgramId || loadedStudentProgramId || "").trim();
+  if (!studentId || !programId || !loadedStudentEntries.length) {
+    return null;
+  }
+
+  const entries = sanitizeStudentDraftEntries(loadedStudentEntries);
+  if (!entries.length) {
+    return null;
+  }
+
+  return {
+    studentId,
+    programId,
+    dirty: Boolean(studentEntriesDirty),
+    savedAt: timestampNow(),
+    entries
+  };
+}
+
+function getSessionStudentDraft(studentId, programId) {
+  if (!sessionStudentDraft || typeof sessionStudentDraft !== "object") {
+    return null;
+  }
+  if (String(sessionStudentDraft.studentId || "") !== String(studentId || "")) {
+    return null;
+  }
+  if (String(sessionStudentDraft.programId || "") !== String(programId || "")) {
+    return null;
+  }
+  const entries = Array.isArray(sessionStudentDraft.entries) ? sessionStudentDraft.entries : [];
+  if (!entries.length) {
+    return null;
+  }
+  return sessionStudentDraft;
 }
 
 function captureStudentEntryDraftsFromDom() {
@@ -2031,6 +2095,7 @@ function captureStudentEntryDraftsFromDom() {
 
     return nextEntry;
   });
+  persistSession();
 }
 
 function buildSubmittedSnapshot(logs, program = getSelectedStudentProgram(), student = getSelectedStudent()) {
@@ -2494,12 +2559,15 @@ function syncProgramItemRowState(row) {
   }
 }
 
-function addStudentProgramEditRow(item = {}) {
+function addStudentProgramEditRow(item = {}, sourceIndex = -1) {
   const useMobile = studentViewMode === "card";
 
   if (useMobile) {
     const card = document.createElement("article");
     card.className = "student-entry-card student-edit-mobile-card";
+    if (Number.isInteger(sourceIndex) && sourceIndex >= 0) {
+      card.dataset.sourceIndex = String(sourceIndex);
+    }
     card.innerHTML = `
       <div class="student-entry-fields">
         <label class="mini-field">
@@ -2580,6 +2648,9 @@ function addStudentProgramEditRow(item = {}) {
 
   const fragment = els.studentProgramEditRowTemplate.content.cloneNode(true);
   const row = fragment.querySelector("tr");
+  if (Number.isInteger(sourceIndex) && sourceIndex >= 0) {
+    row.dataset.sourceIndex = String(sourceIndex);
+  }
   const category = fragment.querySelector(".student-edit-category");
   const exercise = fragment.querySelector(".student-edit-exercise");
   const sets = fragment.querySelector(".student-edit-sets");
@@ -3310,7 +3381,7 @@ function loadStudentProgram(options = {}) {
     return;
   }
 
-  loadedStudentEntries = getProgramItems(program.id).map((item) => ({
+  const baseEntries = getProgramItems(program.id).map((item) => ({
     itemId: item.id,
     category: item.category,
     exercise: item.exercise,
@@ -3325,15 +3396,28 @@ function loadStudentProgram(options = {}) {
     studentNote: ""
   }));
 
+  const draftSession = getSessionStudentDraft(student.id, nextProgramId);
+  if (draftSession?.entries?.length) {
+    loadedStudentEntries = sanitizeStudentDraftEntries(draftSession.entries).map((entry) => ({
+      ...entry,
+      referenceLog: findLatestReferenceLog(student.id, entry)
+    }));
+    studentEntriesDirty = Boolean(loadedStudentEntries.length && draftSession.dirty !== false);
+  } else {
+    loadedStudentEntries = baseEntries;
+    studentEntriesDirty = false;
+  }
+
   studentHistoryOpened = false;
   studentSubmissionCompleted = false;
   lastSubmittedLogs = [];
   loadedStudentProgramId = nextProgramId;
   currentStudentProgramId = nextProgramId;
-  studentEntriesDirty = false;
   persistSession();
   renderStudentProgramEntries();
-  els.studentProgramStatus.textContent = `${student.name}\uff5c\u5df2\u8f09\u5165 ${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
+  els.studentProgramStatus.textContent = draftSession?.entries?.length
+    ? `${student.name}｜已恢復未送出填寫內容`
+    : `${student.name}｜已載入 ${program.code || "目前課表"}`;
   els.studentMobileSubmitBar.classList.toggle("is-visible", studentViewMode === "card" && loadedStudentEntries.length > 0);
   els.studentMobileTools.classList.toggle("is-visible", studentViewMode === "card");
   syncStudentAccessUI();
@@ -3917,7 +4001,7 @@ function openStudentProgramEditModal() {
   els.studentProgramEditBody.innerHTML = "";
   els.studentEditMobileList.innerHTML = "";
   clearStudentProgramEditNotice();
-  loadedStudentEntries.forEach((entry) => addStudentProgramEditRow(entry));
+  loadedStudentEntries.forEach((entry, index) => addStudentProgramEditRow(entry, index));
   els.studentProgramEditModal.classList.toggle("is-mobile-preview", studentViewMode === "card");
   els.studentProgramEditModalCard.classList.toggle("is-mobile-preview", studentViewMode === "card");
   els.studentProgramEditModal.classList.remove("is-hidden");
@@ -4043,14 +4127,22 @@ function saveStudentProgramEdits() {
   const editedEntries = editRows
     .map((row) => {
       const type = row.querySelector(".student-edit-type").value;
+      const sourceIndex = Number(row.dataset.sourceIndex);
+      const sourceEntry = Number.isInteger(sourceIndex) && sourceIndex >= 0
+        ? loadedStudentEntries[sourceIndex]
+        : null;
       return {
-        itemId: `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
+        itemId: sourceEntry?.itemId || `custom-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`,
         category: row.querySelector(".student-edit-category").value,
         exercise: row.querySelector(".student-edit-exercise").value.trim(),
         targetSets: Number(row.querySelector(".student-edit-sets").value || 0),
         targetType: type,
         targetValue: type === "rm" ? 0 : Number(row.querySelector(".student-edit-value").value || 0),
-        itemNote: "",
+        itemNote: sourceEntry?.itemNote || "",
+        actualWeight: sourceEntry?.actualWeight || "",
+        actualSets: sourceEntry?.actualSets || "",
+        actualReps: sourceEntry?.actualReps || "",
+        studentNote: sourceEntry?.studentNote || "",
         referenceLog: null
       };
     })
@@ -4066,6 +4158,8 @@ function saveStudentProgramEdits() {
   }
 
   loadedStudentEntries = editedEntries;
+  studentEntriesDirty = true;
+  persistSession();
   renderStudentProgramEntries();
   closeStudentProgramEditModal();
 }
