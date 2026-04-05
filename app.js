@@ -74,7 +74,7 @@ const APP_CONFIG = window.APP_CONFIG || {
   requestTimeoutMs: 12000
 };
 
-const PUBLIC_APP_VERSION = "20260405-0001";
+const PUBLIC_APP_VERSION = "20260405-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -1699,8 +1699,8 @@ function bindEvents() {
   document.querySelector("#modal-export-program-image").addEventListener("click", exportProgramImage);
   els.toggleCoachHistoryResults?.addEventListener("click", toggleCoachHistoryResults);
   document.querySelector("#confirm-student-access").addEventListener("click", confirmStudentAccessAndLoadProgram);
-  els.loadStudentProgramInline.addEventListener("click", loadStudentProgram);
-  els.loadStudentProgramMobile.addEventListener("click", loadStudentProgram);
+  els.loadStudentProgramInline.addEventListener("click", () => loadStudentProgram({ preserveIfDirty: true }));
+  els.loadStudentProgramMobile.addEventListener("click", () => loadStudentProgram({ preserveIfDirty: true }));
   els.editStudentProgram.addEventListener("click", handleStudentDetailAction);
   els.editStudentProgramMobile.addEventListener("click", handleStudentDetailAction);
   document.querySelector("#submit-student-log").addEventListener("click", openSubmissionConfirm);
@@ -1989,29 +1989,32 @@ function persistSession() {
     existing = {};
   }
 
+  const shouldPersistCoachSession = APP_MODE === "coach" || APP_MODE === "dual";
+  const shouldPersistStudentSession = APP_MODE === "student" || APP_MODE === "dual";
+
   const nextSession = {
-    authenticatedCoachId: APP_MODE === "coach"
+    authenticatedCoachId: shouldPersistCoachSession
       ? String(authenticatedCoachId || "")
       : String(existing.authenticatedCoachId || ""),
-    authenticatedCoachAccess: APP_MODE === "coach"
+    authenticatedCoachAccess: shouldPersistCoachSession
       ? String(authenticatedCoachAccess || "")
       : String(existing.authenticatedCoachAccess || ""),
-      currentStudentId: APP_MODE === "student"
+      currentStudentId: shouldPersistStudentSession
         ? String(currentStudentId || "")
         : String(existing.currentStudentId || ""),
-      currentStudentAccess: APP_MODE === "student"
+      currentStudentAccess: shouldPersistStudentSession
         ? String(currentStudentAccess || "")
         : String(existing.currentStudentAccess || ""),
-      currentStudentProgramId: APP_MODE === "student"
+      currentStudentProgramId: shouldPersistStudentSession
         ? String(currentStudentProgramId || "")
         : String(existing.currentStudentProgramId || ""),
-      coachViewMode: APP_MODE === "coach"
+      coachViewMode: shouldPersistCoachSession
         ? coachViewMode
         : String(existing.coachViewMode || coachViewMode),
-    studentViewMode: APP_MODE === "student"
+    studentViewMode: shouldPersistStudentSession
       ? studentViewMode
       : String(existing.studentViewMode || studentViewMode),
-    studentDraft: APP_MODE === "student"
+    studentDraft: shouldPersistStudentSession
       ? buildCurrentStudentDraftSession()
       : (existing.studentDraft && typeof existing.studentDraft === "object" ? existing.studentDraft : null)
   };
