@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260405-0002">
+  <link rel="stylesheet" href="styles.css?v=20260418-0004">
 </head>
 <body>
   <div class="app-shell">
@@ -544,11 +544,15 @@
                 </div>
               </div>
             </div>
+            <div class="button-row is-hidden" id="student-leave-entry-row">
+              <button class="primary-button" id="open-student-leave-system-main" type="button" hidden>前往請假系統</button>
+            </div>
 
             <div class="student-active-bar is-hidden" id="student-active-bar">
               <div class="student-active-copy" id="student-active-copy"></div>
               <div class="student-active-actions">
                 <button class="primary-button" id="load-student-program-inline" type="button">載入今日課表</button>
+                <button class="ghost-button" id="open-student-leave-system-inline" type="button" hidden>前往請假系統</button>
                 <button class="ghost-button" id="edit-student-program" type="button">編輯課表項目</button>
                 <button class="ghost-button" id="change-student-access" type="button">切換身份 / 課表</button>
               </div>
@@ -559,10 +563,12 @@
             <div class="student-phone-frame" id="student-phone-frame">
               <div class="student-mobile-tools" id="student-mobile-tools">
                 <button class="primary-button full-width" id="load-student-program-mobile" type="button">載入今日課表</button>
+                <button class="ghost-button full-width" id="open-student-leave-system-mobile-primary" type="button" hidden>前往請假系統</button>
               </div>
               <div class="student-card-list" id="student-card-list"></div>
               <div class="student-mobile-secondary-actions" id="student-mobile-secondary-actions">
                 <button class="ghost-button full-width" id="edit-student-program-mobile" type="button">編輯課表項目</button>
+                <button class="ghost-button full-width" id="open-student-leave-system-mobile-secondary" type="button" hidden>前往請假系統</button>
                 <button class="ghost-button full-width" id="open-student-history-mobile" type="button">查看我的歷史紀錄</button>
               </div>
             </div>
@@ -835,7 +841,7 @@
     </div>
   </div>
 
-  <script charset="UTF-8" src="config.js?v=20260405-0002"></script>
-  <script charset="UTF-8" src="app.js?v=20260405-0002"></script>
+  <script charset="UTF-8" src="config.js?v=20260418-0004"></script>
+  <script charset="UTF-8" src="app.js?v=20260418-0004"></script>
 </body>
 </html>

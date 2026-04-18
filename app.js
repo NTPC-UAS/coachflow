@@ -73,8 +73,12 @@ const APP_CONFIG = window.APP_CONFIG || {
   appsScriptUrl: "",
   requestTimeoutMs: 12000
 };
+const LEAVE_SANDBOX_CONFIG = APP_CONFIG.leaveSandbox || {};
+const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
+const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
+const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260405-0002";
+const PUBLIC_APP_VERSION = "20260418-0004";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -1276,6 +1280,8 @@ const els = {
   studentRecordedBanner: document.querySelector("#student-recorded-banner"),
   studentProgramStatus: document.querySelector("#student-program-status"),
   studentProgramCard: document.querySelector("#student-program-card"),
+  studentLeaveEntryRow: document.querySelector("#student-leave-entry-row"),
+  openStudentLeaveSystemMain: document.querySelector("#open-student-leave-system-main"),
   studentPhoneFrame: document.querySelector("#student-phone-frame"),
   studentMobileTools: document.querySelector("#student-mobile-tools"),
   studentMobileSecondaryActions: document.querySelector("#student-mobile-secondary-actions"),
@@ -1298,6 +1304,9 @@ const els = {
   loadStudentProgramMobile: document.querySelector("#load-student-program-mobile"),
   editStudentProgram: document.querySelector("#edit-student-program"),
   editStudentProgramMobile: document.querySelector("#edit-student-program-mobile"),
+  openStudentLeaveSystemInline: document.querySelector("#open-student-leave-system-inline"),
+  openStudentLeaveSystemMobilePrimary: document.querySelector("#open-student-leave-system-mobile-primary"),
+  openStudentLeaveSystemMobileSecondary: document.querySelector("#open-student-leave-system-mobile-secondary"),
   openStudentHistoryMobile: document.querySelector("#open-student-history-mobile"),
   changeStudentAccess: document.querySelector("#change-student-access"),
   submitStudentLogMobile: document.querySelector("#submit-student-log-mobile"),
@@ -1712,6 +1721,12 @@ function bindEvents() {
     els.studentHistoryCard.scrollIntoView({ behavior: "smooth", block: "start" });
   });
   els.changeStudentAccess.addEventListener("click", showStudentAccessPanel);
+  [
+    els.openStudentLeaveSystemMain,
+    els.openStudentLeaveSystemInline,
+    els.openStudentLeaveSystemMobilePrimary,
+    els.openStudentLeaveSystemMobileSecondary
+  ].forEach((button) => button?.addEventListener("click", openStudentLeaveSystemEntry));
   document.querySelector("#open-student-history").addEventListener("click", () => {
     renderStudentHistory();
     document.querySelector("#student-history-exercise").focus();
@@ -2235,7 +2250,7 @@ function applyAppMode() {
     els.coachAuthShell.style.display = showCoachAuthShell ? "" : "none";
   }
   if (els.coachStudentLinksCard) {
-    const showStudentLinks = APP_MODE !== "admin";
+    const showStudentLinks = APP_MODE !== "student";
     els.coachStudentLinksCard.hidden = !showStudentLinks;
     els.coachStudentLinksCard.style.display = showStudentLinks ? "" : "none";
   }
@@ -3100,6 +3115,7 @@ function renderStudentSummary() {
     els.studentActiveCopy.textContent = "";
     els.studentMobileSubmitBar.classList.remove("is-visible");
     els.studentMobileTools.classList.remove("is-visible");
+    syncStudentLeaveSystemEntry();
     syncStudentAccessUI();
     return;
   }
@@ -3114,6 +3130,7 @@ function renderStudentSummary() {
     els.studentActiveCopy.textContent = `${student.name}\uff5c${assignedCoachName}`;
     els.studentMobileSubmitBar.classList.remove("is-visible");
     els.studentMobileTools.classList.remove("is-visible");
+    syncStudentLeaveSystemEntry();
     syncStudentAccessUI();
     return;
   }
@@ -3126,7 +3143,81 @@ function renderStudentSummary() {
     <p>${formatDateDisplay(program.date)}${program.published ? "\uff5c\u5df2\u767c\u5e03" : "\uff5c\u672a\u767c\u5e03"}</p>
   `;
   els.studentActiveCopy.textContent = `${student.name}\uff5c${assignedCoachName}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
+  syncStudentLeaveSystemEntry();
   syncStudentAccessUI();
+}
+
+function buildStudentLeaveSystemUrl() {
+  if (!IS_LEAVE_SANDBOX_ENABLED || !LEAVE_SANDBOX_STUDENT_PAGE) {
+    return "";
+  }
+  const student = getSelectedStudent();
+  if (!student) {
+    return "";
+  }
+
+  const configuredPublicBase = String(APP_CONFIG.publicBaseUrl || "").trim();
+  const isHosted = /^https?:/i.test(window.location.protocol);
+  const baseHref = configuredPublicBase || (isHosted ? window.location.href : "");
+  if (!baseHref) {
+    return "";
+  }
+
+  try {
+    const leaveUrl = new URL(LEAVE_SANDBOX_STUDENT_PAGE, baseHref);
+    leaveUrl.search = "";
+    const studentCode = String(student.accessCode || student.id || "").trim();
+    if (studentCode) {
+      leaveUrl.searchParams.set("studentCode", studentCode);
+    }
+    const assignedCoach = state.coaches.find((coach) => coach.id === (student.primaryCoachId || ""));
+    const coachCode = String(assignedCoach?.accessCode || "").trim();
+    if (coachCode) {
+      leaveUrl.searchParams.set("coachCode", coachCode);
+    }
+    leaveUrl.searchParams.set("from", "coachflow-student");
+    leaveUrl.searchParams.set("v", PUBLIC_APP_VERSION);
+    return leaveUrl.toString();
+  } catch (error) {
+    console.warn("Failed to build student leave url:", error);
+    return "";
+  }
+}
+
+function syncStudentLeaveSystemEntry() {
+  const url = buildStudentLeaveSystemUrl();
+  const hasStudent = Boolean(getSelectedStudent());
+  if (els.studentLeaveEntryRow) {
+    els.studentLeaveEntryRow.hidden = !hasStudent;
+    els.studentLeaveEntryRow.classList.toggle("is-hidden", !hasStudent);
+  }
+  const buttons = [
+    els.openStudentLeaveSystemMain,
+    els.openStudentLeaveSystemInline,
+    els.openStudentLeaveSystemMobilePrimary,
+    els.openStudentLeaveSystemMobileSecondary
+  ].filter(Boolean);
+  buttons.forEach((button) => {
+    const visible = hasStudent;
+    button.hidden = !visible;
+    button.classList.toggle("is-hidden", !visible);
+    button.dataset.leaveUrl = url || "";
+    if (visible) {
+      button.removeAttribute("disabled");
+    } else {
+      button.setAttribute("disabled", "disabled");
+    }
+  });
+}
+
+function openStudentLeaveSystemEntry(event) {
+  event?.preventDefault();
+  const url = String(event?.currentTarget?.dataset?.leaveUrl || buildStudentLeaveSystemUrl() || "").trim();
+  if (!url) {
+    window.alert("請假系統入口尚未啟用，請先聯絡教練。");
+    return;
+  }
+  window.location.assign(url);
 }
 
 function renderCoachSummary() {
@@ -4271,6 +4362,7 @@ function syncStudentAccessUI() {
   const hasStudent = Boolean(getSelectedStudent());
   const isCard = studentViewMode === "card";
   const hasLoadedProgram = loadedStudentEntries.length > 0;
+  syncStudentLeaveSystemEntry();
   document.body.dataset.studentAuth = hasStudent ? "authenticated" : "anonymous";
   els.studentAuthShell.classList.toggle("is-autologin", studentAutoLoginPending);
   if (els.studentAutoLoginBanner) {
@@ -4669,6 +4761,23 @@ function renderCoachStudentLinks() {
   sharedBaseUrl.search = "";
   sharedBaseUrl.searchParams.set("mode", "student");
   sharedBaseUrl.searchParams.set("v", PUBLIC_APP_VERSION);
+  const activeCoach = getCurrentCoach();
+  const coachAccessCode = String(activeCoach?.accessCode || "").trim();
+  const leaveCoachBaseUrl =
+    IS_LEAVE_SANDBOX_ENABLED && LEAVE_SANDBOX_COACH_PAGE
+      ? new URL(LEAVE_SANDBOX_COACH_PAGE, baseHref)
+      : null;
+  const leaveStudentBaseUrl =
+    IS_LEAVE_SANDBOX_ENABLED && LEAVE_SANDBOX_STUDENT_PAGE
+      ? new URL(LEAVE_SANDBOX_STUDENT_PAGE, baseHref)
+      : null;
+  const leaveCoachQuickUrl = leaveCoachBaseUrl ? new URL(leaveCoachBaseUrl.toString()) : null;
+  if (leaveCoachQuickUrl) {
+    if (coachAccessCode) {
+      leaveCoachQuickUrl.searchParams.set("coachCode", coachAccessCode);
+    }
+    leaveCoachQuickUrl.searchParams.set("from", "coachflow");
+  }
 
   const keyword = (els.coachStudentLinkName?.value || "").trim().toLowerCase();
   if (els.coachStudentLinkSelect && els.coachStudentLinkName?.value) {
@@ -4676,16 +4785,21 @@ function renderCoachStudentLinks() {
   }
 
   const scopedStudents = getCoachScopedStudents();
+  const selectedNameKeyword = String(els.coachStudentLinkSelect?.value || "").trim().toLowerCase();
+  const activeKeyword = keyword || selectedNameKeyword;
   const matchedStudents = scopedStudents.filter((student) => {
-    if (!keyword) {
+    if (!activeKeyword) {
       return false;
     }
 
       return (
-        String(student.name || "").trim().toLowerCase().includes(keyword) ||
-        String(student.accessCode || "").trim().toLowerCase().includes(keyword)
+        String(student.name || "").trim().toLowerCase().includes(activeKeyword) ||
+        String(student.accessCode || "").trim().toLowerCase().includes(activeKeyword)
       );
     });
+  const displayStudents = matchedStudents.length
+    ? matchedStudents
+    : (!activeKeyword && scopedStudents.length ? [scopedStudents[0]] : []);
 
   if (els.coachStudentLinkOptions) {
     els.coachStudentLinkOptions.innerHTML = scopedStudents
@@ -4701,22 +4815,20 @@ function renderCoachStudentLinks() {
     ].join("");
     els.coachStudentLinkSelect.value = scopedStudents.some((student) => student.name === currentValue)
       ? currentValue
-      : keyword
-        ? (matchedStudents[0]?.name || "")
-        : "";
+      : (displayStudents[0]?.name || "");
   }
 
-  if (!keyword) {
-    els.coachStudentLinks.innerHTML = `<div class="empty-card">\u8acb\u5148\u8f38\u5165\u5b78\u751f\u59d3\u540d\u3002</div>`;
+  if (!displayStudents.length) {
+    els.coachStudentLinks.innerHTML = `
+      <div class="empty-card">\u627e\u4e0d\u5230\u7b26\u5408\u7684\u5b78\u751f\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u59d3\u540d\u6216\u4ee3\u78bc\u3002</div>
+      ${leaveCoachQuickUrl
+        ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachQuickUrl.toString()}" target="_blank" rel="noopener">開啟請假教練頁（測試）</a></div>`
+        : ""}
+    `;
     return;
   }
 
-  if (!matchedStudents.length) {
-    els.coachStudentLinks.innerHTML = `<div class="empty-card">\u627e\u4e0d\u5230\u7b26\u5408\u7684\u5b78\u751f\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u59d3\u540d\u6216\u4ee3\u78bc\u3002</div>`;
-    return;
-  }
-
-  els.coachStudentLinks.innerHTML = matchedStudents
+  els.coachStudentLinks.innerHTML = displayStudents
     .slice(0, 1)
     .map((student) => {
       const accessUrl = new URL(studentBaseUrl.toString());
@@ -4726,6 +4838,21 @@ function renderCoachStudentLinks() {
       const qrImageUrl = canGenerateScannableQr
         ? `https://api.qrserver.com/v1/create-qr-code/?size=180x180&data=${encodeURIComponent(accessUrl.toString())}`
         : "";
+      const leaveStudentUrl = leaveStudentBaseUrl ? new URL(leaveStudentBaseUrl.toString()) : null;
+      if (leaveStudentUrl) {
+        leaveStudentUrl.searchParams.set("studentCode", directAccessValue);
+        if (coachAccessCode) {
+          leaveStudentUrl.searchParams.set("coachCode", coachAccessCode);
+        }
+        leaveStudentUrl.searchParams.set("from", "coachflow");
+      }
+      const leaveCoachUrl = leaveCoachBaseUrl ? new URL(leaveCoachBaseUrl.toString()) : null;
+      if (leaveCoachUrl) {
+        if (coachAccessCode) {
+          leaveCoachUrl.searchParams.set("coachCode", coachAccessCode);
+        }
+        leaveCoachUrl.searchParams.set("from", "coachflow");
+      }
 
       return `
         <article class="coach-link-card">
@@ -4746,8 +4873,17 @@ function renderCoachStudentLinks() {
             <span>\u5171\u7528\u5165\u53e3\u7db2\u5740</span>
             <input type="text" readonly value="${sharedUrl}" data-shared-link-value="${student.id}">
           </label>
+          ${leaveStudentUrl
+            ? `
+              <label class="coach-link-field">
+                <span>請假測試版（學生頁）</span>
+                <input type="text" readonly value="${leaveStudentUrl.toString()}" data-leave-student-link-value="${student.id}">
+              </label>
+            `
+            : ""}
           <div class="coach-link-inline-meta">
             <span class="status-pill">\u8acb\u5b78\u751f\u8f38\u5165\u4ee3\u78bc\uff1a${student.accessCode || "-"}</span>
+            ${leaveStudentUrl ? `<span class="status-pill">請假測試整合已啟用</span>` : ""}
           </div>
           <div class="coach-link-qr-block">
             <div class="coach-link-qr-card">
@@ -4760,6 +4896,15 @@ function renderCoachStudentLinks() {
           <div class="coach-link-actions">
             <button class="ghost-button" type="button" data-copy-student-link="${student.id}">\u8907\u88fd\u7db2\u5740</button>
             <button class="ghost-button" type="button" data-copy-shared-link="${student.id}">\u8907\u88fd\u5171\u7528\u5165\u53e3</button>
+            ${leaveStudentUrl
+              ? `<button class="ghost-button" type="button" data-copy-leave-student-link="${student.id}">複製請假學生頁</button>`
+              : ""}
+            ${leaveStudentUrl
+              ? `<a class="ghost-button" href="${leaveStudentUrl.toString()}" target="_blank" rel="noopener">開啟請假學生頁</a>`
+              : ""}
+            ${leaveCoachUrl
+              ? `<a class="ghost-button" href="${leaveCoachUrl.toString()}" target="_blank" rel="noopener">開啟請假教練頁</a>`
+              : ""}
             <button class="ghost-button" type="button" data-copy-student-qr="${student.id}" data-qr-link="${accessUrl.toString()}">複製 QR 連結內容</button>
             <button class="primary-button" type="button" data-copy-student-message="${student.id}" data-student-name="${student.name}" data-student-code="${student.accessCode || ""}" data-student-link="${accessUrl.toString()}" data-shared-url="${sharedUrl}">\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f</button>
           </div>
@@ -5842,7 +5987,7 @@ async function handleCoachStudentRosterAction(event) {
 }
 
 function handleCoachStudentLinkAction(event) {
-  const button = event.target.closest("[data-copy-student-link], [data-copy-shared-link], [data-copy-student-message], [data-copy-student-qr]");
+  const button = event.target.closest("[data-copy-student-link], [data-copy-shared-link], [data-copy-leave-student-link], [data-copy-student-message], [data-copy-student-qr]");
   if (!button) {
     return;
   }
@@ -5891,15 +6036,21 @@ function handleCoachStudentLinkAction(event) {
     return;
   }
 
-  const studentId = button.dataset.copyStudentLink || button.dataset.copySharedLink;
+  const studentId = button.dataset.copyStudentLink || button.dataset.copySharedLink || button.dataset.copyLeaveStudentLink;
   const input = button.dataset.copyStudentLink
     ? els.coachStudentLinks.querySelector(`[data-link-value="${studentId}"]`)
-    : els.coachStudentLinks.querySelector(`[data-shared-link-value="${studentId}"]`);
+    : button.dataset.copySharedLink
+      ? els.coachStudentLinks.querySelector(`[data-shared-link-value="${studentId}"]`)
+      : els.coachStudentLinks.querySelector(`[data-leave-student-link-value="${studentId}"]`);
   if (!input) {
     return;
   }
 
-  const defaultLabel = button.dataset.copyStudentLink ? "\u8907\u88fd\u7db2\u5740" : "\u8907\u88fd\u5171\u7528\u5165\u53e3";
+  const defaultLabel = button.dataset.copyStudentLink
+    ? "\u8907\u88fd\u7db2\u5740"
+    : button.dataset.copySharedLink
+      ? "\u8907\u88fd\u5171\u7528\u5165\u53e3"
+      : "複製請假學生頁";
 
   const resetText = () => {
     window.setTimeout(() => {
