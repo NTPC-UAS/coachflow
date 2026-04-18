@@ -715,22 +715,30 @@
   function activateStudentSession(studentCodeInput, coachCodeInput, silentMode) {
     const studentCode = String(studentCodeInput || "").trim().toUpperCase();
     const coachCode = String(coachCodeInput || "").trim().toUpperCase();
-    const student = getStudentByCode(studentCode);
+    const student = getStudentByCode(studentCode) || ensureStudentProfile(studentCode, coachCode, silentMode);
     if (!student) {
       if (!silentMode) {
         alert("找不到學生代碼。");
       }
       return false;
     }
-    if (student.coachCode !== coachCode) {
+    const resolvedCoachCode = coachCode || student.coachCode;
+    if (student.coachCode !== resolvedCoachCode) {
       if (!silentMode) {
         alert("教練代碼與學生不相符。");
       }
       return false;
     }
+    ensureCoachProfile(resolvedCoachCode);
     activeStudentCode = studentCode;
-    activeCoachCode = coachCode;
+    activeCoachCode = resolvedCoachCode;
     selectedChargeStudentCode = studentCode;
+    if (el.studentCoachCode) {
+      el.studentCoachCode.value = resolvedCoachCode;
+    }
+    if (el.coachCode) {
+      el.coachCode.value = resolvedCoachCode;
+    }
     selectedStudentLessonId = "";
     closeStudentDayModal();
     closeCoachDayModal();
@@ -750,7 +758,7 @@
 
   function activateCoachSession(coachCodeInput, silentMode) {
     const coachCode = String(coachCodeInput || "").trim().toUpperCase();
-    const coach = state.coaches.find((item) => item.code === coachCode);
+    const coach = getCoachByCode(coachCode) || ensureCoachProfile(coachCode);
     if (!coach) {
       if (!silentMode) {
         alert("找不到教練代碼。");
@@ -908,6 +916,106 @@
 
   function getCoachByCode(coachCode) {
     return state.coaches.find((coach) => coach.code === coachCode);
+  }
+
+  function ensureCoachProfile(coachCode) {
+    const normalizedCode = String(coachCode || "").trim().toUpperCase();
+    if (!normalizedCode) {
+      return null;
+    }
+    const existed = getCoachByCode(normalizedCode);
+    if (existed) {
+      return existed;
+    }
+    const fallbackEmail = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
+    const created = {
+      code: normalizedCode,
+      name: `${normalizedCode} 教練`,
+      email: fallbackEmail
+    };
+    state.coaches.push(created);
+    addLog(`[初始化] 已建立教練代碼 ${normalizedCode}（測試資料）。`);
+    return created;
+  }
+
+  function pickDefaultLessonTimeForCoach(coachCode) {
+    const candidates = ["10:00", "11:00", "12:00", "18:30", "19:30", "20:30"];
+    const counts = new Map(candidates.map((time) => [time, 0]));
+    state.lessons
+      .filter((lesson) => lesson.coachCode === coachCode && lesson.sourceType === "REGULAR")
+      .forEach((lesson) => {
+        const lessonTime = getTimeText(lesson.startAt);
+        if (counts.has(lessonTime)) {
+          counts.set(lessonTime, counts.get(lessonTime) + 1);
+        }
+      });
+    return [...candidates].sort((a, b) => {
+      const countDiff = (counts.get(a) || 0) - (counts.get(b) || 0);
+      if (countDiff !== 0) {
+        return countDiff;
+      }
+      return candidates.indexOf(a) - candidates.indexOf(b);
+    })[0];
+  }
+
+  function seedWeeklyLessonsForStudent(studentCode, coachCode) {
+    const todayKey = getDateKeyInTaipei(new Date());
+    const firstCycleDay = getNextDateKeyByWeekday(todayKey, "sun", true);
+    const defaultTime = pickDefaultLessonTimeForCoach(coachCode);
+    const dayOffsets = [-7, 0, 7, 14, 21, 28, 35, 42];
+
+    dayOffsets.forEach((offset) => {
+      const targetDateKey = addDays(firstCycleDay, offset);
+      const existed = state.lessons.some(
+        (lesson) =>
+          lesson.studentCode === studentCode &&
+          lesson.sourceType === "REGULAR" &&
+          getDateKeyInTaipei(new Date(lesson.startAt)) === targetDateKey
+      );
+      if (existed) {
+        return;
+      }
+      state.lessons.push(makeLesson(newId("L"), studentCode, coachCode, targetDateKey, defaultTime));
+    });
+  }
+
+  function ensureStudentProfile(studentCode, coachCode, silentMode) {
+    const normalizedStudentCode = String(studentCode || "").trim().toUpperCase();
+    if (!normalizedStudentCode) {
+      return null;
+    }
+    const existed = getStudentByCode(normalizedStudentCode);
+    if (existed) {
+      return existed;
+    }
+
+    const normalizedCoachCode = String(coachCode || "").trim().toUpperCase() || "CH001";
+    ensureCoachProfile(normalizedCoachCode);
+
+    const fallbackEmail = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
+    const created = {
+      code: normalizedStudentCode,
+      name: `${normalizedStudentCode} 學生`,
+      coachCode: normalizedCoachCode,
+      email: fallbackEmail,
+      chargeStartCount: 0,
+      paymentStatus: "unknown",
+      paymentNote: "",
+      paymentConfirmedAt: "",
+      paymentConfirmedBy: "",
+      chargeReminderLogs: []
+    };
+    state.students.push(created);
+    seedWeeklyLessonsForStudent(created.code, created.coachCode);
+    ensureLessonCalendarEventIds();
+    ensureParticipantEmails();
+    ensureStudentBillingProfiles();
+    addLog(`[初始化] 已建立學生代碼 ${created.code}（教練 ${created.coachCode}）測試資料。`);
+    saveState();
+    if (!silentMode) {
+      alert(`首次使用代碼 ${created.code}，已自動建立測試資料。`);
+    }
+    return created;
   }
 
   function buildLessonEventPayload(lesson, extra = {}) {
