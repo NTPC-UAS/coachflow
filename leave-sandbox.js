@@ -751,7 +751,7 @@
       selectedStudentDateKey = getDateKeyInTaipei(focusDate);
     }
     renderAll();
-    setUiStatus(`學生 ${studentCode} 已載入，可直接點月曆。`);
+    setUiStatus(`學生 ${student.name || studentCode} 已載入，可直接點月曆。`);
     return true;
   }
 
@@ -783,7 +783,7 @@
     closeCoachDayModal();
     closeCoachReviewModal();
     renderAll();
-    setUiStatus(`教練 ${coachCode} 已載入，可直接點月曆。`);
+    setUiStatus(`教練 ${coach.name || coachCode} 已載入，可直接點月曆。`);
     return true;
   }
 
@@ -801,7 +801,7 @@
     const actionText = action === "approve" ? "核准" : "退回";
     const message = [
       `申請代碼：${request.code || request.id}`,
-      `學生：${request.studentCode}`,
+      `學生：${getStudentDisplayName(request.studentCode)}`,
       `補課時段：${formatDateTime(request.startAt)}`,
       "",
       `是否確認要「${actionText}」這筆申請？`
@@ -970,6 +970,18 @@
 
   function getCoachByCode(coachCode) {
     return state.coaches.find((coach) => coach.code === coachCode);
+  }
+
+  function getStudentDisplayName(studentCode) {
+    const student = getStudentByCode(studentCode);
+    const name = String(student?.name || "").trim();
+    return name || String(studentCode || "-");
+  }
+
+  function getCoachDisplayName(coachCode) {
+    const coach = getCoachByCode(coachCode);
+    const name = String(coach?.name || "").trim();
+    return name || String(coachCode || "-");
   }
 
   function normalizeParticipantCode(code) {
@@ -1215,7 +1227,7 @@
     return {
       lessonId: lesson.id,
       eventId: lesson.calendarEventId || "",
-      title: `${lesson.sourceType === "MAKEUP" ? "補課" : "課程"} ${lesson.studentCode}/${lesson.coachCode}`,
+      title: `${lesson.sourceType === "MAKEUP" ? "補課" : "課程"} ${student?.name || lesson.studentCode} / ${coach?.name || lesson.coachCode}`,
       startAt,
       endAt,
       studentCode: lesson.studentCode,
@@ -2700,7 +2712,7 @@
         const typeClass = lesson.sourceType === "MAKEUP" ? "makeup" : "";
         const prefix = lesson.sourceType === "MAKEUP" ? "補課" : "原課";
         const selectedClass = lesson.id === selectedCoachLessonId ? "selected" : "";
-        return `<button class="cal-item ${typeClass} ${selectedClass}" type="button" data-coach-cal-date="${dateKey}" data-coach-lesson-id="${lesson.id}">${prefix} ${getTimeText(lesson.startAt)} ${lesson.studentCode}</button>`;
+        return `<button class="cal-item ${typeClass} ${selectedClass}" type="button" data-coach-cal-date="${dateKey}" data-coach-lesson-id="${lesson.id}">${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}</button>`;
       }).join("");
       const lessonMoreSnippet = lessons.length > 3
         ? `<button class="cal-item" type="button" data-coach-cal-date="${dateKey}">+${lessons.length - 3}</button>`
@@ -2752,7 +2764,7 @@
       .filter((lesson) => lesson.attendanceStatus !== "coach-leave")
       .map((lesson) => `
       <tr ${lesson.id === selectedCoachLessonId ? "style='background:#fff7ed;'" : ""}>
-        <td>${lesson.studentCode}</td>
+        <td>${getStudentDisplayName(lesson.studentCode)}</td>
         <td>${getTimeText(lesson.startAt)}</td>
         <td>${lesson.sourceType === "MAKEUP" ? "補課" : "原課"}</td>
         <td>${getStatusPill(lesson.attendanceStatus)}</td>
@@ -2764,7 +2776,7 @@
     const pendingRows = pendings.map((request) => `
       <tr>
         <td>${request.code || request.id}</td>
-        <td>${request.studentCode}</td>
+        <td>${getStudentDisplayName(request.studentCode)}</td>
         <td>${getTimeText(request.startAt)}</td>
         <td>${formatDateTime(request.pendingAt)}</td>
         <td>${getStatusPill(request.status)}</td>
@@ -2932,7 +2944,7 @@
         coachReviewFilterStudent = "ALL";
       }
       el.coachReviewStudentFilter.innerHTML = `<option value="ALL">全部學生</option>${students
-        .map((studentCode) => `<option value="${studentCode}" ${coachReviewFilterStudent === studentCode ? "selected" : ""}>${studentCode}</option>`)
+        .map((studentCode) => `<option value="${studentCode}" ${coachReviewFilterStudent === studentCode ? "selected" : ""}>${getStudentDisplayName(studentCode)}</option>`)
         .join("")}`;
       if (el.coachReviewStudentFilter.value !== coachReviewFilterStudent) {
         el.coachReviewStudentFilter.value = coachReviewFilterStudent;
@@ -2951,7 +2963,7 @@
       return `
       <tr>
         <td>${request.code || request.id}</td>
-        <td>${request.studentCode}</td>
+        <td>${getStudentDisplayName(request.studentCode)}</td>
         <td>${originalTimeText}</td>
         <td>${formatDateTime(request.startAt)}</td>
         <td>${formatDateTime(request.pendingAt)}</td>
@@ -3005,7 +3017,7 @@
     }
 
     if (!skipConfirm) {
-      const ok = window.confirm(`確認還原這堂課？\n${formatDateTime(lesson.startAt)} / ${lesson.studentCode}`);
+      const ok = window.confirm(`確認還原這堂課？\n${formatDateTime(lesson.startAt)} / ${getStudentDisplayName(lesson.studentCode)}`);
       if (!ok) {
         return false;
       }
@@ -3134,7 +3146,7 @@
       const canRestore = new Date(lesson.startAt) > now;
       return `
       <tr>
-        <td>${lesson.studentCode}</td>
+        <td>${getStudentDisplayName(lesson.studentCode)}</td>
         <td>${formatDateTime(lesson.startAt)}</td>
         <td>${lesson.sourceType === "MAKEUP" ? "補課" : "原課"}</td>
         <td>${lesson.calendarRemovedAt ? formatDateTime(lesson.calendarRemovedAt) : "-"}</td>
@@ -3268,7 +3280,7 @@
     }
 
     el.chargeStudentSelect.innerHTML = state.students
-      .map((student) => `<option value="${student.code}" ${student.code === selectedChargeStudentCode ? "selected" : ""}>${student.code} / ${student.name}</option>`)
+      .map((student) => `<option value="${student.code}" ${student.code === selectedChargeStudentCode ? "selected" : ""}>${student.name || student.code}</option>`)
       .join("");
 
     if (!selectedChargeStudentCode) {
@@ -3394,13 +3406,16 @@
 
   function renderSessionTexts() {
     if (el.studentSessionText) {
+      const studentName = getStudentDisplayName(activeStudentCode);
+      const coachName = getCoachDisplayName(activeCoachCode || "");
       el.studentSessionText.textContent = activeStudentCode
-        ? `已載入學生：${activeStudentCode}（教練 ${activeCoachCode || "-"}）`
+        ? `已載入學生：${studentName}（教練 ${coachName}）`
         : "尚未載入學生。";
     }
     if (el.coachSessionText) {
+      const coachName = getCoachDisplayName(activeCoachCode || "");
       el.coachSessionText.textContent = activeCoachCode
-        ? `已載入教練：${activeCoachCode}`
+        ? `已載入教練：${coachName}`
         : "尚未載入教練。";
     }
   }
