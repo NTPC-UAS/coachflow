@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>請假系統連動測試</title>
+  <style>
+    :root {
+      --bg: #f8fafc;
+      --card: #ffffff;
+      --line: #cbd5e1;
+      --text: #0f172a;
+      --ok: #166534;
+      --err: #b91c1c;
+      --brand: #1d4ed8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans TC", "Microsoft JhengHei", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .shell {
+      max-width: 1080px;
+      margin: 0 auto;
+      padding: 20px;
+    }
+    .card {
+      background: var(--card);
+      border: 1px solid var(--line);
+      border-radius: 12px;
+      padding: 14px;
+      margin-bottom: 14px;
+    }
+    h1, h2 { margin: 0 0 10px 0; }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+      gap: 10px;
+    }
+    label { display: block; font-size: 13px; margin-bottom: 8px; }
+    input, textarea, select, button {
+      width: 100%;
+      border: 1px solid #94a3b8;
+      border-radius: 10px;
+      padding: 8px 10px;
+      font: inherit;
+    }
+    textarea { min-height: 130px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; }
+    button {
+      cursor: pointer;
+      background: #eff6ff;
+      border-color: #93c5fd;
+      color: #1e3a8a;
+      font-weight: 700;
+    }
+    button.primary {
+      background: var(--brand);
+      border-color: var(--brand);
+      color: #fff;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .hint {
+      font-size: 13px;
+      color: #475569;
+      margin: 6px 0 0 0;
+    }
+    .ok { color: var(--ok); font-weight: 700; }
+    .err { color: var(--err); font-weight: 700; }
+    .log {
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 13px;
+    }
+    .log th, .log td {
+      border: 1px solid #e2e8f0;
+      padding: 6px 8px;
+      text-align: left;
+      vertical-align: top;
+    }
+    .toolbar {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+      gap: 8px;
+      margin-top: 10px;
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <section class="card">
+      <h1>Google 日曆 / Email 連動測試</h1>
+      <p class="hint">這頁會直接呼叫 Apps Script Web App，測試 `createEvent / sendEmail / deleteEvent` 是否真的可用。</p>
+      <div class="row">
+        <label>Apps Script Web App URL
+          <input id="api-url" type="text" placeholder="https://script.google.com/macros/s/.../exec">
+        </label>
+        <label>測試收件人 Email
+          <input id="email-to" type="email" placeholder="you@example.com">
+        </label>
+      </div>
+      <div class="toolbar">
+        <button id="load-config-btn" type="button">載入測試設定 URL</button>
+        <button id="ping-btn" type="button">測試連線</button>
+        <button id="run-all-btn" class="primary" type="button">一鍵跑完整測試</button>
+      </div>
+      <p class="hint" id="summary-text">尚未執行測試。</p>
+    </section>
+
+    <section class="card">
+      <h2>測試參數</h2>
+      <div class="row">
+        <label>目前建立的事件 ID（createEvent 成功後會自動填入）
+          <input id="event-id" type="text" placeholder="event id">
+        </label>
+        <label>課程開始時間（ISO）
+          <input id="start-at" type="text" value="2026-04-20T10:00:00.000Z">
+        </label>
+      </div>
+      <label>自訂 Payload（JSON，可編輯）
+        <textarea id="payload-editor"></textarea>
+      </label>
+      <div class="toolbar">
+        <select id="action-select">
+          <option value="createEvent">createEvent</option>
+          <option value="sendEmail">sendEmail</option>
+          <option value="deleteEvent">deleteEvent</option>
+          <option value="bootstrap">bootstrap</option>
+        </select>
+        <button id="apply-template-btn" type="button">載入該動作預設 Payload</button>
+        <button id="run-custom-btn" type="button">執行目前 Payload</button>
+      </div>
+    </section>
+
+    <section class="card">
+      <h2>執行記錄</h2>
+      <table class="log">
+        <thead>
+          <tr><th>時間</th><th>動作</th><th>結果</th><th>訊息</th></tr>
+        </thead>
+        <tbody id="log-body"></tbody>
+      </table>
+    </section>
+  </main>
+
+  <script src="config.leave-test.js?v=20260412-2"></script>
+  <script>
+    (function () {
+      const el = {
+        apiUrl: document.getElementById("api-url"),
+        emailTo: document.getElementById("email-to"),
+        eventId: document.getElementById("event-id"),
+        startAt: document.getElementById("start-at"),
+        payloadEditor: document.getElementById("payload-editor"),
+        actionSelect: document.getElementById("action-select"),
+        summaryText: document.getElementById("summary-text"),
+        logBody: document.getElementById("log-body"),
+        loadConfigBtn: document.getElementById("load-config-btn"),
+        pingBtn: document.getElementById("ping-btn"),
+        runAllBtn: document.getElementById("run-all-btn"),
+        applyTemplateBtn: document.getElementById("apply-template-btn"),
+        runCustomBtn: document.getElementById("run-custom-btn")
+      };
+
+      function nowText() {
+        const d = new Date();
+        return `${d.getFullYear()}/${String(d.getMonth() + 1).padStart(2, "0")}/${String(d.getDate()).padStart(2, "0")} ${String(d.getHours()).padStart(2, "0")}:${String(d.getMinutes()).padStart(2, "0")}:${String(d.getSeconds()).padStart(2, "0")}`;
+      }
+
+      function pushLog(action, ok, message) {
+        const row = document.createElement("tr");
+        row.innerHTML = `
+          <td>${nowText()}</td>
+          <td>${action}</td>
+          <td class="${ok ? "ok" : "err"}">${ok ? "成功" : "失敗"}</td>
+          <td>${String(message || "").replace(/</g, "&lt;")}</td>
+        `;
+        el.logBody.prepend(row);
+      }
+
+      function getApiUrl() {
+        return String(el.apiUrl.value || "").trim();
+      }
+
+      function buildTemplate(action) {
+        const startAt = String(el.startAt.value || new Date().toISOString()).trim();
+        const endAt = new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+        const eventId = String(el.eventId.value || "").trim();
+        const to = String(el.emailTo.value || "").trim();
+        if (action === "createEvent") {
+          return {
+            lessonId: "TEST_LESSON_001",
+            eventId,
+            title: "整合測試課程 STU001/CH001",
+            startAt,
+            endAt,
+            studentCode: "STU001",
+            studentName: "測試學生",
+            coachCode: "CH001",
+            coachName: "測試教練",
+            sourceType: "REGULAR",
+            reason: "integration-test"
+          };
+        }
+        if (action === "deleteEvent") {
+          return {
+            lessonId: "TEST_LESSON_001",
+            eventId,
+            title: "整合測試課程 STU001/CH001",
+            startAt,
+            endAt,
+            studentCode: "STU001",
+            studentName: "測試學生",
+            coachCode: "CH001",
+            coachName: "測試教練",
+            sourceType: "REGULAR",
+            reason: "integration-test-cleanup"
+          };
+        }
+        if (action === "sendEmail") {
+          return {
+            template: "integration_test",
+            to,
+            studentCode: "STU001",
+            studentName: "測試學生",
+            coachCode: "CH001",
+            coachName: "測試教練",
+            when: startAt
+          };
+        }
+        return {};
+      }
+
+      function writePayloadTemplate() {
+        const action = el.actionSelect.value;
+        const payload = buildTemplate(action);
+        el.payloadEditor.value = JSON.stringify(payload, null, 2);
+      }
+
+      async function callApi(action, payload) {
+        const url = getApiUrl();
+        if (!url) {
+          throw new Error("請先填 Apps Script URL");
+        }
+        if (!/\/exec(\?|$)/.test(url)) {
+          throw new Error("Apps Script URL 看起來不是 Web App 執行網址（通常需以 /exec 結尾）。");
+        }
+        const response = await fetch(url, {
+          method: "POST",
+          cache: "no-store",
+          headers: { "Content-Type": "text/plain;charset=UTF-8" },
+          body: JSON.stringify({ action, ...payload, _ts: Date.now() })
+        });
+        const rawText = await response.text();
+        let json = null;
+        try {
+          json = rawText ? JSON.parse(rawText) : {};
+        } catch (error) {
+          const preview = String(rawText || "").slice(0, 180);
+          throw new Error(`回應非 JSON（HTTP ${response.status}）。可能是部署權限或 URL 錯誤。回應片段：${preview}`);
+        }
+        if (!response.ok || json?.ok === false) {
+          throw new Error(`${json?.message || `${action} 失敗`}（HTTP ${response.status}）`);
+        }
+        return json;
+      }
+
+      async function runCustom() {
+        const action = el.actionSelect.value;
+        let payload = {};
+        try {
+          payload = JSON.parse(el.payloadEditor.value || "{}");
+        } catch (error) {
+          pushLog(action, false, `JSON 格式錯誤：${error.message}`);
+          return;
+        }
+        try {
+          const result = await callApi(action, payload);
+          if (action === "createEvent" && (result.eventId || result.calendarEventId)) {
+            el.eventId.value = result.eventId || result.calendarEventId;
+          }
+          pushLog(action, true, JSON.stringify(result));
+        } catch (error) {
+          pushLog(action, false, error.message || "未知錯誤");
+        }
+      }
+
+      async function runPing() {
+        try {
+          const result = await callApi("bootstrap", {});
+          pushLog("bootstrap", true, "連線成功");
+          el.summaryText.innerHTML = "<span class='ok'>連線成功：可開始測試 createEvent/sendEmail/deleteEvent。</span>";
+          return result;
+        } catch (error) {
+          const message = error.message || "未知錯誤";
+          pushLog("bootstrap", false, message);
+          el.summaryText.innerHTML = `<span class='err'>連線失敗：${String(message).replace(/</g, "&lt;")}</span>`;
+          throw error;
+        }
+      }
+
+      async function runAll() {
+        el.summaryText.textContent = "執行中...";
+        try {
+          await runPing();
+          const createPayload = buildTemplate("createEvent");
+          const createResult = await callApi("createEvent", createPayload);
+          const createdEventId = createResult.eventId || createResult.calendarEventId || "";
+          if (createdEventId) {
+            el.eventId.value = createdEventId;
+          }
+          pushLog("createEvent", true, JSON.stringify(createResult));
+
+          const emailPayload = buildTemplate("sendEmail");
+          const emailResult = await callApi("sendEmail", emailPayload);
+          pushLog("sendEmail", true, JSON.stringify(emailResult));
+
+          const deletePayload = buildTemplate("deleteEvent");
+          const deleteResult = await callApi("deleteEvent", deletePayload);
+          pushLog("deleteEvent", true, JSON.stringify(deleteResult));
+
+          el.summaryText.innerHTML = "<span class='ok'>完整測試成功：createEvent、sendEmail、deleteEvent 都回傳成功。</span>";
+        } catch (error) {
+          const message = error.message || "未知錯誤";
+          pushLog("runAll", false, message);
+          el.summaryText.innerHTML = `<span class='err'>完整測試失敗：${String(message).replace(/</g, "&lt;")}</span>`;
+        }
+      }
+
+      el.loadConfigBtn.addEventListener("click", () => {
+        const url = String(window.APP_CONFIG?.appsScriptUrl || "").trim();
+        el.apiUrl.value = url;
+        el.summaryText.textContent = url ? "已載入 config.leave-test.js URL。" : "config.leave-test.js 目前沒有 appsScriptUrl。";
+      });
+      el.pingBtn.addEventListener("click", runPing);
+      el.runAllBtn.addEventListener("click", runAll);
+      el.applyTemplateBtn.addEventListener("click", writePayloadTemplate);
+      el.runCustomBtn.addEventListener("click", runCustom);
+      el.actionSelect.addEventListener("change", writePayloadTemplate);
+
+      if (window.APP_CONFIG?.appsScriptUrl) {
+        el.apiUrl.value = String(window.APP_CONFIG.appsScriptUrl).trim();
+      }
+      writePayloadTemplate();
+    })();
+  </script>
+</body>
+</html>

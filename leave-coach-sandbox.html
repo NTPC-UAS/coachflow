@@ -1,0 +1,503 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachFlow 請假系統測試版（教練）</title>
+  <style>
+    :root {
+      --bg: #fffaf5;
+      --card: #ffffff;
+      --line: #f2c9a5;
+      --text: #1f2a37;
+      --muted: #64748b;
+      --brand: #c2410c;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    body.modal-open { overflow: hidden; }
+    .shell { max-width: 1180px; margin: 0 auto; padding: 24px 16px 44px; }
+    .banner {
+      border: 1px solid #fdba74;
+      background: #fff7ed;
+      color: #9a3412;
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    .sub { margin: 0 0 16px; color: var(--muted); }
+    .top-links { margin: 0 0 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .top-links a {
+      text-decoration: none;
+      border: 1px solid #fdba74;
+      color: #9a3412;
+      background: #fff;
+      border-radius: 999px;
+      padding: 6px 11px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
+      gap: 12px;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #fff7ed 0, #ffffff 86px);
+      padding: 14px;
+      margin-top: 12px;
+    }
+    .role {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #fdba74;
+      color: #9a3412;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    h2 { margin: 0 0 8px; font-size: 20px; }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    input, select, button {
+      font: inherit;
+      border: 1px solid #c6cfdd;
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #1f2a37;
+    }
+    button { cursor: pointer; }
+    button.primary { border-color: #c2410c; background: #c2410c; color: #fff; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+    .hint.pill {
+      display: inline-flex;
+      align-items: center;
+      border: 1px solid #f2c9a5;
+      border-radius: 999px;
+      padding: 3px 9px;
+      background: #fffaf5;
+      font-weight: 700;
+      margin: 0;
+    }
+    .hint.pill.warn {
+      border-color: #f59e0b;
+      color: #92400e;
+      background: #fffbeb;
+    }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid #e8d7c5;
+      border-radius: 10px;
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 13px; }
+    th, td { border-bottom: 1px solid #f0e6dc; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #fffaf5; color: #7c2d12; font-weight: 700; }
+    .status {
+      display: inline-flex;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .status.normal { background: #ecfeff; color: #155e75; border-color: #a5f3fc; }
+    .status.pending { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .status.approved { background: #ecfdf5; color: #166534; border-color: #bbf7d0; }
+    .status.rejected, .status.expired, .status.cancelled { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+    .status.warn { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+    .metric-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(120px, 1fr));
+      gap: 8px;
+    }
+    .metric { border: 1px solid #e8d7c5; border-radius: 10px; padding: 8px; background: #fffdfa; }
+    .metric .k { font-size: 12px; color: #64748b; }
+    .metric .v { font-size: 18px; font-weight: 800; margin-top: 2px; }
+    .log-list { margin: 0; padding-left: 18px; max-height: 220px; overflow: auto; font-size: 13px; color: #334155; }
+    #coach-pending-table th:nth-child(1),
+    #coach-pending-table td:nth-child(1) {
+      width: 128px;
+      max-width: 128px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      font-size: 12px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+    }
+    #coach-leave-table th,
+    #coach-leave-table td { font-size: 12px; }
+    .calendar-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .calendar-title { font-size: 18px; font-weight: 800; color: #9a3412; }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      border: 1px solid #f2c9a5;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .cal-weekday {
+      background: #fff7ed;
+      border-bottom: 1px solid #f2c9a5;
+      padding: 6px 4px;
+      text-align: center;
+      font-size: 12px;
+      color: #9a3412;
+      font-weight: 700;
+    }
+    .cal-cell {
+      min-height: 112px;
+      border-right: 1px solid #f3e2d0;
+      border-bottom: 1px solid #f3e2d0;
+      background: #fff;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .cal-cell:nth-child(7n) { border-right: none; }
+    .cal-cell.dim { background: #faf7f4; color: #a8a29e; cursor: default; }
+    .cal-cell.today { background: #fed7aa; box-shadow: inset 0 0 0 3px #c2410c, 0 0 0 1px #c2410c; }
+    .cal-cell.selected { background: #fff7ed; box-shadow: inset 0 0 0 3px #ea580c, 0 0 0 1px #ea580c; }
+    .cal-date-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .cal-date { font-size: 12px; font-weight: 700; color: #7c2d12; }
+    .today-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid #c2410c;
+      color: #fff;
+      background: #c2410c;
+      letter-spacing: 0.5px;
+    }
+    .cal-item {
+      border: 1px solid #fdba74;
+      border-radius: 8px;
+      padding: 3px 5px;
+      font-size: 11px;
+      color: #9a3412;
+      background: #fff7ed;
+      line-height: 1.3;
+      display: block;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cal-item.selected {
+      border-color: #2563eb;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+    .cal-item.pending { border-color: #bfdbfe; background: #eff6ff; color: #1d4ed8; }
+    .cal-item.makeup { border-color: #bbf7d0; background: #ecfdf5; color: #166534; }
+    .day-detail { margin-top: 10px; border: 1px solid #f2c9a5; border-radius: 10px; padding: 10px; background: #fffdfa; }
+    .day-detail h3 { margin: 0 0 8px; font-size: 16px; color: #9a3412; }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 70;
+    }
+    .modal[hidden] { display: none; }
+    .modal-panel {
+      width: min(1120px, 96vw);
+      max-height: 90vh;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #f2c9a5;
+      border-radius: 12px;
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.24);
+      padding: 12px;
+    }
+    .modal-panel.confirm { width: min(560px, 94vw); }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .modal-head h3 {
+      margin: 0;
+      font-size: 20px;
+      color: #9a3412;
+    }
+    .close-btn {
+      border: 1px solid #c6cfdd;
+      background: #fff;
+      color: #334155;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    .modal-message {
+      border: 1px solid #fde68a;
+      background: #fffbeb;
+      color: #92400e;
+      border-radius: 10px;
+      padding: 10px;
+      font-size: 14px;
+      line-height: 1.5;
+      white-space: pre-line;
+      margin-bottom: 12px;
+    }
+    .review-reason-wrap {
+      margin-bottom: 12px;
+    }
+    .review-reason-wrap[hidden] {
+      display: none;
+    }
+    .btn-row .danger {
+      border-color: #dc2626;
+      background: #dc2626;
+      color: #fff;
+    }
+    @media (max-width: 860px) {
+      .metric-grid { grid-template-columns: 1fr; }
+      .cal-cell { min-height: 96px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="banner">教練測試頁：可審核補課、管理教練請假、查看月曆與扣堂面板。</div>
+    <h1>請假 / 補課測試頁（教練）</h1>
+    <p class="sub">登入教練後可審核待審申請、設定教練請假時段，並查看課程狀態。</p>
+    <p class="hint" id="ui-status-text">介面初始化中...</p>
+    <div class="top-links">
+      <a href="./leave-student-sandbox.html">學生頁</a>
+      <a href="./leave-coach-sandbox.html">教練頁</a>
+      <a href="./leave-integration-test.html">連動測試頁</a>
+      <a href="./leave-sandbox.html">合併頁（舊）</a>
+    </div>
+
+    <section class="card">
+      <span class="role">教練端</span>
+      <h2>登入與審核設定</h2>
+      <label>教練代碼
+        <input id="coach-code" value="CH001">
+      </label>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="coach-login-btn" class="primary" type="button">載入教練資料</button>
+      </div>
+      <p class="hint" id="coach-session-text">尚未載入教練。</p>
+    </section>
+
+    <section class="card">
+      <span class="role">教練端</span>
+      <h2>教練請假 / 停課時段</h2>
+      <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));">
+        <label>日期
+          <input id="coach-leave-date" type="date">
+        </label>
+        <label>開始時間
+          <input id="coach-leave-time" type="time" value="18:30">
+        </label>
+        <label>結束時間
+          <input id="coach-leave-end-time" type="time" value="20:30">
+        </label>
+        <label>原因
+          <input id="coach-leave-reason" type="text" placeholder="例：教練外出 / 場地維修">
+        </label>
+      </div>
+      <div class="btn-row" style="margin-top:8px;">
+        <button id="coach-leave-add-btn" class="primary" type="button">新增教練請假時段</button>
+      </div>
+      <p class="hint">會自動取消該時段內課程，並退回重疊的待審補課。</p>
+      <div class="table-wrap" style="margin-top:10px;">
+        <table id="coach-leave-table"></table>
+      </div>
+    </section>
+
+    <section class="card">
+      <span class="role">教練端</span>
+      <h2>教練月曆確認</h2>
+      <div class="calendar-topbar">
+        <div class="calendar-title" id="coach-calendar-month-label">--</div>
+        <div class="btn-row">
+          <button id="coach-calendar-prev-btn" type="button">上個月</button>
+          <button id="coach-calendar-next-btn" type="button">下個月</button>
+        </div>
+      </div>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <button id="coach-calendar-sync-btn" type="button">同步 Google 日曆（以 Google 為準）</button>
+        <span class="hint" id="coach-calendar-sync-text">若 Google 日曆事件不存在，系統會同步移除該堂課。</span>
+      </div>
+      <div class="calendar-grid" id="coach-calendar-grid"></div>
+      <p class="hint">點月曆中的課程後，會跳出操作視窗。</p>
+    </section>
+
+    <section class="card">
+      <span class="role">教練端</span>
+      <h2>同步移除清單（可還原）</h2>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <span class="hint pill warn" id="calendar-removed-summary">待還原：0</span>
+        <button id="calendar-removed-refresh-btn" type="button">重新整理</button>
+        <button id="calendar-removed-restore-all-btn" type="button">全部還原</button>
+        <button id="calendar-removed-toggle-btn" type="button" hidden>展開其餘</button>
+      </div>
+      <div class="table-wrap">
+        <table id="calendar-removed-table"></table>
+      </div>
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <span class="role">教練端</span>
+        <h2>待審補課清單</h2>
+        <div class="btn-row" style="margin-bottom:8px;">
+          <span class="hint pill" id="coach-review-summary">待審：0</span>
+          <span class="hint pill warn" id="coach-review-urgent">6 小時內逾時：0</span>
+        </div>
+        <div class="btn-row" style="margin-bottom:8px;">
+          <label style="min-width:200px;">
+            篩選學生
+            <select id="coach-review-student-filter"></select>
+          </label>
+          <button id="coach-review-refresh-btn" type="button">重新整理</button>
+        </div>
+        <div class="table-wrap">
+          <table id="coach-pending-table"></table>
+        </div>
+      </article>
+
+    </section>
+
+    <section class="grid">
+      <article class="card">
+        <span class="role">監控面板</span>
+        <h2>扣堂 / 計費面板</h2>
+        <label>選擇學生
+          <select id="charge-student-select"></select>
+        </label>
+        <div class="grid" style="grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); margin-top:10px;">
+          <label>學生通知 Email
+            <input id="charge-student-email-input" type="text" placeholder="例：student@example.com">
+          </label>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="charge-student-email-save-btn" type="button">儲存學生 Email</button>
+          </div>
+          <label>起始堂數（導入時）
+            <input id="charge-base-count-input" type="number" min="0" step="1" value="0">
+          </label>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="charge-base-count-save-btn" type="button">儲存起始堂數</button>
+          </div>
+          <label>繳費狀態
+            <select id="charge-payment-status-select">
+              <option value="unknown">未註記</option>
+              <option value="paid">已繳費</option>
+              <option value="unpaid">未繳費</option>
+            </select>
+          </label>
+          <label>繳費註記
+            <input id="charge-payment-note-input" type="text" placeholder="例：2026/04/18 已收現金">
+          </label>
+          <div style="display:flex; align-items:flex-end;">
+            <button id="charge-payment-save-btn" type="button">儲存繳費註記</button>
+          </div>
+        </div>
+        <p class="hint" id="charge-student-email-meta">尚未設定學生通知 Email，將改用預設通知信箱。</p>
+        <p class="hint" id="charge-payment-meta">尚未註記繳費狀態。</p>
+        <div class="metric-grid" id="charge-metrics-box" style="margin-top:10px;"></div>
+        <p class="hint" id="charge-reminder-summary">第 4 堂提醒尚未觸發。</p>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table id="charge-reminder-table"></table>
+        </div>
+        <div class="table-wrap" style="margin-top:10px;">
+          <table id="charge-ledger-table"></table>
+        </div>
+      </article>
+      <article class="card">
+        <span class="role">監控面板</span>
+        <h2>補償任務面板</h2>
+        <div class="btn-row" style="margin-bottom:8px;">
+          <span class="hint pill warn" id="compensation-summary">待處理：0</span>
+          <button id="compensation-refresh-btn" type="button">重新整理</button>
+          <button id="compensation-retry-all-btn" type="button">重送待處理</button>
+        </div>
+        <div class="table-wrap">
+          <table id="compensation-table"></table>
+        </div>
+      </article>
+    </section>
+
+    <section class="card">
+      <span class="role">系統紀錄</span>
+      <h2>事件記錄</h2>
+      <ol class="log-list" id="event-log"></ol>
+    </section>
+  </main>
+
+  <div class="modal" id="coach-day-modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h3>教練日檢視</h3>
+        <button type="button" class="close-btn" id="coach-day-modal-close">關閉</button>
+      </div>
+      <div class="day-detail" id="coach-day-detail">
+        <h3>請先登入教練</h3>
+      </div>
+    </div>
+  </div>
+
+  <div class="modal" id="coach-review-modal" hidden>
+    <div class="modal-panel confirm">
+      <div class="modal-head">
+        <h3 id="coach-review-modal-title">確認審核</h3>
+        <button type="button" class="close-btn" id="coach-review-modal-close">關閉</button>
+      </div>
+      <div class="modal-message" id="coach-review-modal-message">請確認是否執行此審核操作。</div>
+      <label class="review-reason-wrap" id="coach-review-reason-wrap" hidden>
+        退回原因
+        <input id="coach-review-reason-input" type="text" value="時段已被其他學生選走。">
+      </label>
+      <div class="btn-row">
+        <button type="button" class="primary" id="coach-review-modal-confirm">確認送出</button>
+        <button type="button" id="coach-review-modal-cancel">取消</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.leave-test.js?v=20260418-0001"></script>
+  <script src="leave-sandbox.js?v=20260418-0001"></script>
+</body>
+</html>

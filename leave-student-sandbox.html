@@ -1,0 +1,339 @@
+﻿<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CoachFlow 請假系統測試版（學生）</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --card: #ffffff;
+      --line: #d8deea;
+      --text: #1f2a37;
+      --muted: #64748b;
+      --brand: #1d4ed8;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Noto Sans TC", sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      line-height: 1.45;
+    }
+    body.modal-open { overflow: hidden; }
+    .shell { max-width: 1100px; margin: 0 auto; padding: 24px 16px 44px; }
+    .banner {
+      border: 1px solid #93c5fd;
+      background: #eff6ff;
+      color: #1e3a8a;
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin-bottom: 14px;
+      font-size: 14px;
+    }
+    h1 { margin: 0 0 8px; font-size: 28px; }
+    .sub { margin: 0 0 16px; color: var(--muted); }
+    .top-links { margin: 0 0 14px; display: flex; gap: 8px; flex-wrap: wrap; }
+    .top-links a {
+      text-decoration: none;
+      border: 1px solid #93c5fd;
+      color: #1d4ed8;
+      background: #fff;
+      border-radius: 999px;
+      padding: 6px 11px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .card {
+      border: 1px solid var(--line);
+      border-radius: 14px;
+      background: linear-gradient(180deg, #eff6ff 0, #ffffff 86px);
+      padding: 14px;
+      margin-top: 12px;
+    }
+    .role {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      border: 1px solid #93c5fd;
+      color: #1d4ed8;
+      font-size: 12px;
+      font-weight: 800;
+      margin-bottom: 6px;
+    }
+    h2 { margin: 0 0 8px; font-size: 20px; }
+    .form-row {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(120px, 1fr));
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    label {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      font-size: 13px;
+      color: var(--muted);
+    }
+    input, select, button {
+      font: inherit;
+      border: 1px solid #c6cfdd;
+      border-radius: 8px;
+      padding: 8px 10px;
+      background: #fff;
+      color: #1f2a37;
+    }
+    button { cursor: pointer; }
+    button.primary { border-color: #1d4ed8; background: #1d4ed8; color: #fff; }
+    .btn-row { display: flex; gap: 8px; flex-wrap: wrap; }
+    .hint { margin: 6px 0 0; font-size: 12px; color: var(--muted); }
+    .table-wrap {
+      overflow-x: auto;
+      border: 1px solid var(--line);
+      border-radius: 10px;
+    }
+    table { width: 100%; border-collapse: collapse; min-width: 740px; font-size: 13px; }
+    th, td { border-bottom: 1px solid #e6ebf3; padding: 8px; text-align: left; vertical-align: top; }
+    th { background: #f8fafc; color: #475569; font-weight: 700; }
+    .status {
+      display: inline-flex;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 700;
+      border: 1px solid transparent;
+      white-space: nowrap;
+    }
+    .status.normal { background: #ecfeff; color: #155e75; border-color: #a5f3fc; }
+    .status.pending { background: #eff6ff; color: #1d4ed8; border-color: #bfdbfe; }
+    .status.approved { background: #ecfdf5; color: #166534; border-color: #bbf7d0; }
+    .status.rejected, .status.expired, .status.cancelled { background: #fef2f2; color: #991b1b; border-color: #fecaca; }
+    .status.warn { background: #fffbeb; color: #92400e; border-color: #fde68a; }
+    .log-list { margin: 0; padding-left: 18px; max-height: 180px; overflow: auto; font-size: 13px; color: #334155; }
+    .calendar-topbar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 10px;
+    }
+    .calendar-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: #1e3a8a;
+    }
+    .calendar-grid {
+      display: grid;
+      grid-template-columns: repeat(7, minmax(0, 1fr));
+      border: 1px solid #cbd5e1;
+      border-radius: 10px;
+      overflow: hidden;
+    }
+    .cal-weekday {
+      background: #f1f5f9;
+      border-bottom: 1px solid #cbd5e1;
+      padding: 6px 4px;
+      text-align: center;
+      font-size: 12px;
+      color: #475569;
+      font-weight: 700;
+    }
+    .cal-cell {
+      min-height: 112px;
+      border-right: 1px solid #e2e8f0;
+      border-bottom: 1px solid #e2e8f0;
+      background: #fff;
+      padding: 6px;
+      display: flex;
+      flex-direction: column;
+      align-items: stretch;
+      gap: 6px;
+      text-align: left;
+      cursor: pointer;
+    }
+    .cal-cell:nth-child(7n) { border-right: none; }
+    .cal-cell.dim {
+      background: #f8fafc;
+      color: #94a3b8;
+      cursor: default;
+    }
+    .cal-cell.today { background: #dbeafe; box-shadow: inset 0 0 0 3px #1d4ed8, 0 0 0 1px #1d4ed8; }
+    .cal-cell.selected { background: #eff6ff; box-shadow: inset 0 0 0 3px #3b82f6, 0 0 0 1px #3b82f6; }
+    .cal-date-row { display: flex; align-items: center; justify-content: space-between; gap: 6px; }
+    .cal-date { font-size: 12px; font-weight: 700; color: #334155; }
+    .today-badge {
+      display: inline-flex;
+      align-items: center;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      font-weight: 800;
+      border: 1px solid #1d4ed8;
+      color: #fff;
+      background: #1d4ed8;
+      letter-spacing: 0.5px;
+    }
+    .cal-item {
+      border: 1px solid #dbeafe;
+      border-radius: 8px;
+      padding: 3px 5px;
+      font-size: 11px;
+      color: #1e3a8a;
+      background: #eff6ff;
+      line-height: 1.3;
+      display: block;
+      width: 100%;
+      text-align: left;
+      cursor: pointer;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .cal-item.selected {
+      border-color: #2563eb;
+      background: #dbeafe;
+      color: #1d4ed8;
+      font-weight: 700;
+    }
+    .cal-item.makeup { border-color: #bbf7d0; background: #ecfdf5; color: #166534; }
+    .cal-item.leave { border-color: #bae6fd; background: #ecfeff; color: #155e75; }
+    .day-detail { margin-top: 10px; border: 1px solid #dbeafe; border-radius: 10px; padding: 10px; background: #f8fbff; }
+    .day-detail h3 { margin: 0 0 8px; font-size: 16px; color: #1e40af; }
+    .modal {
+      position: fixed;
+      inset: 0;
+      background: rgba(15, 23, 42, 0.5);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 16px;
+      z-index: 70;
+    }
+    .modal[hidden] { display: none; }
+    .modal-panel {
+      width: min(1120px, 96vw);
+      max-height: 90vh;
+      overflow: auto;
+      background: #fff;
+      border: 1px solid #dbeafe;
+      border-radius: 12px;
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.24);
+      padding: 12px;
+    }
+    .modal-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .modal-head h3 {
+      margin: 0;
+      font-size: 20px;
+      color: #1e40af;
+    }
+    .close-btn {
+      border: 1px solid #c6cfdd;
+      background: #fff;
+      color: #334155;
+      border-radius: 8px;
+      padding: 6px 10px;
+      cursor: pointer;
+    }
+    @media (max-width: 860px) {
+      .form-row { grid-template-columns: 1fr; }
+      .cal-cell { min-height: 94px; }
+    }
+  </style>
+</head>
+<body>
+  <main class="shell">
+    <div class="banner">學生測試頁：僅提供學生操作，資料與教練頁共用。</div>
+    <h1>請假 / 補課測試頁（學生）</h1>
+    <p class="sub">可登入學生帳號、在月曆選日期送出請假，並提出補課申請。</p>
+    <p class="hint" id="ui-status-text">介面初始化中...</p>
+    <div class="top-links">
+      <a href="./leave-student-sandbox.html">學生頁</a>
+      <a href="./leave-coach-sandbox.html">教練頁</a>
+      <a href="./leave-integration-test.html">連動測試頁</a>
+      <a href="./leave-sandbox.html">合併頁（舊）</a>
+    </div>
+
+    <section class="card">
+      <span class="role">學生端</span>
+      <h2>登入與測試控制</h2>
+      <div class="form-row">
+        <label>學生代碼
+          <input id="student-code" value="STU001">
+        </label>
+        <label>教練代碼
+          <input id="student-coach-code" value="CH001">
+        </label>
+      </div>
+      <div class="btn-row">
+        <button id="student-login-btn" class="primary" type="button">載入學生資料</button>
+        <button id="student-reset-btn" type="button">重置沙盒資料</button>
+      </div>
+      <p class="hint">模擬資料為每位學生每週一堂；重置後會重建測試情境。</p>
+      <p class="hint" id="student-session-text">尚未載入學生。</p>
+    </section>
+
+    <section class="card">
+      <span class="role">學生端</span>
+      <h2>月曆與日期明細</h2>
+      <div class="calendar-topbar">
+        <div class="calendar-title" id="student-calendar-month-label">--</div>
+        <div class="btn-row">
+          <button id="student-calendar-prev-btn" type="button">上個月</button>
+          <button id="student-calendar-next-btn" type="button">下個月</button>
+        </div>
+      </div>
+      <div class="calendar-grid" id="student-calendar-grid"></div>
+      <p class="hint">點月曆中的課程後，會跳出操作視窗。</p>
+    </section>
+
+    <section class="card">
+      <span class="role">學生端</span>
+      <h2>補課申請</h2>
+      <div class="form-row">
+        <label>可補課請假單
+          <select id="makeup-leave-select"></select>
+        </label>
+        <label>補課時段
+          <select id="makeup-slot-select"></select>
+        </label>
+      </div>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="load-slots-btn" type="button">載入可用時段</button>
+        <button id="submit-makeup-btn" class="primary" type="button">送出補課申請</button>
+      </div>
+      <p class="hint" id="slot-window-hint">請先選擇請假單。</p>
+      <div class="table-wrap" style="margin-top:10px;">
+        <table id="student-makeup-table"></table>
+      </div>
+    </section>
+
+    <section class="card">
+      <span class="role">系統紀錄</span>
+      <h2>事件記錄</h2>
+      <ol class="log-list" id="event-log"></ol>
+    </section>
+  </main>
+
+  <div class="modal" id="student-day-modal" hidden>
+    <div class="modal-panel">
+      <div class="modal-head">
+        <h3>學生日檢視</h3>
+        <button type="button" class="close-btn" id="student-day-modal-close">關閉</button>
+      </div>
+      <div class="day-detail" id="student-day-detail">
+        <h3>請先登入學生</h3>
+      </div>
+    </div>
+  </div>
+
+  <script src="config.leave-test.js?v=20260418-0001"></script>
+  <script src="leave-sandbox.js?v=20260418-0001"></script>
+</body>
+</html>
