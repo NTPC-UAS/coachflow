@@ -713,12 +713,12 @@
   }
 
   function activateStudentSession(studentCodeInput, coachCodeInput, silentMode) {
-    const studentCode = String(studentCodeInput || "").trim().toUpperCase();
-    const coachCode = String(coachCodeInput || "").trim().toUpperCase();
-    const student = getStudentByCode(studentCode) || ensureStudentProfile(studentCode, coachCode, silentMode);
+    const studentCode = normalizeParticipantCode(studentCodeInput);
+    const coachCode = normalizeParticipantCode(coachCodeInput);
+    const student = getStudentByCode(studentCode);
     if (!student) {
       if (!silentMode) {
-        alert("找不到學生代碼。");
+        alert("找不到學生代碼。請先回 CoachFlow 載入學生資料，或稍後重試同步。");
       }
       return false;
     }
@@ -729,7 +729,6 @@
       }
       return false;
     }
-    ensureCoachProfile(resolvedCoachCode);
     activeStudentCode = studentCode;
     activeCoachCode = resolvedCoachCode;
     selectedChargeStudentCode = studentCode;
@@ -757,11 +756,11 @@
   }
 
   function activateCoachSession(coachCodeInput, silentMode) {
-    const coachCode = String(coachCodeInput || "").trim().toUpperCase();
-    const coach = getCoachByCode(coachCode) || ensureCoachProfile(coachCode);
+    const coachCode = normalizeParticipantCode(coachCodeInput);
+    const coach = getCoachByCode(coachCode);
     if (!coach) {
       if (!silentMode) {
-        alert("找不到教練代碼。");
+        alert("找不到教練代碼。請先回 CoachFlow 載入教練資料，或稍後重試同步。");
       }
       return false;
     }
@@ -843,6 +842,10 @@
     return String(window.APP_CONFIG?.appsScriptUrl || "").trim();
   }
 
+  function getCoachflowAppsScriptUrl() {
+    return String(window.APP_CONFIG?.coachflowAppsScriptUrl || "").trim();
+  }
+
   async function callAppsScriptApi(action, payload = {}, method = "POST") {
     const url = getAppsScriptUrl();
     if (!url) {
@@ -852,6 +855,57 @@
         action,
         eventId: payload.eventId || payload.calendarEventId || newId("GCAL")
       };
+    }
+
+    const controller = new AbortController();
+    const timeoutMs = Number(window.APP_CONFIG?.requestTimeoutMs || 12000);
+    const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const endpoint = new URL(url);
+      let response;
+      if (String(method).toUpperCase() === "GET") {
+        endpoint.searchParams.set("action", action);
+        endpoint.searchParams.set("_ts", String(Date.now()));
+        Object.entries(payload || {}).forEach(([key, value]) => {
+          if (value !== undefined && value !== null) {
+            endpoint.searchParams.set(key, String(value));
+          }
+        });
+        response = await fetch(endpoint.toString(), {
+          method: "GET",
+          cache: "no-store",
+          signal: controller.signal
+        });
+      } else {
+        response = await fetch(endpoint.toString(), {
+          method: "POST",
+          cache: "no-store",
+          headers: {
+            "Content-Type": "text/plain;charset=UTF-8"
+          },
+          body: JSON.stringify({ action, ...payload, _ts: Date.now() }),
+          signal: controller.signal
+        });
+      }
+      const json = await response.json();
+      if (!response.ok || json?.ok === false) {
+        throw new Error(json?.message || `${action} 執行失敗`);
+      }
+      return json;
+    } catch (error) {
+      if (error?.name === "AbortError") {
+        throw new Error(`${action} 逾時`);
+      }
+      throw error;
+    } finally {
+      window.clearTimeout(timeout);
+    }
+  }
+
+  async function callCoachflowApi(action, payload = {}, method = "POST") {
+    const url = getCoachflowAppsScriptUrl();
+    if (!url) {
+      throw new Error("未設定 coachflowAppsScriptUrl。");
     }
 
     const controller = new AbortController();
@@ -918,23 +972,31 @@
     return state.coaches.find((coach) => coach.code === coachCode);
   }
 
-  function ensureCoachProfile(coachCode) {
-    const normalizedCode = String(coachCode || "").trim().toUpperCase();
+  function normalizeParticipantCode(code) {
+    return String(code || "").trim().toUpperCase();
+  }
+
+  function ensureCoachProfile(coachCode, coachName) {
+    const normalizedCode = normalizeParticipantCode(coachCode);
     if (!normalizedCode) {
       return null;
     }
     const existed = getCoachByCode(normalizedCode);
     if (existed) {
+      const nextName = String(coachName || "").trim();
+      if (nextName && existed.name !== nextName) {
+        existed.name = nextName;
+      }
       return existed;
     }
     const fallbackEmail = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
     const created = {
       code: normalizedCode,
-      name: `${normalizedCode} 教練`,
+      name: String(coachName || "").trim() || `${normalizedCode} 教練`,
       email: fallbackEmail
     };
     state.coaches.push(created);
-    addLog(`[初始化] 已建立教練代碼 ${normalizedCode}（測試資料）。`);
+    addLog(`[同步] 已建立教練代碼 ${normalizedCode}（來源資料）。`);
     return created;
   }
 
@@ -979,23 +1041,32 @@
     });
   }
 
-  function ensureStudentProfile(studentCode, coachCode, silentMode) {
-    const normalizedStudentCode = String(studentCode || "").trim().toUpperCase();
+  function ensureStudentProfile(studentCode, coachCode, options = {}) {
+    const { studentName = "", silentMode = true } = options;
+    const normalizedStudentCode = normalizeParticipantCode(studentCode);
     if (!normalizedStudentCode) {
       return null;
     }
     const existed = getStudentByCode(normalizedStudentCode);
     if (existed) {
+      const nextName = String(studentName || "").trim();
+      if (nextName && existed.name !== nextName) {
+        existed.name = nextName;
+      }
+      const nextCoachCode = normalizeParticipantCode(coachCode) || existed.coachCode;
+      if (nextCoachCode && existed.coachCode !== nextCoachCode) {
+        existed.coachCode = nextCoachCode;
+      }
       return existed;
     }
 
-    const normalizedCoachCode = String(coachCode || "").trim().toUpperCase() || "CH001";
+    const normalizedCoachCode = normalizeParticipantCode(coachCode) || "CH001";
     ensureCoachProfile(normalizedCoachCode);
 
     const fallbackEmail = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
     const created = {
       code: normalizedStudentCode,
-      name: `${normalizedStudentCode} 學生`,
+      name: String(studentName || "").trim() || `${normalizedStudentCode} 學生`,
       coachCode: normalizedCoachCode,
       email: fallbackEmail,
       chargeStartCount: 0,
@@ -1010,12 +1081,130 @@
     ensureLessonCalendarEventIds();
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
-    addLog(`[初始化] 已建立學生代碼 ${created.code}（教練 ${created.coachCode}）測試資料。`);
+    addLog(`[同步] 已建立學生代碼 ${created.code}（教練 ${created.coachCode}）來源資料。`);
     saveState();
-    if (!silentMode) {
-      alert(`首次使用代碼 ${created.code}，已自動建立測試資料。`);
-    }
     return created;
+  }
+
+  function syncCoachflowRosterFromPayload(rawPayload, sourceLabel) {
+    const payload = rawPayload && typeof rawPayload === "object" && rawPayload.data && typeof rawPayload.data === "object"
+      ? rawPayload.data
+      : rawPayload;
+    const sourceStudents = Array.isArray(payload?.students) ? payload.students : [];
+    const sourceCoaches = Array.isArray(payload?.coaches) ? payload.coaches : [];
+    if (!sourceStudents.length && !sourceCoaches.length) {
+      return false;
+    }
+
+    const coachCodeById = new Map();
+    sourceCoaches.forEach((coach) => {
+      const status = String(coach?.status || "active").toLowerCase();
+      if (status === "inactive") {
+        return;
+      }
+      const code = normalizeParticipantCode(
+        coach?.accessCode || coach?.access_code || coach?.code || coach?.coachCode || coach?.coach_code
+      );
+      if (!code) {
+        return;
+      }
+      const id = String(coach?.id || coach?.coach_id || "").trim();
+      if (id) {
+        coachCodeById.set(id, code);
+      }
+      const coachName = String(coach?.name || coach?.coach_name || coach?.coachName || `${code} 教練`).trim();
+      ensureCoachProfile(code, coachName);
+    });
+
+    let changed = false;
+    sourceStudents.forEach((student) => {
+      const status = String(student?.status || "active").toLowerCase();
+      if (status === "inactive") {
+        return;
+      }
+      const studentCode = normalizeParticipantCode(
+        student?.accessCode || student?.access_code || student?.code || student?.studentCode || student?.student_code
+      );
+      if (!studentCode) {
+        return;
+      }
+      const studentName = String(
+        student?.name || student?.student_name || student?.studentName || `${studentCode} 學生`
+      ).trim();
+      const primaryCoachId = String(
+        student?.primaryCoachId || student?.primary_coach_id || student?.coachId || student?.coach_id || ""
+      ).trim();
+      const directCoachCode = normalizeParticipantCode(
+        student?.primaryCoachCode ||
+        student?.primary_coach_code ||
+        student?.coachCode ||
+        student?.coach_code ||
+        student?.primaryCoachAccessCode ||
+        student?.primary_coach_access_code
+      );
+      const mappedCoachCode = directCoachCode || coachCodeById.get(primaryCoachId) || "";
+      const fallbackCoachCode = mappedCoachCode || normalizeParticipantCode(state.coaches[0]?.code) || "CH001";
+      const before = JSON.stringify(getStudentByCode(studentCode) || {});
+      ensureCoachProfile(fallbackCoachCode);
+      ensureStudentProfile(studentCode, fallbackCoachCode, { studentName, silentMode: true });
+      const after = JSON.stringify(getStudentByCode(studentCode) || {});
+      if (before !== after) {
+        changed = true;
+      }
+      if (!state.lessons.some((lesson) => lesson.studentCode === studentCode && lesson.sourceType === "REGULAR")) {
+        seedWeeklyLessonsForStudent(studentCode, fallbackCoachCode);
+        changed = true;
+      }
+    });
+
+    if (changed) {
+      ensureLessonCalendarEventIds();
+      ensureParticipantEmails();
+      ensureStudentBillingProfiles();
+      saveState();
+      addLog(`[同步] 已從 ${sourceLabel} 同步 coachflow 學生/教練資料。`);
+    }
+    return changed;
+  }
+
+  function syncCoachflowRosterFromLocalState() {
+    try {
+      const raw = localStorage.getItem("coachflow-v2-state");
+      if (!raw) {
+        return false;
+      }
+      const parsed = JSON.parse(raw);
+      if (!parsed || typeof parsed !== "object") {
+        return false;
+      }
+      return syncCoachflowRosterFromPayload(parsed, "本機 CoachFlow");
+    } catch (error) {
+      console.warn("Failed to sync roster from local CoachFlow state:", error);
+      return false;
+    }
+  }
+
+  async function syncCoachflowRosterFromCloud() {
+    if (!getCoachflowAppsScriptUrl()) {
+      return false;
+    }
+    const attempts = [
+      { action: "bootstrap", method: "GET" },
+      { action: "bootstrapAdmin", method: "GET" },
+      { action: "bootstrap", method: "POST" },
+      { action: "bootstrapAdmin", method: "POST" }
+    ];
+    for (const attempt of attempts) {
+      try {
+        const payload = await callCoachflowApi(attempt.action, {}, attempt.method);
+        if (syncCoachflowRosterFromPayload(payload, "雲端 CoachFlow")) {
+          return true;
+        }
+      } catch (error) {
+        console.warn(`CoachFlow roster sync failed via ${attempt.action}:`, error);
+      }
+    }
+    return false;
   }
 
   function buildLessonEventPayload(lesson, extra = {}) {
@@ -3257,13 +3446,17 @@
 
   function bindEvents() {
     if (el.studentLoginBtn) {
-      el.studentLoginBtn.addEventListener("click", () => {
+      el.studentLoginBtn.addEventListener("click", async () => {
+      await syncCoachflowRosterFromCloud();
+      syncCoachflowRosterFromLocalState();
       activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
       });
     }
 
     if (el.coachLoginBtn) {
-      el.coachLoginBtn.addEventListener("click", () => {
+      el.coachLoginBtn.addEventListener("click", async () => {
+      await syncCoachflowRosterFromCloud();
+      syncCoachflowRosterFromLocalState();
       activateCoachSession(el.coachCode?.value, false);
       });
     }
@@ -3614,11 +3807,14 @@
     }
   }
 
-  function bootstrap() {
+  async function bootstrap() {
     ensureMakeupCodes();
     ensureLessonCalendarEventIds();
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
+    syncCoachflowRosterFromLocalState();
+    await syncCoachflowRosterFromCloud();
+    syncCoachflowRosterFromLocalState();
     applySessionPrefillFromUrl();
     bindEvents();
     saveState();
@@ -3631,7 +3827,7 @@
     if (!autoStudentLoaded && !autoCoachLoaded) {
       renderAll();
     }
-    setUiStatus("JS 已載入完成，請點月曆測試。");
+    setUiStatus("已完成 coachflow 資料同步，可直接登入並點月曆。");
   }
 
   bootstrap();
