@@ -78,7 +78,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260418-0004";
+const PUBLIC_APP_VERSION = "20260418-0005";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -3188,8 +3188,15 @@ function syncStudentLeaveSystemEntry() {
   const url = buildStudentLeaveSystemUrl();
   const hasStudent = Boolean(getSelectedStudent());
   if (els.studentLeaveEntryRow) {
-    els.studentLeaveEntryRow.hidden = !hasStudent;
-    els.studentLeaveEntryRow.classList.toggle("is-hidden", !hasStudent);
+    if (hasStudent) {
+      els.studentLeaveEntryRow.hidden = false;
+      els.studentLeaveEntryRow.removeAttribute("hidden");
+      els.studentLeaveEntryRow.classList.remove("is-hidden");
+    } else {
+      els.studentLeaveEntryRow.hidden = true;
+      els.studentLeaveEntryRow.setAttribute("hidden", "hidden");
+      els.studentLeaveEntryRow.classList.add("is-hidden");
+    }
   }
   const buttons = [
     els.openStudentLeaveSystemMain,
@@ -3199,8 +3206,15 @@ function syncStudentLeaveSystemEntry() {
   ].filter(Boolean);
   buttons.forEach((button) => {
     const visible = hasStudent;
-    button.hidden = !visible;
-    button.classList.toggle("is-hidden", !visible);
+    if (visible) {
+      button.hidden = false;
+      button.removeAttribute("hidden");
+      button.classList.remove("is-hidden");
+    } else {
+      button.hidden = true;
+      button.setAttribute("hidden", "hidden");
+      button.classList.add("is-hidden");
+    }
     button.dataset.leaveUrl = url || "";
     if (visible) {
       button.removeAttribute("disabled");
