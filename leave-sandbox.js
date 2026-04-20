@@ -1276,11 +1276,17 @@
   async function checkCalendarEventExists(lesson) {
     const eventId = String(lesson.calendarEventId || "").trim();
     if (!eventId) {
-      return { exists: false, missingEventId: true };
+      return { exists: true, missingEventId: true };
     }
     try {
       const result = await callAppsScriptApi("checkEvent", buildLessonEventPayload(lesson, { eventId }));
-      return { exists: result?.exists === true };
+      if (result?.exists === true) {
+        return { exists: true };
+      }
+      if (result?.exists === false) {
+        return { exists: false, explicitNotFound: true };
+      }
+      return { exists: true, error: true, message: "checkEvent 回傳格式缺少 exists，已停止自動刪除。" };
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
       if (/unsupported|invalid action/i.test(message)) {
@@ -1351,6 +1357,7 @@
     let unsupportedCount = 0;
     let missingIdCount = 0;
     let errorCount = 0;
+    const pendingRemoveLessons = [];
 
     const batchSize = Math.max(1, Math.min(8, Number(window.APP_CONFIG?.calendarSyncBatchSize || 4)));
     const updateProgressText = () => {
@@ -1389,14 +1396,33 @@
           }
           if (check.missingEventId) {
             missingIdCount += 1;
+            continue;
           }
-          markLessonRemovedByCalendar(lesson, "google_calendar_deleted");
-          removedCount += 1;
+          if (!check.explicitNotFound) {
+            errorCount += 1;
+            addLog(`[日曆同步] 檢查結果不明，已略過 ${lesson.id}`);
+            continue;
+          }
+          pendingRemoveLessons.push(lesson);
         }
         updateProgressText();
       }
 
-      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂` : ""}`;
+      if (pendingRemoveLessons.length) {
+        const confirmRemoval = window.confirm(
+          `本次有 ${pendingRemoveLessons.length} 堂課在 Google 日曆查無事件。\n是否要同步移除這 ${pendingRemoveLessons.length} 堂課？`
+        );
+        if (confirmRemoval) {
+          pendingRemoveLessons.forEach((lesson) => {
+            markLessonRemovedByCalendar(lesson, "google_calendar_deleted");
+            removedCount += 1;
+          });
+        } else {
+          addLog(`[日曆同步] 已取消本次移除（待移除 ${pendingRemoveLessons.length} 堂）。`);
+        }
+      }
+
+      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}`;
       addLog(`[日曆同步] ${summary}`);
       if (el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;
