@@ -839,7 +839,7 @@
   }
 
   function getAppsScriptUrl() {
-    return String(window.APP_CONFIG?.appsScriptUrl || "").trim();
+    return String(window.APP_CONFIG?.leaveAppsScriptUrl || window.APP_CONFIG?.appsScriptUrl || "").trim();
   }
 
   function getCoachflowAppsScriptUrl() {
