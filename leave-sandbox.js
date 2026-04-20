@@ -1285,8 +1285,43 @@
     };
   }
 
+  function normalizeLooseText(value) {
+    return String(value || "")
+      .toLowerCase()
+      .replace(/[\s\-_/|｜·.,，。;；:：'"`~!@#$%^&*()+={}[\]<>?！￥…（）【】「」『』]/g, "");
+  }
+
+  function scoreLooseNameMatch(eventTitle, studentName) {
+    const title = normalizeLooseText(eventTitle);
+    const name = normalizeLooseText(studentName);
+    if (!title || !name) {
+      return 0;
+    }
+    if (title === name) {
+      return 4;
+    }
+    if (title.includes(name) || name.includes(title)) {
+      return 3;
+    }
+    const nameChars = [...new Set(Array.from(name))];
+    let overlap = 0;
+    nameChars.forEach((ch) => {
+      if (title.includes(ch)) {
+        overlap += 1;
+      }
+    });
+    if (overlap >= Math.min(2, nameChars.length)) {
+      return 2;
+    }
+    if (overlap >= 1 && nameChars.length <= 2 && title.length <= 4) {
+      return 1;
+    }
+    return 0;
+  }
+
   function resolveStudentCodeFromCalendarEvent(event, coachCode) {
     const searchable = `${event?.title || ""}\n${event?.description || ""}\n${event?.location || ""}`.toLowerCase();
+    const eventTitle = String(event?.title || "");
     const students = state.students.filter((student) => student.coachCode === coachCode);
     let bestCode = "";
     let bestScore = 0;
@@ -1300,6 +1335,9 @@
       }
       if (name && searchable.includes(name)) {
         score += 3;
+      }
+      if (name) {
+        score += scoreLooseNameMatch(eventTitle, name);
       }
       if (score > bestScore) {
         bestScore = score;
@@ -1413,7 +1451,8 @@
       relinkedEventId,
       createdLessons,
       skippedUnmatchedStudent,
-      skippedNonLessonEvent
+      skippedNonLessonEvent,
+      matchedLessonIds: Array.from(usedLessonIds)
     };
   }
 
@@ -1541,9 +1580,13 @@
     let unsupportedCount = 0;
     let missingIdCount = 0;
     let generatedLocalIdCount = 0;
+    let generatedLocalPendingRemoveCount = 0;
+    let explicitNotFoundCount = 0;
     let errorCount = 0;
     const pendingRemoveLessons = [];
     let alignedSummary = "";
+    let alignedLessonIdSet = null;
+    let listEventsLoaded = false;
 
     const batchSize = Math.max(1, Math.min(8, Number(window.APP_CONFIG?.calendarSyncBatchSize || 4)));
     const updateProgressText = () => {
@@ -1558,9 +1601,11 @@
         try {
           const listResult = await callAppsScriptApi("listEvents", range);
           const events = Array.isArray(listResult?.events) ? listResult.events : [];
+          listEventsLoaded = true;
           const alignStats = alignCoachLessonsWithGoogleEvents(activeCoachCode, events);
+          alignedLessonIdSet = new Set(Array.isArray(alignStats.matchedLessonIds) ? alignStats.matchedLessonIds : []);
           if (alignStats.totalEvents > 0) {
-            alignedSummary = `Google對齊：抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆`;
+            alignedSummary = `Google對齊：抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆，未匹配學生 ${alignStats.skippedUnmatchedStudent} 筆，非課程事件 ${alignStats.skippedNonLessonEvent} 筆`;
             addLog(`[日曆同步] ${alignedSummary}`);
           } else {
             alignedSummary = "Google對齊：查無事件。";
@@ -1593,6 +1638,10 @@
           }
           if (check.generatedLocalId) {
             generatedLocalIdCount += 1;
+            if (listEventsLoaded && alignedLessonIdSet && !alignedLessonIdSet.has(lesson.id)) {
+              pendingRemoveLessons.push(lesson);
+              generatedLocalPendingRemoveCount += 1;
+            }
             continue;
           }
           if (check.error) {
@@ -1613,14 +1662,21 @@
             addLog(`[日曆同步] 檢查結果不明，已略過 ${lesson.id}`);
             continue;
           }
+          explicitNotFoundCount += 1;
           pendingRemoveLessons.push(lesson);
         }
         updateProgressText();
       }
 
       if (pendingRemoveLessons.length) {
+        const generatedHint = generatedLocalPendingRemoveCount
+          ? `\n其中 ${generatedLocalPendingRemoveCount} 堂是本機暫存課（無 Google 事件ID），將一併移除。`
+          : "";
+        const explicitHint = explicitNotFoundCount
+          ? `\n另有 ${explicitNotFoundCount} 堂為 Google 明確回報不存在。`
+          : "";
         const confirmRemoval = window.confirm(
-          `本次有 ${pendingRemoveLessons.length} 堂課在 Google 日曆查無事件。\n是否要同步移除這 ${pendingRemoveLessons.length} 堂課？`
+          `本次有 ${pendingRemoveLessons.length} 堂課待同步移除。${generatedHint}${explicitHint}\n是否要同步移除這 ${pendingRemoveLessons.length} 堂課？`
         );
         if (confirmRemoval) {
           pendingRemoveLessons.forEach((lesson) => {
@@ -1632,7 +1688,7 @@
         }
       }
 
-      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂（已略過）` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
+      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂` : ""}${generatedLocalPendingRemoveCount ? `（待移除 ${generatedLocalPendingRemoveCount} 堂）` : generatedLocalIdCount ? "（已略過）" : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
       addLog(`[日曆同步] ${summary}`);
       if (el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;

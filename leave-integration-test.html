@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>請假系統連動測試</title>
+  <title>隢?蝟餌絞???皜祈岫</title>
   <style>
     :root {
       --bg: #f8fafc;
@@ -95,36 +95,33 @@
 <body>
   <main class="shell">
     <section class="card">
-      <h1>Google 日曆 / Email 連動測試</h1>
-      <p class="hint">這頁會直接呼叫 Apps Script Web App，測試 `createEvent / sendEmail / deleteEvent` 是否真的可用。</p>
+      <h1>Google ?交? / Email ???皜祈岫</h1>
+      <p class="hint">????亙??Apps Script Web App嚗葫閰?`createEvent / sendEmail / deleteEvent` ?臬???舐??/p>
       <div class="row">
         <label>Apps Script Web App URL
           <input id="api-url" type="text" placeholder="https://script.google.com/macros/s/.../exec">
         </label>
-        <label>測試收件人 Email
+        <label>皜祈岫?嗡辣鈭?Email
           <input id="email-to" type="email" placeholder="you@example.com">
         </label>
       </div>
       <div class="toolbar">
-        <button id="load-config-btn" type="button">載入測試設定 URL</button>
-        <button id="ping-btn" type="button">測試連線</button>
-        <button id="run-all-btn" class="primary" type="button">一鍵跑完整測試</button>
+        <button id="load-config-btn" type="button">頛皜祈岫閮剖? URL</button>
+        <button id="ping-btn" type="button">皜祈岫???</button>
+        <button id="run-all-btn" class="primary" type="button">銝?菔?摰皜祈岫</button>
       </div>
-      <p class="hint" id="summary-text">尚未執行測試。</p>
+      <p class="hint" id="summary-text">撠?瑁?皜祈岫??/p>
     </section>
 
     <section class="card">
-      <h2>測試參數</h2>
+      <h2>皜祈岫?</h2>
       <div class="row">
-        <label>目前建立的事件 ID（createEvent 成功後會自動填入）
-          <input id="event-id" type="text" placeholder="event id">
+        <label>?桀?撱箇???隞?ID嚗reateEvent ??敺??芸?憛怠嚗?          <input id="event-id" type="text" placeholder="event id">
         </label>
-        <label>課程開始時間（ISO）
-          <input id="start-at" type="text" value="2026-04-20T10:00:00.000Z">
+        <label>隤脩?????嚗SO嚗?          <input id="start-at" type="text" value="2026-04-20T10:00:00.000Z">
         </label>
       </div>
-      <label>自訂 Payload（JSON，可編輯）
-        <textarea id="payload-editor"></textarea>
+      <label>?芾? Payload嚗SON嚗蝺刻摩嚗?        <textarea id="payload-editor"></textarea>
       </label>
       <div class="toolbar">
         <select id="action-select">
@@ -133,23 +130,23 @@
           <option value="deleteEvent">deleteEvent</option>
           <option value="bootstrap">bootstrap</option>
         </select>
-        <button id="apply-template-btn" type="button">載入該動作預設 Payload</button>
-        <button id="run-custom-btn" type="button">執行目前 Payload</button>
+        <button id="apply-template-btn" type="button">頛閰脣?雿?閮?Payload</button>
+        <button id="run-custom-btn" type="button">?瑁??桀? Payload</button>
       </div>
     </section>
 
     <section class="card">
-      <h2>執行記錄</h2>
+      <h2>?瑁?閮?</h2>
       <table class="log">
         <thead>
-          <tr><th>時間</th><th>動作</th><th>結果</th><th>訊息</th></tr>
+          <tr><th>??</th><th>??</th><th>蝯?</th><th>閮</th></tr>
         </thead>
         <tbody id="log-body"></tbody>
       </table>
     </section>
   </main>
 
-  <script src="config.leave-test.js?v=20260412-2"></script>
+  <script src="config.leave-test.js?v=20260420-2318"></script>
   <script>
     (function () {
       const el = {
@@ -178,7 +175,7 @@
         row.innerHTML = `
           <td>${nowText()}</td>
           <td>${action}</td>
-          <td class="${ok ? "ok" : "err"}">${ok ? "成功" : "失敗"}</td>
+          <td class="${ok ? "ok" : "err"}">${ok ? "??" : "憭望?"}</td>
           <td>${String(message || "").replace(/</g, "&lt;")}</td>
         `;
         el.logBody.prepend(row);
@@ -197,13 +194,13 @@
           return {
             lessonId: "TEST_LESSON_001",
             eventId,
-            title: "整合測試課程 STU001/CH001",
+            title: "?游?皜祈岫隤脩? STU001/CH001",
             startAt,
             endAt,
             studentCode: "STU001",
-            studentName: "測試學生",
+            studentName: "皜祈岫摮貊?",
             coachCode: "CH001",
-            coachName: "測試教練",
+            coachName: "皜祈岫?毀",
             sourceType: "REGULAR",
             reason: "integration-test"
           };
@@ -212,13 +209,13 @@
           return {
             lessonId: "TEST_LESSON_001",
             eventId,
-            title: "整合測試課程 STU001/CH001",
+            title: "?游?皜祈岫隤脩? STU001/CH001",
             startAt,
             endAt,
             studentCode: "STU001",
-            studentName: "測試學生",
+            studentName: "皜祈岫摮貊?",
             coachCode: "CH001",
-            coachName: "測試教練",
+            coachName: "皜祈岫?毀",
             sourceType: "REGULAR",
             reason: "integration-test-cleanup"
           };
@@ -228,9 +225,9 @@
             template: "integration_test",
             to,
             studentCode: "STU001",
-            studentName: "測試學生",
+            studentName: "皜祈岫摮貊?",
             coachCode: "CH001",
-            coachName: "測試教練",
+            coachName: "皜祈岫?毀",
             when: startAt
           };
         }
@@ -246,10 +243,10 @@
       async function callApi(action, payload) {
         const url = getApiUrl();
         if (!url) {
-          throw new Error("請先填 Apps Script URL");
+          throw new Error("隢?憛?Apps Script URL");
         }
         if (!/\/exec(\?|$)/.test(url)) {
-          throw new Error("Apps Script URL 看起來不是 Web App 執行網址（通常需以 /exec 結尾）。");
+          throw new Error("Apps Script URL ?絲靘???Web App ?瑁?蝬脣?嚗虜?隞?/exec 蝯偏嚗?);
         }
         const response = await fetch(url, {
           method: "POST",
@@ -263,10 +260,10 @@
           json = rawText ? JSON.parse(rawText) : {};
         } catch (error) {
           const preview = String(rawText || "").slice(0, 180);
-          throw new Error(`回應非 JSON（HTTP ${response.status}）。可能是部署權限或 URL 錯誤。回應片段：${preview}`);
+          throw new Error(`????JSON嚗TTP ${response.status}嚗?賣?函蔡甈???URL ?航炊????畾蛛?${preview}`);
         }
         if (!response.ok || json?.ok === false) {
-          throw new Error(`${json?.message || `${action} 失敗`}（HTTP ${response.status}）`);
+          throw new Error(`${json?.message || `${action} 憭望?`}嚗TTP ${response.status}嚗);
         }
         return json;
       }
@@ -277,7 +274,7 @@
         try {
           payload = JSON.parse(el.payloadEditor.value || "{}");
         } catch (error) {
-          pushLog(action, false, `JSON 格式錯誤：${error.message}`);
+          pushLog(action, false, `JSON ?澆??航炊嚗?{error.message}`);
           return;
         }
         try {
@@ -287,26 +284,26 @@
           }
           pushLog(action, true, JSON.stringify(result));
         } catch (error) {
-          pushLog(action, false, error.message || "未知錯誤");
+          pushLog(action, false, error.message || "?芰?航炊");
         }
       }
 
       async function runPing() {
         try {
           const result = await callApi("bootstrap", {});
-          pushLog("bootstrap", true, "連線成功");
-          el.summaryText.innerHTML = "<span class='ok'>連線成功：可開始測試 createEvent/sendEmail/deleteEvent。</span>";
+          pushLog("bootstrap", true, "?????");
+          el.summaryText.innerHTML = "<span class='ok'>?????嚗??皜祈岫 createEvent/sendEmail/deleteEvent??/span>";
           return result;
         } catch (error) {
-          const message = error.message || "未知錯誤";
+          const message = error.message || "?芰?航炊";
           pushLog("bootstrap", false, message);
-          el.summaryText.innerHTML = `<span class='err'>連線失敗：${String(message).replace(/</g, "&lt;")}</span>`;
+          el.summaryText.innerHTML = `<span class='err'>???憭望?嚗?{String(message).replace(/</g, "&lt;")}</span>`;
           throw error;
         }
       }
 
       async function runAll() {
-        el.summaryText.textContent = "執行中...";
+        el.summaryText.textContent = "?瑁?銝?..";
         try {
           await runPing();
           const createPayload = buildTemplate("createEvent");
@@ -325,18 +322,18 @@
           const deleteResult = await callApi("deleteEvent", deletePayload);
           pushLog("deleteEvent", true, JSON.stringify(deleteResult));
 
-          el.summaryText.innerHTML = "<span class='ok'>完整測試成功：createEvent、sendEmail、deleteEvent 都回傳成功。</span>";
+          el.summaryText.innerHTML = "<span class='ok'>摰皜祈岫??嚗reateEvent?endEmail?eleteEvent ?賢??單???/span>";
         } catch (error) {
-          const message = error.message || "未知錯誤";
+          const message = error.message || "?芰?航炊";
           pushLog("runAll", false, message);
-          el.summaryText.innerHTML = `<span class='err'>完整測試失敗：${String(message).replace(/</g, "&lt;")}</span>`;
+          el.summaryText.innerHTML = `<span class='err'>摰皜祈岫憭望?嚗?{String(message).replace(/</g, "&lt;")}</span>`;
         }
       }
 
       el.loadConfigBtn.addEventListener("click", () => {
         const url = String(window.APP_CONFIG?.appsScriptUrl || "").trim();
         el.apiUrl.value = url;
-        el.summaryText.textContent = url ? "已載入 config.leave-test.js URL。" : "config.leave-test.js 目前沒有 appsScriptUrl。";
+        el.summaryText.textContent = url ? "撌脰???config.leave-test.js URL?? : "config.leave-test.js ?桀?瘝? appsScriptUrl??;
       });
       el.pingBtn.addEventListener("click", runPing);
       el.runAllBtn.addEventListener("click", runAll);
