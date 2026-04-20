@@ -1295,8 +1295,19 @@
       alert("請先登入教練。");
       return;
     }
+    const meta = getMonthMeta(coachCalendarMonthStart);
+    const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
+    const monthLessons = state.lessons
+      .filter(
+        (lesson) =>
+          lesson.coachCode === activeCoachCode &&
+          lesson.calendarOccupied &&
+          getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix)
+      )
+      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+
     const now = new Date();
-    const lessons = state.lessons
+    const futureLessons = state.lessons
       .filter(
         (lesson) =>
           lesson.coachCode === activeCoachCode &&
@@ -1305,15 +1316,20 @@
       )
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
 
+    const lessons = monthLessons.length ? monthLessons : futureLessons;
+    const syncScopeText = monthLessons.length
+      ? `${String(meta.year).padStart(4, "0")}/${String(meta.month).padStart(2, "0")} 當月`
+      : "未來課程";
+
     if (!lessons.length) {
       if (el.coachCalendarSyncText) {
-        el.coachCalendarSyncText.textContent = "沒有可同步檢查的未來課程。";
+        el.coachCalendarSyncText.textContent = "沒有可同步檢查的課程（當月與未來皆無）。";
       }
       return;
     }
 
     const confirmed = window.confirm(
-      `本次將檢查 ${lessons.length} 堂未來課程。\n若 Google 日曆找不到事件，系統會同步移除該堂課（可於「同步移除清單」還原）。\n是否繼續？`
+      `本次將檢查 ${lessons.length} 堂${syncScopeText}。\n若 Google 日曆找不到事件，系統會同步移除該堂課（可於「同步移除清單」還原）。\n是否繼續？`
     );
     if (!confirmed) {
       if (el.coachCalendarSyncText) {
@@ -1380,7 +1396,7 @@
         updateProgressText();
       }
 
-      const summary = `已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂` : ""}`;
+      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂` : ""}`;
       addLog(`[日曆同步] ${summary}`);
       if (el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;
