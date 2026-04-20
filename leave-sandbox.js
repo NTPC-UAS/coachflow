@@ -1326,7 +1326,7 @@
       el.coachCalendarSyncBtn.disabled = true;
     }
     if (el.coachCalendarSyncText) {
-      el.coachCalendarSyncText.textContent = "同步中...";
+      el.coachCalendarSyncText.textContent = `同步中... 0/${lessons.length}`;
     }
 
     let checkedCount = 0;
@@ -1336,39 +1336,68 @@
     let missingIdCount = 0;
     let errorCount = 0;
 
-    for (const lesson of lessons) {
-      checkedCount += 1;
-      const check = await checkCalendarEventExists(lesson);
-      if (check.unsupported) {
-        unsupportedCount += 1;
-        continue;
+    const batchSize = Math.max(1, Math.min(8, Number(window.APP_CONFIG?.calendarSyncBatchSize || 4)));
+    const updateProgressText = () => {
+      if (el.coachCalendarSyncText) {
+        el.coachCalendarSyncText.textContent = `同步中... ${checkedCount}/${lessons.length}`;
       }
-      if (check.error) {
-        errorCount += 1;
-        addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${check.message}`);
-        continue;
-      }
-      if (check.exists === true) {
-        alreadyOkCount += 1;
-        continue;
-      }
-      if (check.missingEventId) {
-        missingIdCount += 1;
-      }
-      markLessonRemovedByCalendar(lesson, "google_calendar_deleted");
-      removedCount += 1;
-    }
+    };
 
-    const summary = `已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂` : ""}`;
-    addLog(`[日曆同步] ${summary}`);
-    if (el.coachCalendarSyncText) {
-      el.coachCalendarSyncText.textContent = summary;
+    try {
+      for (let index = 0; index < lessons.length; index += batchSize) {
+        const batch = lessons.slice(index, index + batchSize);
+        const batchResults = await Promise.allSettled(batch.map((lesson) => checkCalendarEventExists(lesson)));
+        for (let offset = 0; offset < batch.length; offset += 1) {
+          checkedCount += 1;
+          const lesson = batch[offset];
+          const result = batchResults[offset];
+          if (result.status === "rejected") {
+            errorCount += 1;
+            const message = String(result.reason?.message || result.reason || "未知錯誤");
+            addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${message}`);
+            continue;
+          }
+          const check = result.value || {};
+          if (check.unsupported) {
+            unsupportedCount += 1;
+            continue;
+          }
+          if (check.error) {
+            errorCount += 1;
+            addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${check.message}`);
+            continue;
+          }
+          if (check.exists === true) {
+            alreadyOkCount += 1;
+            continue;
+          }
+          if (check.missingEventId) {
+            missingIdCount += 1;
+          }
+          markLessonRemovedByCalendar(lesson, "google_calendar_deleted");
+          removedCount += 1;
+        }
+        updateProgressText();
+      }
+
+      const summary = `已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂` : ""}`;
+      addLog(`[日曆同步] ${summary}`);
+      if (el.coachCalendarSyncText) {
+        el.coachCalendarSyncText.textContent = summary;
+      }
+      saveState();
+      renderAll();
+    } catch (error) {
+      const message = String(error?.message || "未知錯誤");
+      addLog(`[日曆同步] 同步失敗：${message}`);
+      if (el.coachCalendarSyncText) {
+        el.coachCalendarSyncText.textContent = `同步失敗：${message}`;
+      }
+    } finally {
+      if (el.coachCalendarSyncBtn) {
+        el.coachCalendarSyncBtn.disabled = false;
+      }
     }
-    if (el.coachCalendarSyncBtn) {
-      el.coachCalendarSyncBtn.disabled = false;
-    }
-    saveState();
-    renderAll();
   }
 
   function markLessonRemovedByCalendar(lesson, reason) {
