@@ -1032,9 +1032,30 @@
     })[0];
   }
 
+  function pickDefaultLessonWeekdayForCoach(coachCode) {
+    const weekdays = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    const counts = new Map(weekdays.map((day) => [day, 0]));
+    state.lessons
+      .filter((lesson) => lesson.coachCode === coachCode && lesson.sourceType === "REGULAR")
+      .forEach((lesson) => {
+        const dateKey = getDateKeyInTaipei(new Date(lesson.startAt));
+        const weekday = getWeekdayFromDateKey(dateKey);
+        counts.set(weekday, (counts.get(weekday) || 0) + 1);
+      });
+    const sorted = [...weekdays].sort((a, b) => {
+      const diff = (counts.get(b) || 0) - (counts.get(a) || 0);
+      if (diff !== 0) {
+        return diff;
+      }
+      return weekdays.indexOf(a) - weekdays.indexOf(b);
+    });
+    return (counts.get(sorted[0]) || 0) > 0 ? sorted[0] : "mon";
+  }
+
   function seedWeeklyLessonsForStudent(studentCode, coachCode) {
     const todayKey = getDateKeyInTaipei(new Date());
-    const firstCycleDay = getNextDateKeyByWeekday(todayKey, "sun", true);
+    const defaultWeekday = pickDefaultLessonWeekdayForCoach(coachCode);
+    const firstCycleDay = getNextDateKeyByWeekday(todayKey, defaultWeekday, true);
     const defaultTime = pickDefaultLessonTimeForCoach(coachCode);
     const dayOffsets = [-7, 0, 7, 14, 21, 28, 35, 42];
 
@@ -1239,6 +1260,163 @@
     };
   }
 
+  function normalizeCalendarEventId(eventId) {
+    const raw = String(eventId || "").trim();
+    if (!raw) {
+      return "";
+    }
+    return raw.endsWith("@google.com") ? raw.slice(0, raw.length - "@google.com".length) : raw;
+  }
+
+  function isGeneratedLocalCalendarEventId(eventId) {
+    return /^GCAL_/i.test(String(eventId || "").trim());
+  }
+
+  function getSyncRangeFromLessons(lessons) {
+    if (!Array.isArray(lessons) || !lessons.length) {
+      return null;
+    }
+    const sorted = [...lessons].sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    const firstDateKey = getDateKeyInTaipei(new Date(sorted[0].startAt));
+    const lastDateKey = getDateKeyInTaipei(new Date(sorted[sorted.length - 1].startAt));
+    return {
+      startAt: makeTaipeiDateTime(firstDateKey, "00:00").toISOString(),
+      endAt: makeTaipeiDateTime(addDays(lastDateKey, 1), "00:00").toISOString()
+    };
+  }
+
+  function resolveStudentCodeFromCalendarEvent(event, coachCode) {
+    const searchable = `${event?.title || ""}\n${event?.description || ""}\n${event?.location || ""}`.toLowerCase();
+    const students = state.students.filter((student) => student.coachCode === coachCode);
+    let bestCode = "";
+    let bestScore = 0;
+    let hasTie = false;
+    students.forEach((student) => {
+      const code = String(student.code || "").trim().toLowerCase();
+      const name = String(student.name || "").trim().toLowerCase();
+      let score = 0;
+      if (code && searchable.includes(code)) {
+        score += 4;
+      }
+      if (name && searchable.includes(name)) {
+        score += 3;
+      }
+      if (score > bestScore) {
+        bestScore = score;
+        bestCode = student.code;
+        hasTie = false;
+      } else if (score > 0 && score === bestScore) {
+        hasTie = true;
+      }
+    });
+    if (bestScore <= 0 || hasTie) {
+      return "";
+    }
+    return bestCode;
+  }
+
+  function pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, targetStartAt) {
+    const targetTime = new Date(targetStartAt).getTime();
+    const candidates = state.lessons
+      .filter(
+        (lesson) =>
+          lesson.studentCode === studentCode &&
+          lesson.coachCode === coachCode &&
+          lesson.sourceType === "REGULAR" &&
+          !usedLessonIds.has(lesson.id)
+      )
+      .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - targetTime) - Math.abs(new Date(b.startAt).getTime() - targetTime));
+    return candidates[0] || null;
+  }
+
+  function alignCoachLessonsWithGoogleEvents(coachCode, events) {
+    const usedLessonIds = new Set();
+    const eventIdToLesson = new Map();
+    state.lessons.forEach((lesson) => {
+      if (lesson.coachCode !== coachCode || lesson.sourceType !== "REGULAR") {
+        return;
+      }
+      const key = normalizeCalendarEventId(lesson.calendarEventId);
+      if (key) {
+        eventIdToLesson.set(key, lesson);
+      }
+    });
+
+    let matchedEvents = 0;
+    let updatedStart = 0;
+    let relinkedEventId = 0;
+    let createdLessons = 0;
+    let skippedUnmatchedStudent = 0;
+    let skippedNonLessonEvent = 0;
+
+    const sortedEvents = [...events].sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    sortedEvents.forEach((event) => {
+      const startAt = String(event?.startAt || "").trim();
+      const eventId = String(event?.eventId || "").trim();
+      if (!startAt || !eventId) {
+        skippedNonLessonEvent += 1;
+        return;
+      }
+      const durationMs = new Date(String(event?.endAt || "")).getTime() - new Date(startAt).getTime();
+      if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs > 4 * 60 * 60 * 1000) {
+        skippedNonLessonEvent += 1;
+        return;
+      }
+
+      const studentCode = resolveStudentCodeFromCalendarEvent(event, coachCode);
+      if (!studentCode) {
+        skippedUnmatchedStudent += 1;
+        return;
+      }
+
+      const normalizedEventId = normalizeCalendarEventId(eventId);
+      let lesson = eventIdToLesson.get(normalizedEventId) || null;
+      if (!lesson) {
+        lesson = pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, startAt);
+      }
+      if (!lesson) {
+        const dateKey = getDateKeyInTaipei(new Date(startAt));
+        const timeText = getTimeText(startAt);
+        lesson = makeLesson(newId("L"), studentCode, coachCode, dateKey, timeText);
+        state.lessons.push(lesson);
+        createdLessons += 1;
+      }
+
+      usedLessonIds.add(lesson.id);
+      const beforeStartAt = String(lesson.startAt || "");
+      const beforeEventId = normalizeCalendarEventId(lesson.calendarEventId);
+      lesson.startAt = new Date(startAt).toISOString();
+      lesson.coachCode = coachCode;
+      lesson.studentCode = studentCode;
+      lesson.calendarOccupied = true;
+      if (lesson.attendanceStatus === "calendar-removed") {
+        const previous = lesson.beforeCalendarRemoved || {};
+        lesson.attendanceStatus = previous.attendanceStatus || "scheduled";
+        delete lesson.calendarRemovedAt;
+        delete lesson.calendarRemovedReason;
+      }
+      lesson.calendarEventId = eventId;
+
+      if (beforeStartAt !== lesson.startAt) {
+        updatedStart += 1;
+      }
+      if (beforeEventId !== normalizeCalendarEventId(lesson.calendarEventId)) {
+        relinkedEventId += 1;
+      }
+      matchedEvents += 1;
+    });
+
+    return {
+      totalEvents: sortedEvents.length,
+      matchedEvents,
+      updatedStart,
+      relinkedEventId,
+      createdLessons,
+      skippedUnmatchedStudent,
+      skippedNonLessonEvent
+    };
+  }
+
   async function tryDeleteCalendarEventForLesson(lesson, reason, strictMode) {
     const eventId = String(lesson.calendarEventId || "").trim();
     if (!eventId) {
@@ -1278,6 +1456,9 @@
     if (!eventId) {
       return { exists: true, missingEventId: true };
     }
+    if (isGeneratedLocalCalendarEventId(eventId)) {
+      return { exists: true, generatedLocalId: true };
+    }
     try {
       const result = await callAppsScriptApi("checkEvent", buildLessonEventPayload(lesson, { eventId }));
       if (result?.exists === true) {
@@ -1303,7 +1484,7 @@
     }
     const meta = getMonthMeta(coachCalendarMonthStart);
     const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
-    const monthLessons = state.lessons
+    const collectMonthLessons = () => state.lessons
       .filter(
         (lesson) =>
           lesson.coachCode === activeCoachCode &&
@@ -1311,19 +1492,22 @@
           getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix)
       )
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    const collectFutureLessons = () => {
+      const now = new Date();
+      return state.lessons
+        .filter(
+          (lesson) =>
+            lesson.coachCode === activeCoachCode &&
+            lesson.calendarOccupied &&
+            new Date(lesson.startAt) >= now
+        )
+        .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    };
 
-    const now = new Date();
-    const futureLessons = state.lessons
-      .filter(
-        (lesson) =>
-          lesson.coachCode === activeCoachCode &&
-          lesson.calendarOccupied &&
-          new Date(lesson.startAt) >= now
-      )
-      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
-
-    const lessons = monthLessons.length ? monthLessons : futureLessons;
-    const syncScopeText = monthLessons.length
+    const monthLessons = collectMonthLessons();
+    const useMonthScope = monthLessons.length > 0;
+    let lessons = useMonthScope ? monthLessons : collectFutureLessons();
+    const syncScopeText = useMonthScope
       ? `${String(meta.year).padStart(4, "0")}/${String(meta.month).padStart(2, "0")} 當月`
       : "未來課程";
 
@@ -1356,8 +1540,10 @@
     let alreadyOkCount = 0;
     let unsupportedCount = 0;
     let missingIdCount = 0;
+    let generatedLocalIdCount = 0;
     let errorCount = 0;
     const pendingRemoveLessons = [];
+    let alignedSummary = "";
 
     const batchSize = Math.max(1, Math.min(8, Number(window.APP_CONFIG?.calendarSyncBatchSize || 4)));
     const updateProgressText = () => {
@@ -1367,6 +1553,26 @@
     };
 
     try {
+      const range = getSyncRangeFromLessons(lessons);
+      if (range) {
+        try {
+          const listResult = await callAppsScriptApi("listEvents", range);
+          const events = Array.isArray(listResult?.events) ? listResult.events : [];
+          const alignStats = alignCoachLessonsWithGoogleEvents(activeCoachCode, events);
+          if (alignStats.totalEvents > 0) {
+            alignedSummary = `Google對齊：抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆`;
+            addLog(`[日曆同步] ${alignedSummary}`);
+          } else {
+            alignedSummary = "Google對齊：查無事件。";
+            addLog(`[日曆同步] ${alignedSummary}`);
+          }
+          lessons = useMonthScope ? collectMonthLessons() : collectFutureLessons();
+        } catch (error) {
+          const message = String(error?.message || "未知錯誤");
+          addLog(`[日曆同步] Google 對齊略過：${message}`);
+        }
+      }
+
       for (let index = 0; index < lessons.length; index += batchSize) {
         const batch = lessons.slice(index, index + batchSize);
         const batchResults = await Promise.allSettled(batch.map((lesson) => checkCalendarEventExists(lesson)));
@@ -1383,6 +1589,10 @@
           const check = result.value || {};
           if (check.unsupported) {
             unsupportedCount += 1;
+            continue;
+          }
+          if (check.generatedLocalId) {
+            generatedLocalIdCount += 1;
             continue;
           }
           if (check.error) {
@@ -1422,7 +1632,7 @@
         }
       }
 
-      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}`;
+      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂（已略過）` : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
       addLog(`[日曆同步] ${summary}`);
       if (el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;
