@@ -3079,14 +3079,6 @@
       }
       return false;
     }
-    const now = new Date();
-    if (new Date(lesson.startAt) <= now) {
-      if (!silent) {
-        alert("過去課程不可還原。");
-      }
-      return false;
-    }
-
     if (!skipConfirm) {
       const ok = window.confirm(`確認還原這堂課？\n${formatDateTime(lesson.startAt)} / ${getStudentDisplayName(lesson.studentCode)}`);
       if (!ok) {
@@ -3109,6 +3101,34 @@
       charged: false,
       calendarEventId: ""
     };
+
+    const snapshotEventId = String(previous.calendarEventId || "").trim();
+    const restoreReason = String(lesson.calendarRemovedReason || "").trim().toLowerCase();
+    const preferSnapshotRestore = restoreReason === "google_calendar_deleted" && !!snapshotEventId;
+
+    if (preferSnapshotRestore) {
+      lesson.attendanceStatus = previous.attendanceStatus || "scheduled";
+      lesson.calendarOccupied = true;
+      lesson.charged = Boolean(previous.charged);
+      lesson.calendarEventId = snapshotEventId;
+      delete lesson.calendarRemovedAt;
+      delete lesson.calendarRemovedReason;
+      delete lesson.beforeCalendarRemoved;
+      addLog(`[日曆同步] 已依快照還原課程 ${lesson.id}（不重建 Google 事件）。`);
+      saveState();
+      if (!skipRender) {
+        renderAll();
+      }
+      return true;
+    }
+
+    const now = new Date();
+    if (new Date(lesson.startAt) <= now) {
+      if (!silent) {
+        alert("過去課程不可重建 Google 事件。");
+      }
+      return false;
+    }
 
     lesson.attendanceStatus = previous.attendanceStatus || "scheduled";
     lesson.calendarOccupied = true;
@@ -3144,7 +3164,13 @@
       alert("請先登入教練。");
       return;
     }
-    const lessons = getCalendarRemovedLessonsForCoach(activeCoachCode).filter((lesson) => new Date(lesson.startAt) > new Date());
+    const lessons = getCalendarRemovedLessonsForCoach(activeCoachCode).filter((lesson) => {
+      const previous = lesson.beforeCalendarRemoved || {};
+      const snapshotEventId = String(previous.calendarEventId || "").trim();
+      const restoreReason = String(lesson.calendarRemovedReason || "").trim().toLowerCase();
+      const canSnapshotRestore = restoreReason === "google_calendar_deleted" && !!snapshotEventId;
+      return canSnapshotRestore || new Date(lesson.startAt) > new Date();
+    });
     if (!lessons.length) {
       alert("目前沒有可還原的課程。");
       return;
