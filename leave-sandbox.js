@@ -110,6 +110,7 @@
   let coachRejectReasonPreset = DEFAULT_REJECT_REASON;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
+  let coachLoginPromptHidden = false;
 
   function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -4447,6 +4448,51 @@
     }
   }
 
+  function readJsonFromStorage(storageKey) {
+    try {
+      const raw = localStorage.getItem(storageKey);
+      return raw ? JSON.parse(raw) : null;
+    } catch (error) {
+      console.warn(`Failed to parse localStorage value for ${storageKey}:`, error);
+      return null;
+    }
+  }
+
+  function setCoachLoginPromptVisibility(hidden) {
+    const shouldHide = Boolean(hidden);
+    coachLoginPromptHidden = shouldHide;
+    if (el.coachCode) {
+      const coachCodeLabel = el.coachCode.closest("label");
+      if (coachCodeLabel) {
+        coachCodeLabel.hidden = shouldHide;
+      }
+      el.coachCode.readOnly = shouldHide;
+    }
+    if (el.coachLoginBtn) {
+      el.coachLoginBtn.hidden = shouldHide;
+      el.coachLoginBtn.disabled = shouldHide;
+    }
+  }
+
+  function emitLeavePrefillDebug(stage, payload = {}) {
+    const params = new URLSearchParams(window.location.search);
+    const snapshot = {
+      stage: String(stage || ""),
+      urlParams: {
+        coachCode: String(params.get("coachCode") || ""),
+        code: String(params.get("code") || "")
+      },
+      storedLeavePrefill: readJsonFromStorage(LEAVE_PREFILL_STORAGE_KEY),
+      coachflowSession: readJsonFromStorage("coachflow-v2-session"),
+      coachflowCurrentCoachId: String(readJsonFromStorage("coachflow-v2-state")?.currentCoachId || ""),
+      mergedCoachCode: String(payload.mergedCoachCode || ""),
+      stateCoaches: Array.isArray(state.coaches) ? state.coaches.map((coach) => ({ ...coach })) : [],
+      activateCoachSessionResult: payload.activateCoachSessionResult
+    };
+    window.__coachflowLeaveDebug = snapshot;
+    console.log("[CoachFlowLeaveDebug]", snapshot);
+  }
+
   function applySessionPrefillFromUrl() {
     const readCoachflowSessionPrefill = () => {
       try {
@@ -4569,6 +4615,9 @@
     if (mergedCoachCode && el.coachCode) {
       el.coachCode.value = mergedCoachCode;
     }
+    emitLeavePrefillDebug("applySessionPrefillFromUrl", {
+      mergedCoachCode
+    });
     return {
       studentCode: mergedStudentCode,
       coachCode: mergedCoachCode,
@@ -4583,8 +4632,13 @@
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
     syncCoachflowRosterFromLocalState();
-    await syncCoachflowRosterFromCloud();
-    syncCoachflowRosterFromLocalState();
+
+    const cloudSyncPromise = (async () => {
+      const syncedFromCloud = await syncCoachflowRosterFromCloud();
+      const syncedFromLocal = syncCoachflowRosterFromLocalState();
+      return Boolean(syncedFromCloud || syncedFromLocal);
+    })();
+
     const sessionPrefill = applySessionPrefillFromUrl();
     const hasUrlPrefill = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
     const shouldForceProfileFromUrl = hasUrlPrefill &&
@@ -4641,6 +4695,17 @@
         : false;
     }
 
+    const shouldHideCoachLoginPrompt = Boolean(
+      autoCoachLoaded &&
+      sessionPrefill.coachCode &&
+      shouldForceProfileFromUrl
+    );
+    setCoachLoginPromptVisibility(shouldHideCoachLoginPrompt);
+    emitLeavePrefillDebug("bootstrap-auto-login", {
+      mergedCoachCode: sessionPrefill.coachCode,
+      activateCoachSessionResult: autoCoachLoaded
+    });
+
     if (!autoStudentLoaded && !autoCoachLoaded) {
       renderAll();
     }
@@ -4648,6 +4713,18 @@
       setUiStatus("已自動帶入 CoachFlow 身份，可直接操作月曆。");
     } else {
       setUiStatus("已完成 coachflow 資料同步，可直接登入並點月曆。");
+    }
+
+    try {
+      const cloudSyncChanged = await cloudSyncPromise;
+      if (cloudSyncChanged) {
+        if (coachLoginPromptHidden && el.coachCode && activeCoachCode && el.coachCode.value !== activeCoachCode) {
+          el.coachCode.value = activeCoachCode;
+        }
+        renderAll();
+      }
+    } catch (error) {
+      console.warn("CoachFlow cloud sync completed with error:", error);
     }
   }
 
