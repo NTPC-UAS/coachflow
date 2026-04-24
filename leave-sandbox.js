@@ -4448,6 +4448,43 @@
   }
 
   function applySessionPrefillFromUrl() {
+    const readCoachflowSessionPrefill = () => {
+      try {
+        const sessionRaw = localStorage.getItem("coachflow-v2-session");
+        const stateRaw = localStorage.getItem("coachflow-v2-state");
+        const session = sessionRaw ? JSON.parse(sessionRaw) : {};
+        const coachflowState = stateRaw ? JSON.parse(stateRaw) : {};
+        const coaches = Array.isArray(coachflowState?.coaches) ? coachflowState.coaches : [];
+        const students = Array.isArray(coachflowState?.students) ? coachflowState.students : [];
+        const currentCoachId = String(coachflowState?.currentCoachId || "").trim();
+        const activeCoach = coaches.find((coach) => String(coach?.id || "").trim() === currentCoachId) || null;
+        const coachCode = normalizeParticipantCode(
+          session?.authenticatedCoachAccess ||
+          activeCoach?.accessCode ||
+          activeCoach?.access_code ||
+          activeCoach?.code ||
+          coaches[0]?.accessCode ||
+          coaches[0]?.access_code ||
+          coaches[0]?.code ||
+          ""
+        );
+        const studentCode = normalizeParticipantCode(
+          session?.currentStudentAccess ||
+          students.find((student) => String(student?.id || "").trim() === String(session?.currentStudentId || "").trim())?.accessCode ||
+          students.find((student) => String(student?.id || "").trim() === String(session?.currentStudentId || "").trim())?.access_code ||
+          ""
+        );
+        return {
+          coachCode,
+          studentCode,
+          from: "coachflow-session"
+        };
+      } catch (error) {
+        console.warn("Failed to read CoachFlow session prefill:", error);
+        return null;
+      }
+    };
+
     const readLeavePrefillSession = () => {
       try {
         const raw = localStorage.getItem(LEAVE_PREFILL_STORAGE_KEY);
@@ -4504,9 +4541,24 @@
       String(params.get("autoLogin") || params.get("autologin") || "").trim().toLowerCase()
     );
     const storedPrefill = readLeavePrefillSession();
-    const mergedStudentCode = normalizeParticipantCode(studentCode || storedPrefill?.studentCode || "");
-    const mergedCoachCode = normalizeParticipantCode(coachCode || storedPrefill?.coachCode || "");
-    const mergedFrom = String(from || storedPrefill?.from || "").trim();
+    const coachflowPrefill = readCoachflowSessionPrefill();
+    const mergedStudentCode = normalizeParticipantCode(
+      studentCode ||
+      storedPrefill?.studentCode ||
+      coachflowPrefill?.studentCode ||
+      ""
+    );
+    const mergedCoachCode = normalizeParticipantCode(
+      coachCode ||
+      storedPrefill?.coachCode ||
+      coachflowPrefill?.coachCode ||
+      ""
+    );
+    const mergedFrom = String(from || storedPrefill?.from || coachflowPrefill?.from || "").trim();
+    const hasFallbackPrefill = Boolean(
+      (storedPrefill && (storedPrefill.coachCode || storedPrefill.studentCode)) ||
+      (coachflowPrefill && (coachflowPrefill.coachCode || coachflowPrefill.studentCode))
+    );
 
     if (mergedStudentCode && el.studentCode) {
       el.studentCode.value = mergedStudentCode;
@@ -4521,7 +4573,7 @@
       studentCode: mergedStudentCode,
       coachCode: mergedCoachCode,
       from: mergedFrom,
-      autoLoginRequested: autoLoginRequested || Boolean(storedPrefill && (storedPrefill.coachCode || storedPrefill.studentCode))
+      autoLoginRequested: autoLoginRequested || hasFallbackPrefill
     };
   }
 
