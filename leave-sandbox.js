@@ -1755,8 +1755,267 @@
     }
   }
 
+  function safeFormatNoticeDateTime(value) {
+    const raw = String(value || "").trim();
+    if (!raw) {
+      return "-";
+    }
+    try {
+      const date = new Date(raw);
+      if (Number.isNaN(date.getTime())) {
+        return raw;
+      }
+      return formatDateTime(date.toISOString());
+    } catch (error) {
+      return raw;
+    }
+  }
+
+  function getNoticeStudentText(payload = {}) {
+    const code = String(payload.studentCode || "").trim();
+    const fallbackName = String(payload.studentName || "").trim();
+    const name = code ? getStudentDisplayName(code) : fallbackName;
+    if (name && code && name !== code) {
+      return `${name}（${code}）`;
+    }
+    return name || code || "-";
+  }
+
+  function getNoticeCoachText(payload = {}) {
+    const code = String(payload.coachCode || "").trim();
+    const fallbackName = String(payload.coachName || "").trim();
+    const name = code ? getCoachDisplayName(code) : fallbackName;
+    if (name && code && name !== code) {
+      return `${name}（${code}）`;
+    }
+    return name || code || "-";
+  }
+
+  function buildNoticeEmailContent(template, payload = {}) {
+    const studentText = getNoticeStudentText(payload);
+    const coachText = getNoticeCoachText(payload);
+    const lessonTimeText = safeFormatNoticeDateTime(payload.lessonStartAt || payload.startAt || payload.when);
+    const requestCode = String(payload.requestCode || payload.requestId || "-").trim() || "-";
+    const leaveCode = String(payload.leaveId || payload.lessonId || "-").trim() || "-";
+    const rejectReason = String(payload.rejectReason || payload.reason || "無").trim() || "無";
+    const milestone = Number(payload.milestone || payload.totalChargedCount || 0);
+
+    switch (String(template || "").trim()) {
+      case "billing_reminder": {
+        return {
+          subject: `[CoachFlow] 繳費提醒｜${studentText}`,
+          body: [
+            `${studentText} 您好：`,
+            "",
+            `系統顯示目前累積扣堂已達 ${milestone || "-"} 堂，請協助完成本期繳費。`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `累積扣堂：${payload.totalChargedCount ?? "-"}`,
+            `起始堂數：${payload.baseChargedCount ?? "-"}`,
+            `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "leave_submitted": {
+        return {
+          subject: `[CoachFlow] 已收到請假申請｜${studentText}`,
+          body: [
+            "您好：",
+            "",
+            "系統已收到請假申請，資訊如下：",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `原上課時間：${lessonTimeText}`,
+            `請假單號：${leaveCode}`,
+            "",
+            "如需補課，請至系統送出補課申請。",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "leave_cancelled_by_student": {
+        return {
+          subject: `[CoachFlow] 請假已取消｜${studentText}`,
+          body: [
+            "您好：",
+            "",
+            "學生已取消先前請假，原課程恢復排課。",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `課程時間：${lessonTimeText}`,
+            `課程編號：${leaveCode}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "coach_leave_blocked_lesson": {
+        return {
+          subject: `[CoachFlow] 教練請假異動｜${studentText}`,
+          body: [
+            "您好：",
+            "",
+            "教練請假造成課程異動，該堂課已取消排課。",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `原課程時間：${lessonTimeText}`,
+            `原因：${rejectReason}`,
+            "",
+            "請至系統查看後續補課安排。",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "makeup_auto_rejected_by_coach_leave": {
+        return {
+          subject: `[CoachFlow] 補課申請已自動退回｜${requestCode}`,
+          body: [
+            "您好：",
+            "",
+            "補課申請因教練請假時段重疊，系統已自動退回。",
+            `申請代碼：${requestCode}`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `補課時段：${lessonTimeText}`,
+            `退回原因：${rejectReason}`,
+            "",
+            "請重新選擇可用時段再送出申請。",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "coach_leave_restored_lesson": {
+        return {
+          subject: `[CoachFlow] 課程已恢復｜${studentText}`,
+          body: [
+            "您好：",
+            "",
+            "教練請假已取消，原課程已恢復。",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `課程時間：${lessonTimeText}`,
+            `課程編號：${leaveCode}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "makeup_pending": {
+        return {
+          subject: `[CoachFlow] 補課申請待審｜${requestCode}`,
+          body: [
+            "您好：",
+            "",
+            "有一筆新的補課申請待審核。",
+            `申請代碼：${requestCode}`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `申請時段：${lessonTimeText}`,
+            "",
+            "請至教練端審核清單確認。",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "makeup_cancelled": {
+        return {
+          subject: `[CoachFlow] 補課申請已取消｜${requestCode}`,
+          body: [
+            "您好：",
+            "",
+            "學生已取消補課申請。",
+            `申請代碼：${requestCode}`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `原申請時段：${lessonTimeText}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "leave_revoked_by_coach": {
+        return {
+          subject: `[CoachFlow] 教練已取消請假｜${studentText}`,
+          body: [
+            "您好：",
+            "",
+            "教練已取消此堂請假，課程恢復為可上課狀態。",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `課程時間：${lessonTimeText}`,
+            `課程編號：${leaveCode}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "makeup_approved": {
+        return {
+          subject: `[CoachFlow] 補課申請已核准｜${requestCode}`,
+          body: [
+            "您好：",
+            "",
+            "補課申請已核准，請依以下時間上課。",
+            `申請代碼：${requestCode}`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `補課時間：${lessonTimeText}`,
+            `補課課程編號：${payload.lessonId || "-"}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      case "makeup_rejected": {
+        return {
+          subject: `[CoachFlow] 補課申請未核准｜${requestCode}`,
+          body: [
+            "您好：",
+            "",
+            "補課申請未核准，請改選其他時段再申請。",
+            `申請代碼：${requestCode}`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `申請時段：${lessonTimeText}`,
+            `退回原因：${rejectReason}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+      default: {
+        return {
+          subject: `[CoachFlow] 系統通知｜${String(template || "notification")}`,
+          body: [
+            "您好：",
+            "",
+            "這是 CoachFlow 請假系統通知。",
+            `通知類型：${String(template || "-")}`,
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `時間：${lessonTimeText}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
+    }
+  }
+
   async function trySendEmailNotice(template, payload, label) {
     const finalPayload = { ...(payload || {}) };
+    const emailContent = buildNoticeEmailContent(template, finalPayload);
+    if (!String(finalPayload.subject || "").trim()) {
+      finalPayload.subject = emailContent.subject;
+    }
+    if (!String(finalPayload.body || "").trim()) {
+      finalPayload.body = emailContent.body;
+    }
+    if (!String(finalPayload.fromName || "").trim()) {
+      finalPayload.fromName = "CoachFlow 請假系統";
+    }
     const recipients = resolveNoticeRecipients(finalPayload);
     if (recipients.length) {
       finalPayload.to = recipients.join(",");
