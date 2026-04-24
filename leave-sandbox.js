@@ -4447,13 +4447,35 @@
 
   function applySessionPrefillFromUrl() {
     const params = new URLSearchParams(window.location.search);
-    const studentCode = String(
-      params.get("studentCode") || params.get("student") || params.get("stu") || ""
+    const pagePath = String(window.location.pathname || "").toLowerCase();
+    const isStudentPage = pagePath.includes("leave-student");
+    let studentCode = String(
+      params.get("studentCode") ||
+      params.get("student") ||
+      params.get("stu") ||
+      params.get("studentCodeInput") ||
+      params.get("student_access_code") ||
+      params.get("studentAccessCode") ||
+      ""
     ).trim().toUpperCase();
-    const coachCode = String(
-      params.get("coachCode") || params.get("coach") || params.get("code") || params.get("token") || ""
+    if (!studentCode && isStudentPage) {
+      studentCode = String(params.get("code") || "").trim().toUpperCase();
+    }
+    let coachCode = String(
+      params.get("coachCode") ||
+      params.get("coach") ||
+      params.get("coach_code") ||
+      params.get("coach_access_code") ||
+      params.get("coachAccessCode") ||
+      ""
     ).trim().toUpperCase();
+    if (!coachCode && !isStudentPage) {
+      coachCode = String(params.get("code") || params.get("token") || "").trim().toUpperCase();
+    }
     const from = String(params.get("from") || "").trim();
+    const autoLoginRequested = ["1", "true", "yes", "y", "on"].includes(
+      String(params.get("autoLogin") || params.get("autologin") || "").trim().toLowerCase()
+    );
 
     if (studentCode && el.studentCode) {
       el.studentCode.value = studentCode;
@@ -4464,7 +4486,7 @@
     if (coachCode && el.coachCode) {
       el.coachCode.value = coachCode;
     }
-    return { studentCode, coachCode, from };
+    return { studentCode, coachCode, from, autoLoginRequested };
   }
 
   async function bootstrap() {
@@ -4476,12 +4498,35 @@
     await syncCoachflowRosterFromCloud();
     syncCoachflowRosterFromLocalState();
     const sessionPrefill = applySessionPrefillFromUrl();
+    const hasUrlPrefill = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
+    const shouldForceProfileFromUrl = hasUrlPrefill &&
+      (sessionPrefill.autoLoginRequested || String(sessionPrefill.from || "").toLowerCase().startsWith("coachflow"));
+    if (shouldForceProfileFromUrl) {
+      const fallbackCoachCode = normalizeParticipantCode(
+        sessionPrefill.coachCode ||
+        getStudentByCode(sessionPrefill.studentCode)?.coachCode ||
+        state.coaches[0]?.code ||
+        "CH001"
+      );
+      if (fallbackCoachCode) {
+        ensureCoachProfile(fallbackCoachCode);
+      }
+      if (sessionPrefill.studentCode) {
+        ensureStudentProfile(sessionPrefill.studentCode, fallbackCoachCode || "CH001", { silentMode: true });
+      }
+      if (sessionPrefill.coachCode) {
+        ensureCoachProfile(sessionPrefill.coachCode);
+      }
+      ensureLessonCalendarEventIds();
+      ensureParticipantEmails();
+      ensureStudentBillingProfiles();
+      saveState();
+    }
     bindEvents();
     saveState();
 
     let autoStudentLoaded = false;
     let autoCoachLoaded = false;
-    const hasUrlPrefill = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
 
     if (hasUrlPrefill) {
       if (sessionPrefill.studentCode) {

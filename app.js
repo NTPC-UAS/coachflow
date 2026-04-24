@@ -79,7 +79,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260424-0002";
+const PUBLIC_APP_VERSION = "20260424-0003";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -862,6 +862,7 @@ function applyStaticCopy() {
       button.textContent = label;
     }
   });
+  if (els.openCoachLeaveSystemTab) setNodeText(els.openCoachLeaveSystemTab, "教練請假");
 
   setNodeText(document.querySelector("#coach-auth-card .section-kicker"), "教練登入");
   setNodeText(document.querySelector("#coach-auth-card h3"), "教練專屬入口");
@@ -1197,7 +1198,7 @@ const els = {
   mainTabsNav: document.querySelector(".main-tabs"),
   mainTabs: [...document.querySelectorAll(".main-tab")],
   panels: [...document.querySelectorAll(".panel")],
-  coachTabs: [...document.querySelectorAll(".sub-tab")],
+  coachTabs: [...document.querySelectorAll(".sub-tab[data-coach-tab]")],
   coachPanels: [...document.querySelectorAll(".sub-panel")],
   currentCoachSelect: document.querySelector("#current-coach-select"),
   coachSessionName: document.querySelector("#coach-session-name"),
@@ -1283,6 +1284,7 @@ const els = {
   studentProgramCard: document.querySelector("#student-program-card"),
   studentLeaveEntryRow: document.querySelector("#student-leave-entry-row"),
   openStudentLeaveSystemMain: document.querySelector("#open-student-leave-system-main"),
+  openCoachLeaveSystemTab: document.querySelector("#open-coach-leave-system-tab"),
   studentPhoneFrame: document.querySelector("#student-phone-frame"),
   studentMobileTools: document.querySelector("#student-mobile-tools"),
   studentMobileSecondaryActions: document.querySelector("#student-mobile-secondary-actions"),
@@ -1753,6 +1755,7 @@ function bindEvents() {
     els.openStudentLeaveSystemMobilePrimary,
     els.openStudentLeaveSystemMobileSecondary
   ].forEach((button) => button?.addEventListener("click", openStudentLeaveSystemEntry));
+  els.openCoachLeaveSystemTab?.addEventListener("click", openCoachLeaveSystemEntry);
   document.querySelector("#open-student-history").addEventListener("click", () => {
     renderStudentHistory();
     document.querySelector("#student-history-exercise").focus();
@@ -2284,6 +2287,11 @@ function applyAppMode() {
     const showImport = APP_MODE !== "admin";
     els.historyImportCard.hidden = !showImport;
     els.historyImportCard.style.display = showImport ? "" : "none";
+  }
+  if (els.openCoachLeaveSystemTab) {
+    const showCoachLeaveTab = APP_MODE !== "admin";
+    els.openCoachLeaveSystemTab.hidden = !showCoachLeaveTab;
+    els.openCoachLeaveSystemTab.style.display = showCoachLeaveTab ? "" : "none";
   }
 
   applyCoachTabVisibility();
@@ -3220,6 +3228,42 @@ function buildStudentLeaveSystemUrl() {
   }
 }
 
+function buildCoachLeaveSystemUrl(options = {}) {
+  if (!IS_LEAVE_SANDBOX_ENABLED || !LEAVE_SANDBOX_COACH_PAGE) {
+    return "";
+  }
+
+  const configuredPublicBase = String(APP_CONFIG.publicBaseUrl || "").trim();
+  const isHosted = /^https?:/i.test(window.location.protocol);
+  const candidateBaseHref = String(options.baseHref || "").trim();
+  const baseHref = candidateBaseHref || configuredPublicBase || (isHosted ? window.location.href : "");
+  if (!baseHref) {
+    return "";
+  }
+
+  try {
+    const leaveUrl = new URL(LEAVE_SANDBOX_COACH_PAGE, baseHref);
+    leaveUrl.search = "";
+    const fallbackCoachCode = String(
+      options.forceCoachCode ||
+      getCurrentCoach()?.accessCode ||
+      authenticatedCoachAccess ||
+      els.coachAccessCode?.value ||
+      ""
+    ).trim();
+    if (fallbackCoachCode) {
+      leaveUrl.searchParams.set("coachCode", fallbackCoachCode);
+    }
+    leaveUrl.searchParams.set("from", String(options.from || "coachflow-coach"));
+    leaveUrl.searchParams.set("autoLogin", "1");
+    leaveUrl.searchParams.set("v", PUBLIC_APP_VERSION);
+    return leaveUrl.toString();
+  } catch (error) {
+    console.warn("Failed to build coach leave url:", error);
+    return "";
+  }
+}
+
 function syncStudentLeaveSystemEntry() {
   const url = buildStudentLeaveSystemUrl();
   const hasStudent = Boolean(getSelectedStudent());
@@ -3268,6 +3312,16 @@ function openStudentLeaveSystemEntry(event) {
     return;
   }
   window.location.assign(url);
+}
+
+function openCoachLeaveSystemEntry(event) {
+  event?.preventDefault();
+  const url = String(event?.currentTarget?.dataset?.leaveUrl || buildCoachLeaveSystemUrl() || "").trim();
+  if (!url) {
+    window.alert("請假系統入口尚未啟用，請先確認教練身份。");
+    return;
+  }
+  window.open(url, "_blank", "noopener");
 }
 
 function renderCoachSummary() {
@@ -3340,6 +3394,17 @@ function syncCoachAccessUI() {
 
   if (coachTabs) {
     coachTabs.style.display = hasCoach ? "" : "none";
+  }
+  if (els.openCoachLeaveSystemTab) {
+    const leaveUrl = hasCoach ? buildCoachLeaveSystemUrl({ from: "coachflow-coach" }) : "";
+    els.openCoachLeaveSystemTab.dataset.leaveUrl = leaveUrl;
+    els.openCoachLeaveSystemTab.hidden = !hasCoach;
+    els.openCoachLeaveSystemTab.style.display = hasCoach ? "" : "none";
+    if (hasCoach && leaveUrl) {
+      els.openCoachLeaveSystemTab.removeAttribute("disabled");
+    } else {
+      els.openCoachLeaveSystemTab.setAttribute("disabled", "disabled");
+    }
   }
 
   coachPanelsWrap.forEach((panel) => {
@@ -4813,23 +4878,15 @@ function renderCoachStudentLinks() {
   sharedBaseUrl.searchParams.set("v", PUBLIC_APP_VERSION);
   const activeCoach = getCurrentCoach();
   const coachAccessCode = String(activeCoach?.accessCode || "").trim();
-  const leaveCoachBaseUrl =
-    IS_LEAVE_SANDBOX_ENABLED && LEAVE_SANDBOX_COACH_PAGE
-      ? new URL(LEAVE_SANDBOX_COACH_PAGE, baseHref)
-      : null;
+  const leaveCoachQuickUrl = buildCoachLeaveSystemUrl({
+    baseHref,
+    from: "coachflow",
+    forceCoachCode: coachAccessCode
+  });
   const leaveStudentBaseUrl =
     IS_LEAVE_SANDBOX_ENABLED && LEAVE_SANDBOX_STUDENT_PAGE
       ? new URL(LEAVE_SANDBOX_STUDENT_PAGE, baseHref)
       : null;
-  const leaveCoachQuickUrl = leaveCoachBaseUrl ? new URL(leaveCoachBaseUrl.toString()) : null;
-  if (leaveCoachQuickUrl) {
-    if (coachAccessCode) {
-      leaveCoachQuickUrl.searchParams.set("coachCode", coachAccessCode);
-    }
-    leaveCoachQuickUrl.searchParams.set("from", "coachflow");
-    leaveCoachQuickUrl.searchParams.set("autoLogin", "1");
-    leaveCoachQuickUrl.searchParams.set("v", PUBLIC_APP_VERSION);
-  }
 
   const keyword = (els.coachStudentLinkName?.value || "").trim().toLowerCase();
   if (els.coachStudentLinkSelect && els.coachStudentLinkName?.value) {
@@ -4874,7 +4931,7 @@ function renderCoachStudentLinks() {
     els.coachStudentLinks.innerHTML = `
       <div class="empty-card">\u627e\u4e0d\u5230\u7b26\u5408\u7684\u5b78\u751f\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u59d3\u540d\u6216\u4ee3\u78bc\u3002</div>
       ${leaveCoachQuickUrl
-        ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachQuickUrl.toString()}" target="_blank" rel="noopener">開啟請假教練頁（測試）</a></div>`
+        ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachQuickUrl}" target="_blank" rel="noopener">開啟請假教練頁（測試）</a></div>`
         : ""}
     `;
     return;
@@ -4900,15 +4957,11 @@ function renderCoachStudentLinks() {
         leaveStudentUrl.searchParams.set("autoLogin", "1");
         leaveStudentUrl.searchParams.set("v", PUBLIC_APP_VERSION);
       }
-      const leaveCoachUrl = leaveCoachBaseUrl ? new URL(leaveCoachBaseUrl.toString()) : null;
-      if (leaveCoachUrl) {
-        if (coachAccessCode) {
-          leaveCoachUrl.searchParams.set("coachCode", coachAccessCode);
-        }
-        leaveCoachUrl.searchParams.set("from", "coachflow");
-        leaveCoachUrl.searchParams.set("autoLogin", "1");
-        leaveCoachUrl.searchParams.set("v", PUBLIC_APP_VERSION);
-      }
+      const leaveCoachUrl = buildCoachLeaveSystemUrl({
+        baseHref,
+        from: "coachflow",
+        forceCoachCode: coachAccessCode
+      });
 
       return `
         <article class="coach-link-card">
@@ -4959,7 +5012,7 @@ function renderCoachStudentLinks() {
               ? `<a class="ghost-button" href="${leaveStudentUrl.toString()}" target="_blank" rel="noopener">開啟請假學生頁</a>`
               : ""}
             ${leaveCoachUrl
-              ? `<a class="ghost-button" href="${leaveCoachUrl.toString()}" target="_blank" rel="noopener">開啟請假教練頁</a>`
+              ? `<a class="ghost-button" href="${leaveCoachUrl}" target="_blank" rel="noopener">開啟請假教練頁</a>`
               : ""}
             <button class="ghost-button" type="button" data-copy-student-qr="${student.id}" data-qr-link="${accessUrl.toString()}">複製 QR 連結內容</button>
             <button class="primary-button" type="button" data-copy-student-message="${student.id}" data-student-name="${student.name}" data-student-code="${student.accessCode || ""}" data-student-link="${accessUrl.toString()}" data-shared-url="${sharedUrl}">\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f</button>
