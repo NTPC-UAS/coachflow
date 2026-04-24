@@ -14,6 +14,7 @@ const defaultState = {
 const state = structuredClone(defaultState);
 
 let editingProgramId = null;
+let coachProgramEditorMode = "create";
 let loadedStudentEntries = [];
 let pendingSubmission = null;
 let currentStudentId = "";
@@ -78,7 +79,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260420-2348";
+const PUBLIC_APP_VERSION = "20260424-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -1352,13 +1353,25 @@ function refreshAdminWorkspace() {
 
 function refreshCoachWorkspace(options = {}) {
   const preserveEditor = options.preserveEditor ?? (APP_MODE === "coach" && coachEditorDirty);
-  const nextEditingProgramId = getDefaultEditingProgramId();
+  const nextEditingProgramId =
+    coachProgramEditorMode === "edit"
+      ? (
+          editingProgramId && state.programs.some((program) => program.id === editingProgramId)
+            ? editingProgramId
+            : getDefaultEditingProgramId()
+        )
+      : null;
   const canPreserveEditor = Boolean(
     preserveEditor &&
-    editingProgramId &&
-    nextEditingProgramId &&
-    editingProgramId === nextEditingProgramId &&
-    state.programs.some((program) => program.id === editingProgramId)
+    (
+      coachProgramEditorMode === "create" ||
+      (
+        editingProgramId &&
+        nextEditingProgramId &&
+        editingProgramId === nextEditingProgramId &&
+        state.programs.some((program) => program.id === editingProgramId)
+      )
+    )
   );
 
   editingProgramId = nextEditingProgramId;
@@ -1367,7 +1380,11 @@ function refreshCoachWorkspace(options = {}) {
   renderCoachExerciseOptions();
   getCoachTodayDate();
   if (!canPreserveEditor) {
-    seedEditorFromProgram(editingProgramId);
+    if (coachProgramEditorMode === "edit" && editingProgramId) {
+      seedEditorFromProgram(editingProgramId);
+    } else {
+      seedEditorFromProgram(null);
+    }
   }
   renderCoachHistoryFilters();
   renderProgramLibrary();
@@ -1678,7 +1695,16 @@ function bindEvents() {
   });
 
   els.coachTabs.forEach((button) => {
-    button.addEventListener("click", () => switchCoachPanel(button.dataset.coachTab));
+    button.addEventListener("click", () => {
+      if (button.dataset.coachTab === "coach-editor") {
+        coachProgramEditorMode = "create";
+        editingProgramId = null;
+        if (!coachEditorDirty) {
+          seedEditorFromProgram(null);
+        }
+      }
+      switchCoachPanel(button.dataset.coachTab);
+    });
   });
   els.currentCoachSelect?.addEventListener("change", handleCurrentCoachChange);
   els.addCoachButton?.addEventListener("click", createCoachFromForm);
@@ -2442,8 +2468,9 @@ function handleCurrentCoachChange() {
   persistState();
   renderCurrentCoachOptions();
   renderCoachRoster();
-  editingProgramId = getDefaultEditingProgramId();
-  seedEditorFromProgram(editingProgramId);
+  coachProgramEditorMode = "create";
+  editingProgramId = null;
+  seedEditorFromProgram(null);
   renderProgramLibrary();
   renderCoachStudentLinks();
   renderCoachStudentRoster();
@@ -2728,15 +2755,19 @@ function syncSortNumbers() {
 }
 
 function collectProgramPayload() {
+  const existingProgram =
+    coachProgramEditorMode === "edit" && editingProgramId
+      ? state.programs.find((item) => item.id === editingProgramId) || null
+      : null;
   const program = {
-    id: editingProgramId || `program-${Date.now()}`,
+    id: existingProgram?.id || `program-${Date.now()}`,
     code: els.programCode.value.trim(),
     date: normalizeDateKey(els.programDate.value),
     coachId: getCurrentCoach()?.id || "",
     coachName: getCurrentCoach()?.name || els.coachName.value.trim(),
     notes: els.programNotes.value.trim(),
-    published: false,
-    createdAt: timestampNow()
+    published: Boolean(existingProgram?.published),
+    createdAt: existingProgram?.createdAt || timestampNow()
   };
 
   const items = [...els.programItemsBody.querySelectorAll("tr")]
@@ -2782,6 +2813,7 @@ async function saveProgram() {
     persistState();
   }
 
+  coachProgramEditorMode = "edit";
   editingProgramId = program.id;
   setCoachEditorDirty(false);
   renderCoachExerciseOptions();
@@ -2827,6 +2859,7 @@ async function publishProgram() {
     persistState();
   }
 
+  coachProgramEditorMode = "edit";
   editingProgramId = program.id;
   setCoachEditorDirty(false);
   if (els.coachTodayDate) {
@@ -2999,6 +3032,7 @@ function handleProgramLibraryAction(event) {
 
   if (button.dataset.loadProgram) {
     const programId = button.dataset.loadProgram;
+    coachProgramEditorMode = "edit";
     editingProgramId = programId;
     seedEditorFromProgram(programId);
     setCoachEditorDirty(false);
@@ -3018,6 +3052,7 @@ function handleProgramLibraryAction(event) {
     ...item,
     published: item.id === publishProgramId
   }));
+  coachProgramEditorMode = "edit";
   editingProgramId = publishProgramId;
   persistState();
   if (els.coachTodayDate) {
@@ -5498,8 +5533,9 @@ async function handleCoachRosterAction(event) {
     persistState();
     renderCurrentCoachOptions();
     renderCoachRoster();
-    editingProgramId = getDefaultEditingProgramId();
-    seedEditorFromProgram(editingProgramId);
+    coachProgramEditorMode = "create";
+    editingProgramId = null;
+    seedEditorFromProgram(null);
     renderProgramLibrary();
     renderCoachStudentLinks();
     renderCoachStudentRoster();
@@ -5628,8 +5664,9 @@ async function handleCoachRosterAction(event) {
     } else {
       renderCurrentCoachOptions();
       renderCoachRoster();
-      editingProgramId = getDefaultEditingProgramId();
-      seedEditorFromProgram(editingProgramId);
+      coachProgramEditorMode = "create";
+      editingProgramId = null;
+      seedEditorFromProgram(null);
       renderProgramLibrary();
       renderCoachStudentLinks();
       renderCoachStudentRoster();
