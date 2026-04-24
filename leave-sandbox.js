@@ -9,6 +9,8 @@
   const CHARGE_REMINDER_STEP = 4;
   const MAX_CHARGE_REMINDER_LOGS = 24;
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
+  const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
+  const LEAVE_PREFILL_MAX_AGE_MS = 10 * 60 * 1000;
   const PAYMENT_STATUS_LABELS = {
     unknown: "未註記",
     paid: "已繳費",
@@ -4446,6 +4448,31 @@
   }
 
   function applySessionPrefillFromUrl() {
+    const readLeavePrefillSession = () => {
+      try {
+        const raw = localStorage.getItem(LEAVE_PREFILL_STORAGE_KEY);
+        if (!raw) {
+          return null;
+        }
+        const parsed = JSON.parse(raw);
+        if (!parsed || typeof parsed !== "object") {
+          return null;
+        }
+        const createdAt = Number(parsed.createdAt || 0);
+        if (!Number.isFinite(createdAt) || Date.now() - createdAt > LEAVE_PREFILL_MAX_AGE_MS) {
+          return null;
+        }
+        return {
+          coachCode: normalizeParticipantCode(parsed.coachCode || ""),
+          studentCode: normalizeParticipantCode(parsed.studentCode || ""),
+          from: String(parsed.from || "").trim()
+        };
+      } catch (error) {
+        console.warn("Failed to read leave prefill session:", error);
+        return null;
+      }
+    };
+
     const params = new URLSearchParams(window.location.search);
     const pagePath = String(window.location.pathname || "").toLowerCase();
     const isStudentPage = pagePath.includes("leave-student");
@@ -4476,17 +4503,26 @@
     const autoLoginRequested = ["1", "true", "yes", "y", "on"].includes(
       String(params.get("autoLogin") || params.get("autologin") || "").trim().toLowerCase()
     );
+    const storedPrefill = readLeavePrefillSession();
+    const mergedStudentCode = normalizeParticipantCode(studentCode || storedPrefill?.studentCode || "");
+    const mergedCoachCode = normalizeParticipantCode(coachCode || storedPrefill?.coachCode || "");
+    const mergedFrom = String(from || storedPrefill?.from || "").trim();
 
-    if (studentCode && el.studentCode) {
-      el.studentCode.value = studentCode;
+    if (mergedStudentCode && el.studentCode) {
+      el.studentCode.value = mergedStudentCode;
     }
-    if (coachCode && el.studentCoachCode) {
-      el.studentCoachCode.value = coachCode;
+    if (mergedCoachCode && el.studentCoachCode) {
+      el.studentCoachCode.value = mergedCoachCode;
     }
-    if (coachCode && el.coachCode) {
-      el.coachCode.value = coachCode;
+    if (mergedCoachCode && el.coachCode) {
+      el.coachCode.value = mergedCoachCode;
     }
-    return { studentCode, coachCode, from, autoLoginRequested };
+    return {
+      studentCode: mergedStudentCode,
+      coachCode: mergedCoachCode,
+      from: mergedFrom,
+      autoLoginRequested: autoLoginRequested || Boolean(storedPrefill && (storedPrefill.coachCode || storedPrefill.studentCode))
+    };
   }
 
   async function bootstrap() {

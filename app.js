@@ -79,8 +79,9 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260424-0003";
+const PUBLIC_APP_VERSION = "20260425-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
+const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -862,7 +863,7 @@ function applyStaticCopy() {
       button.textContent = label;
     }
   });
-  if (els.openCoachLeaveSystemTab) setNodeText(els.openCoachLeaveSystemTab, "教練請假");
+  if (els.openCoachLeaveSystemTab) setNodeText(els.openCoachLeaveSystemTab, "請假系統");
 
   setNodeText(document.querySelector("#coach-auth-card .section-kicker"), "教練登入");
   setNodeText(document.querySelector("#coach-auth-card h3"), "教練專屬入口");
@@ -3264,6 +3265,90 @@ function buildCoachLeaveSystemUrl(options = {}) {
   }
 }
 
+function saveLeavePrefillSession(payload = {}) {
+  try {
+    const data = {
+      coachCode: String(payload.coachCode || "").trim(),
+      studentCode: String(payload.studentCode || "").trim(),
+      from: String(payload.from || "").trim(),
+      createdAt: Date.now()
+    };
+    if (!data.coachCode && !data.studentCode) {
+      return;
+    }
+    localStorage.setItem(LEAVE_PREFILL_STORAGE_KEY, JSON.stringify(data));
+  } catch (error) {
+    console.warn("Failed to persist leave prefill session:", error);
+  }
+}
+
+function getActiveCoachAccessCode() {
+  return String(
+    getCurrentCoach()?.accessCode ||
+    authenticatedCoachAccess ||
+    els.coachAccessCode?.value ||
+    ""
+  ).trim();
+}
+
+function buildLeavePrefillPayload(options = {}) {
+  const selectedStudent = getSelectedStudent();
+  const studentCode = String(
+    options.studentCode ||
+    selectedStudent?.accessCode ||
+    selectedStudent?.id ||
+    ""
+  ).trim();
+  const coachCode = String(
+    options.coachCode ||
+    getActiveCoachAccessCode()
+  ).trim();
+  const from = String(options.from || "coachflow").trim();
+  if (!coachCode && !studentCode) {
+    return null;
+  }
+  return {
+    coachCode,
+    studentCode,
+    from,
+    createdAt: Date.now()
+  };
+}
+
+function appendLeavePrefillToUrl(rawUrl, payload = {}) {
+  if (!rawUrl) {
+    return "";
+  }
+  const url = new URL(String(rawUrl), window.location.href);
+  const coachCode = String(payload.coachCode || "").trim();
+  const studentCode = String(payload.studentCode || "").trim();
+  const from = String(payload.from || "coachflow").trim();
+  if (coachCode) {
+    url.searchParams.set("coachCode", coachCode);
+    url.searchParams.set("code", coachCode);
+  }
+  if (studentCode) {
+    url.searchParams.set("studentCode", studentCode);
+  }
+  url.searchParams.set("from", from);
+  url.searchParams.set("autoLogin", "1");
+  url.searchParams.set("v", PUBLIC_APP_VERSION);
+  return url.toString();
+}
+
+function resolveCoachLeaveTargetUrl(rawUrl = "") {
+  const fallbackUrl = buildCoachLeaveSystemUrl() || "";
+  const sourceUrl = String(rawUrl || fallbackUrl || "").trim();
+  if (!sourceUrl) {
+    return "";
+  }
+  const payload = buildLeavePrefillPayload({ from: "coachflow-coach" });
+  if (payload) {
+    saveLeavePrefillSession(payload);
+  }
+  return appendLeavePrefillToUrl(sourceUrl, payload || {});
+}
+
 function syncStudentLeaveSystemEntry() {
   const url = buildStudentLeaveSystemUrl();
   const hasStudent = Boolean(getSelectedStudent());
@@ -3311,17 +3396,24 @@ function openStudentLeaveSystemEntry(event) {
     window.alert("請假系統入口尚未啟用，請先聯絡教練。");
     return;
   }
-  window.location.assign(url);
+  const payload = buildLeavePrefillPayload({ from: "coachflow-student" });
+  if (payload) {
+    saveLeavePrefillSession(payload);
+  }
+  const targetUrl = appendLeavePrefillToUrl(url, payload || {});
+  window.location.assign(targetUrl);
 }
 
 function openCoachLeaveSystemEntry(event) {
   event?.preventDefault();
-  const url = String(event?.currentTarget?.dataset?.leaveUrl || buildCoachLeaveSystemUrl() || "").trim();
-  if (!url) {
+  const targetUrl = resolveCoachLeaveTargetUrl(
+    String(event?.currentTarget?.dataset?.leaveUrl || "").trim()
+  );
+  if (!targetUrl) {
     window.alert("請假系統入口尚未啟用，請先確認教練身份。");
     return;
   }
-  window.open(url, "_blank", "noopener");
+  window.open(targetUrl, "_blank", "noopener");
 }
 
 function renderCoachSummary() {
@@ -4931,7 +5023,7 @@ function renderCoachStudentLinks() {
     els.coachStudentLinks.innerHTML = `
       <div class="empty-card">\u627e\u4e0d\u5230\u7b26\u5408\u7684\u5b78\u751f\uff0c\u8acb\u91cd\u65b0\u78ba\u8a8d\u59d3\u540d\u6216\u4ee3\u78bc\u3002</div>
       ${leaveCoachQuickUrl
-        ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachQuickUrl}" target="_blank" rel="noopener">開啟請假教練頁（測試）</a></div>`
+        ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachQuickUrl}" target="_blank" rel="noopener" data-open-coach-leave="1">開啟請假教練頁（測試）</a></div>`
         : ""}
     `;
     return;
@@ -5012,7 +5104,7 @@ function renderCoachStudentLinks() {
               ? `<a class="ghost-button" href="${leaveStudentUrl.toString()}" target="_blank" rel="noopener">開啟請假學生頁</a>`
               : ""}
             ${leaveCoachUrl
-              ? `<a class="ghost-button" href="${leaveCoachUrl}" target="_blank" rel="noopener">開啟請假教練頁</a>`
+              ? `<a class="ghost-button" href="${leaveCoachUrl}" target="_blank" rel="noopener" data-open-coach-leave="1">開啟請假教練頁</a>`
               : ""}
             <button class="ghost-button" type="button" data-copy-student-qr="${student.id}" data-qr-link="${accessUrl.toString()}">複製 QR 連結內容</button>
             <button class="primary-button" type="button" data-copy-student-message="${student.id}" data-student-name="${student.name}" data-student-code="${student.accessCode || ""}" data-student-link="${accessUrl.toString()}" data-shared-url="${sharedUrl}">\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f</button>
@@ -6098,6 +6190,18 @@ async function handleCoachStudentRosterAction(event) {
 }
 
 function handleCoachStudentLinkAction(event) {
+  const coachLeaveAnchor = event.target.closest("a[data-open-coach-leave='1']");
+  if (coachLeaveAnchor) {
+    event.preventDefault();
+    const targetUrl = resolveCoachLeaveTargetUrl(coachLeaveAnchor.href);
+    if (!targetUrl) {
+      window.alert("請假系統入口尚未啟用，請先確認教練身份。");
+      return;
+    }
+    window.open(targetUrl, "_blank", "noopener");
+    return;
+  }
+
   const button = event.target.closest("[data-copy-student-link], [data-copy-shared-link], [data-copy-leave-student-link], [data-copy-student-message], [data-copy-student-qr]");
   if (!button) {
     return;
