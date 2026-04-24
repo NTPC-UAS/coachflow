@@ -1285,6 +1285,15 @@
     };
   }
 
+  function getMonthSyncRange(monthStartDate) {
+    const monthStart = getMonthStart(monthStartDate || new Date());
+    const nextMonthStart = shiftMonth(monthStart, 1);
+    return {
+      startAt: monthStart.toISOString(),
+      endAt: nextMonthStart.toISOString()
+    };
+  }
+
   function normalizeLooseText(value) {
     return String(value || "")
       .toLowerCase()
@@ -1582,6 +1591,7 @@
     let generatedLocalIdCount = 0;
     let generatedLocalPendingRemoveCount = 0;
     let explicitNotFoundCount = 0;
+    let pastMissingKeptCount = 0;
     let errorCount = 0;
     const pendingRemoveLessons = [];
     let alignedSummary = "";
@@ -1596,7 +1606,9 @@
     };
 
     try {
-      const range = getSyncRangeFromLessons(lessons);
+      const range = useMonthScope
+        ? getMonthSyncRange(coachCalendarMonthStart)
+        : getSyncRangeFromLessons(lessons);
       if (range) {
         try {
           const listResult = await callAppsScriptApi("listEvents", range);
@@ -1638,7 +1650,12 @@
           }
           if (check.generatedLocalId) {
             generatedLocalIdCount += 1;
-            if (listEventsLoaded && alignedLessonIdSet && !alignedLessonIdSet.has(lesson.id)) {
+            if (
+              listEventsLoaded &&
+              alignedLessonIdSet &&
+              !alignedLessonIdSet.has(lesson.id) &&
+              new Date(lesson.startAt) >= new Date()
+            ) {
               pendingRemoveLessons.push(lesson);
               generatedLocalPendingRemoveCount += 1;
             }
@@ -1660,6 +1677,10 @@
           if (!check.explicitNotFound) {
             errorCount += 1;
             addLog(`[日曆同步] 檢查結果不明，已略過 ${lesson.id}`);
+            continue;
+          }
+          if (new Date(lesson.startAt) < new Date()) {
+            pastMissingKeptCount += 1;
             continue;
           }
           explicitNotFoundCount += 1;
@@ -1688,7 +1709,7 @@
         }
       }
 
-      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂` : ""}${generatedLocalPendingRemoveCount ? `（待移除 ${generatedLocalPendingRemoveCount} 堂）` : generatedLocalIdCount ? "（已略過）" : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
+      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂` : ""}${generatedLocalPendingRemoveCount ? `（待移除 ${generatedLocalPendingRemoveCount} 堂）` : generatedLocalIdCount ? "（已略過）" : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pastMissingKeptCount ? `，歷史課程缺事件 ${pastMissingKeptCount} 堂（保留）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
       addLog(`[日曆同步] ${summary}`);
       if (el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;
@@ -4430,8 +4451,9 @@
       params.get("studentCode") || params.get("student") || params.get("stu") || ""
     ).trim().toUpperCase();
     const coachCode = String(
-      params.get("coachCode") || params.get("coach") || ""
+      params.get("coachCode") || params.get("coach") || params.get("code") || params.get("token") || ""
     ).trim().toUpperCase();
+    const from = String(params.get("from") || "").trim();
 
     if (studentCode && el.studentCode) {
       el.studentCode.value = studentCode;
@@ -4442,6 +4464,7 @@
     if (coachCode && el.coachCode) {
       el.coachCode.value = coachCode;
     }
+    return { studentCode, coachCode, from };
   }
 
   async function bootstrap() {
@@ -4452,19 +4475,47 @@
     syncCoachflowRosterFromLocalState();
     await syncCoachflowRosterFromCloud();
     syncCoachflowRosterFromLocalState();
-    applySessionPrefillFromUrl();
+    const sessionPrefill = applySessionPrefillFromUrl();
     bindEvents();
     saveState();
-    const autoStudentLoaded = el.studentCode && el.studentCoachCode
-      ? activateStudentSession(el.studentCode.value, el.studentCoachCode.value, true)
-      : false;
-    const autoCoachLoaded = !autoStudentLoaded && el.coachCode
-      ? activateCoachSession(el.coachCode.value, true)
-      : false;
+
+    let autoStudentLoaded = false;
+    let autoCoachLoaded = false;
+    const hasUrlPrefill = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
+
+    if (hasUrlPrefill) {
+      if (sessionPrefill.studentCode) {
+        autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, sessionPrefill.coachCode, true);
+      }
+      if (!autoStudentLoaded && sessionPrefill.coachCode) {
+        autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
+      }
+      if (!autoStudentLoaded && !autoCoachLoaded) {
+        await new Promise((resolve) => setTimeout(resolve, 250));
+        if (sessionPrefill.studentCode) {
+          autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, sessionPrefill.coachCode, true);
+        }
+        if (!autoStudentLoaded && sessionPrefill.coachCode) {
+          autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
+        }
+      }
+    } else {
+      autoStudentLoaded = el.studentCode && el.studentCoachCode
+        ? activateStudentSession(el.studentCode.value, el.studentCoachCode.value, true)
+        : false;
+      autoCoachLoaded = !autoStudentLoaded && el.coachCode
+        ? activateCoachSession(el.coachCode.value, true)
+        : false;
+    }
+
     if (!autoStudentLoaded && !autoCoachLoaded) {
       renderAll();
     }
-    setUiStatus("已完成 coachflow 資料同步，可直接登入並點月曆。");
+    if (autoStudentLoaded || autoCoachLoaded) {
+      setUiStatus("已自動帶入 CoachFlow 身份，可直接操作月曆。");
+    } else {
+      setUiStatus("已完成 coachflow 資料同步，可直接登入並點月曆。");
+    }
   }
 
   bootstrap();

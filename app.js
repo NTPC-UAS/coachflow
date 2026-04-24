@@ -79,7 +79,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260424-0001";
+const PUBLIC_APP_VERSION = "20260424-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 
 const IS_CLOUD_MODE =
@@ -3211,6 +3211,7 @@ function buildStudentLeaveSystemUrl() {
       leaveUrl.searchParams.set("coachCode", coachCode);
     }
     leaveUrl.searchParams.set("from", "coachflow-student");
+    leaveUrl.searchParams.set("autoLogin", "1");
     leaveUrl.searchParams.set("v", PUBLIC_APP_VERSION);
     return leaveUrl.toString();
   } catch (error) {
@@ -4826,6 +4827,8 @@ function renderCoachStudentLinks() {
       leaveCoachQuickUrl.searchParams.set("coachCode", coachAccessCode);
     }
     leaveCoachQuickUrl.searchParams.set("from", "coachflow");
+    leaveCoachQuickUrl.searchParams.set("autoLogin", "1");
+    leaveCoachQuickUrl.searchParams.set("v", PUBLIC_APP_VERSION);
   }
 
   const keyword = (els.coachStudentLinkName?.value || "").trim().toLowerCase();
@@ -4894,6 +4897,8 @@ function renderCoachStudentLinks() {
           leaveStudentUrl.searchParams.set("coachCode", coachAccessCode);
         }
         leaveStudentUrl.searchParams.set("from", "coachflow");
+        leaveStudentUrl.searchParams.set("autoLogin", "1");
+        leaveStudentUrl.searchParams.set("v", PUBLIC_APP_VERSION);
       }
       const leaveCoachUrl = leaveCoachBaseUrl ? new URL(leaveCoachBaseUrl.toString()) : null;
       if (leaveCoachUrl) {
@@ -4901,6 +4906,8 @@ function renderCoachStudentLinks() {
           leaveCoachUrl.searchParams.set("coachCode", coachAccessCode);
         }
         leaveCoachUrl.searchParams.set("from", "coachflow");
+        leaveCoachUrl.searchParams.set("autoLogin", "1");
+        leaveCoachUrl.searchParams.set("v", PUBLIC_APP_VERSION);
       }
 
       return `
