@@ -1248,6 +1248,7 @@
     const coach = getCoachByCode(lesson.coachCode);
     const startAt = lesson.startAt;
     const endAt = new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
+    const calendarPayload = getCalendarPayloadForCoach(lesson.coachCode);
     return {
       lessonId: lesson.id,
       eventId: lesson.calendarEventId || "",
@@ -1259,8 +1260,39 @@
       coachCode: lesson.coachCode,
       coachName: coach?.name || "",
       sourceType: lesson.sourceType,
+      ...calendarPayload,
       ...extra
     };
+  }
+
+  function getCalendarPayloadForCoach(coachCodeInput) {
+    const coachCode = normalizeParticipantCode(coachCodeInput || activeCoachCode);
+    const coach = getCoachByCode(coachCode) || {};
+    const configuredByCoach = window.APP_CONFIG?.coachCalendarIds && typeof window.APP_CONFIG.coachCalendarIds === "object"
+      ? window.APP_CONFIG.coachCalendarIds[coachCode]
+      : "";
+    const params = new URLSearchParams(window.location.search);
+    const calendarId = String(
+      params.get("calendarId") ||
+      params.get("coachCalendarId") ||
+      coach.calendarId ||
+      coach.calendar_id ||
+      coach.coachCalendarId ||
+      coach.coach_calendar_id ||
+      coach.googleCalendarId ||
+      coach.google_calendar_id ||
+      configuredByCoach ||
+      window.APP_CONFIG?.coachCalendarId ||
+      window.APP_CONFIG?.googleCalendarId ||
+      window.APP_CONFIG?.calendarId ||
+      ""
+    ).trim();
+    return calendarId
+      ? {
+        calendarId,
+        coachCalendarId: calendarId
+      }
+      : {};
   }
 
   function normalizeCalendarEventId(eventId) {
@@ -1325,10 +1357,53 @@
     if (overlap >= Math.min(2, nameChars.length)) {
       return 2;
     }
-    if (overlap >= 1 && nameChars.length <= 2 && title.length <= 4) {
-      return 1;
-    }
     return 0;
+  }
+
+  function hashTextForCode(value) {
+    const text = String(value || "").trim();
+    let hash = 0;
+    for (let index = 0; index < text.length; index += 1) {
+      hash = ((hash << 5) - hash + text.charCodeAt(index)) >>> 0;
+    }
+    return hash.toString(36).toUpperCase().padStart(5, "0").slice(0, 5);
+  }
+
+  function ensureGoogleEventStudentProfile(event, coachCode) {
+    const title = String(event?.title || "").trim();
+    const fallbackKey = normalizeCalendarEventId(event?.eventId || event?.id || "") || `${event?.startAt || ""}-${title}`;
+    const baseCode = `G${hashTextForCode(normalizeLooseText(title) || fallbackKey)}`;
+    let code = baseCode;
+    let suffix = 1;
+    while (state.students.some((student) => student.code === code && student.coachCode !== coachCode)) {
+      suffix += 1;
+      code = `${baseCode}${suffix}`;
+    }
+    const existed = getStudentByCode(code);
+    if (existed) {
+      if (title && existed.name !== title) {
+        existed.name = title;
+      }
+      existed.coachCode = coachCode;
+      existed.sourceType = existed.sourceType || "GOOGLE_CALENDAR";
+      return existed;
+    }
+    const created = {
+      code,
+      name: title || "Google 日曆課程",
+      coachCode,
+      email: "",
+      chargeStartCount: 0,
+      paymentStatus: "unknown",
+      paymentNote: "",
+      paymentConfirmedAt: "",
+      paymentConfirmedBy: "",
+      chargeReminderLogs: [],
+      sourceType: "GOOGLE_CALENDAR"
+    };
+    state.students.push(created);
+    addLog(`[日曆同步] 已建立 Google 日曆來源學生 ${created.name}（${created.code}）。`);
+    return created;
   }
 
   function resolveStudentCodeFromCalendarEvent(event, coachCode) {
@@ -1396,6 +1471,7 @@
     let updatedStart = 0;
     let relinkedEventId = 0;
     let createdLessons = 0;
+    let createdGoogleStudents = 0;
     let skippedUnmatchedStudent = 0;
     let skippedNonLessonEvent = 0;
 
@@ -1413,10 +1489,16 @@
         return;
       }
 
-      const studentCode = resolveStudentCodeFromCalendarEvent(event, coachCode);
+      let studentCode = resolveStudentCodeFromCalendarEvent(event, coachCode);
       if (!studentCode) {
-        skippedUnmatchedStudent += 1;
-        return;
+        const googleStudent = ensureGoogleEventStudentProfile(event, coachCode);
+        studentCode = googleStudent?.code || "";
+        if (studentCode) {
+          createdGoogleStudents += 1;
+        } else {
+          skippedUnmatchedStudent += 1;
+          return;
+        }
       }
 
       const normalizedEventId = normalizeCalendarEventId(eventId);
@@ -1462,6 +1544,7 @@
       updatedStart,
       relinkedEventId,
       createdLessons,
+      createdGoogleStudents,
       skippedUnmatchedStudent,
       skippedNonLessonEvent,
       matchedLessonIds: Array.from(usedLessonIds)
@@ -1535,6 +1618,7 @@
     }
     const meta = getMonthMeta(coachCalendarMonthStart);
     const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
+    const monthRange = getMonthSyncRange(coachCalendarMonthStart);
     const collectMonthLessons = () => state.lessons
       .filter(
         (lesson) =>
@@ -1543,34 +1627,13 @@
           getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix)
       )
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
-    const collectFutureLessons = () => {
-      const now = new Date();
-      return state.lessons
-        .filter(
-          (lesson) =>
-            lesson.coachCode === activeCoachCode &&
-            lesson.calendarOccupied &&
-            new Date(lesson.startAt) >= now
-        )
-        .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
-    };
 
-    const monthLessons = collectMonthLessons();
-    const useMonthScope = monthLessons.length > 0;
-    let lessons = useMonthScope ? monthLessons : collectFutureLessons();
-    const syncScopeText = useMonthScope
-      ? `${String(meta.year).padStart(4, "0")}/${String(meta.month).padStart(2, "0")} 當月`
-      : "未來課程";
-
-    if (!lessons.length) {
-      if (el.coachCalendarSyncText) {
-        el.coachCalendarSyncText.textContent = "沒有可同步檢查的課程（當月與未來皆無）。";
-      }
-      return;
-    }
+    let lessons = collectMonthLessons();
+    const syncScopeText = `${String(meta.year).padStart(4, "0")}/${String(meta.month).padStart(2, "0")} 當月`;
+    const calendarPayload = getCalendarPayloadForCoach(activeCoachCode);
 
     const confirmed = window.confirm(
-      `本次將檢查 ${lessons.length} 堂${syncScopeText}。\n若 Google 日曆找不到事件，系統會同步移除該堂課（可於「同步移除清單」還原）。\n是否繼續？`
+      `本次將以 Google 日曆同步 ${syncScopeText}。\n會先讀取 Google 當月事件並更新請假系統課程；若本地課程在 Google 當月找不到對應事件，會列入同步移除確認。\n是否繼續？`
     );
     if (!confirmed) {
       if (el.coachCalendarSyncText) {
@@ -1583,7 +1646,7 @@
       el.coachCalendarSyncBtn.disabled = true;
     }
     if (el.coachCalendarSyncText) {
-      el.coachCalendarSyncText.textContent = `同步中... 0/${lessons.length}`;
+      el.coachCalendarSyncText.textContent = `同步中... 讀取 Google ${syncScopeText}`;
     }
 
     let checkedCount = 0;
@@ -1600,6 +1663,8 @@
     let alignedSummary = "";
     let alignedLessonIdSet = null;
     let listEventsLoaded = false;
+    let googleEventCount = 0;
+    let syncedCalendarId = "";
 
     const batchSize = Math.max(1, Math.min(8, Number(window.APP_CONFIG?.calendarSyncBatchSize || 4)));
     const updateProgressText = () => {
@@ -1609,87 +1674,100 @@
     };
 
     try {
-      const range = useMonthScope
-        ? getMonthSyncRange(coachCalendarMonthStart)
-        : getSyncRangeFromLessons(lessons);
-      if (range) {
-        try {
-          const listResult = await callAppsScriptApi("listEvents", range);
-          const events = Array.isArray(listResult?.events) ? listResult.events : [];
-          listEventsLoaded = true;
-          const alignStats = alignCoachLessonsWithGoogleEvents(activeCoachCode, events);
-          alignedLessonIdSet = new Set(Array.isArray(alignStats.matchedLessonIds) ? alignStats.matchedLessonIds : []);
-          if (alignStats.totalEvents > 0) {
-            alignedSummary = `Google對齊：抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆，未匹配學生 ${alignStats.skippedUnmatchedStudent} 筆，非課程事件 ${alignStats.skippedNonLessonEvent} 筆`;
-            addLog(`[日曆同步] ${alignedSummary}`);
-          } else {
-            alignedSummary = "Google對齊：查無事件。";
-            addLog(`[日曆同步] ${alignedSummary}`);
-          }
-          lessons = useMonthScope ? collectMonthLessons() : collectFutureLessons();
-        } catch (error) {
-          const message = String(error?.message || "未知錯誤");
-          addLog(`[日曆同步] Google 對齊略過：${message}`);
+      try {
+        const listResult = await callAppsScriptApi("listEvents", {
+          ...monthRange,
+          ...calendarPayload,
+          coachCode: activeCoachCode
+        });
+        const events = Array.isArray(listResult?.events) ? listResult.events : [];
+        listEventsLoaded = true;
+        googleEventCount = events.length;
+        syncedCalendarId = String(listResult?.calendarId || calendarPayload.calendarId || "").trim();
+        const alignStats = alignCoachLessonsWithGoogleEvents(activeCoachCode, events);
+        alignedLessonIdSet = new Set(Array.isArray(alignStats.matchedLessonIds) ? alignStats.matchedLessonIds : []);
+        if (alignStats.totalEvents > 0) {
+          alignedSummary = `Google對齊：calendar ${syncedCalendarId || "-"}，抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆，Google來源學生 ${alignStats.createdGoogleStudents} 筆，未匹配學生 ${alignStats.skippedUnmatchedStudent} 筆，非課程事件 ${alignStats.skippedNonLessonEvent} 筆`;
+          addLog(`[日曆同步] ${alignedSummary}`);
+        } else {
+          alignedSummary = `Google對齊：calendar ${syncedCalendarId || "-"} 查無事件。`;
+          addLog(`[日曆同步] ${alignedSummary}`);
         }
+        lessons = collectMonthLessons();
+      } catch (error) {
+        const message = String(error?.message || "未知錯誤");
+        addLog(`[日曆同步] Google 對齊略過：${message}`);
       }
 
-      for (let index = 0; index < lessons.length; index += batchSize) {
-        const batch = lessons.slice(index, index + batchSize);
-        const batchResults = await Promise.allSettled(batch.map((lesson) => checkCalendarEventExists(lesson)));
-        for (let offset = 0; offset < batch.length; offset += 1) {
+      if (listEventsLoaded && alignedLessonIdSet) {
+        for (const lesson of lessons) {
           checkedCount += 1;
-          const lesson = batch[offset];
-          const result = batchResults[offset];
-          if (result.status === "rejected") {
-            errorCount += 1;
-            const message = String(result.reason?.message || result.reason || "未知錯誤");
-            addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${message}`);
-            continue;
-          }
-          const check = result.value || {};
-          if (check.unsupported) {
-            unsupportedCount += 1;
-            continue;
-          }
-          if (check.generatedLocalId) {
-            generatedLocalIdCount += 1;
-            if (
-              listEventsLoaded &&
-              alignedLessonIdSet &&
-              !alignedLessonIdSet.has(lesson.id) &&
-              new Date(lesson.startAt) >= new Date()
-            ) {
-              pendingRemoveLessons.push(lesson);
-              generatedLocalPendingRemoveCount += 1;
-            }
-            continue;
-          }
-          if (check.error) {
-            errorCount += 1;
-            addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${check.message}`);
-            continue;
-          }
-          if (check.exists === true) {
+          if (alignedLessonIdSet.has(lesson.id)) {
             alreadyOkCount += 1;
             continue;
           }
-          if (check.missingEventId) {
+          const hasGeneratedLocalEventId = isGeneratedLocalCalendarEventId(lesson.calendarEventId);
+          if (hasGeneratedLocalEventId) {
+            generatedLocalIdCount += 1;
+          }
+          if (!String(lesson.calendarEventId || "").trim()) {
             missingIdCount += 1;
-            continue;
           }
-          if (!check.explicitNotFound) {
-            errorCount += 1;
-            addLog(`[日曆同步] 檢查結果不明，已略過 ${lesson.id}`);
-            continue;
+          if (!hasGeneratedLocalEventId) {
+            explicitNotFoundCount += 1;
           }
-          if (new Date(lesson.startAt) < new Date()) {
-            pastMissingKeptCount += 1;
-            continue;
-          }
-          explicitNotFoundCount += 1;
           pendingRemoveLessons.push(lesson);
+          if (hasGeneratedLocalEventId) {
+            generatedLocalPendingRemoveCount += 1;
+          }
         }
         updateProgressText();
+      } else if (lessons.length) {
+        for (let index = 0; index < lessons.length; index += batchSize) {
+          const batch = lessons.slice(index, index + batchSize);
+          const batchResults = await Promise.allSettled(batch.map((lesson) => checkCalendarEventExists(lesson)));
+          for (let offset = 0; offset < batch.length; offset += 1) {
+            checkedCount += 1;
+            const lesson = batch[offset];
+            const result = batchResults[offset];
+            if (result.status === "rejected") {
+              errorCount += 1;
+              const message = String(result.reason?.message || result.reason || "未知錯誤");
+              addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${message}`);
+              continue;
+            }
+            const check = result.value || {};
+            if (check.unsupported) {
+              unsupportedCount += 1;
+              continue;
+            }
+            if (check.generatedLocalId) {
+              generatedLocalIdCount += 1;
+              continue;
+            }
+            if (check.error) {
+              errorCount += 1;
+              addLog(`[日曆同步] 檢查失敗 ${lesson.id}：${check.message}`);
+              continue;
+            }
+            if (check.exists === true) {
+              alreadyOkCount += 1;
+              continue;
+            }
+            if (check.missingEventId) {
+              missingIdCount += 1;
+              continue;
+            }
+            if (!check.explicitNotFound) {
+              errorCount += 1;
+              addLog(`[日曆同步] 檢查結果不明，已略過 ${lesson.id}`);
+              continue;
+            }
+            explicitNotFoundCount += 1;
+            pendingRemoveLessons.push(lesson);
+          }
+          updateProgressText();
+        }
       }
 
       if (pendingRemoveLessons.length) {
@@ -1700,7 +1778,7 @@
           ? `\n另有 ${explicitNotFoundCount} 堂為 Google 明確回報不存在。`
           : "";
         const confirmRemoval = window.confirm(
-          `本次有 ${pendingRemoveLessons.length} 堂課待同步移除。${generatedHint}${explicitHint}\n是否要同步移除這 ${pendingRemoveLessons.length} 堂課？`
+          `本次有 ${pendingRemoveLessons.length} 堂課在 Google ${syncScopeText} 找不到對應事件。${generatedHint}${explicitHint}\n是否要同步移除這 ${pendingRemoveLessons.length} 堂課？`
         );
         if (confirmRemoval) {
           pendingRemoveLessons.forEach((lesson) => {
@@ -1712,7 +1790,8 @@
         }
       }
 
-      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂` : ""}${generatedLocalPendingRemoveCount ? `（待移除 ${generatedLocalPendingRemoveCount} 堂）` : generatedLocalIdCount ? "（已略過）" : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂（已略過）` : ""}${pastMissingKeptCount ? `，歷史課程缺事件 ${pastMissingKeptCount} 堂（保留）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
+      const googleSummary = listEventsLoaded ? `，Google事件 ${googleEventCount} 筆` : "";
+      const summary = `${syncScopeText}：已檢查 ${checkedCount} 堂${googleSummary}，已同步移除 ${removedCount} 堂，正常 ${alreadyOkCount} 堂，錯誤 ${errorCount} 堂${unsupportedCount ? `，端點未支援 ${unsupportedCount} 堂` : ""}${generatedLocalIdCount ? `，本機暫存事件ID ${generatedLocalIdCount} 堂` : ""}${generatedLocalPendingRemoveCount ? `（待移除 ${generatedLocalPendingRemoveCount} 堂）` : generatedLocalIdCount ? "（已略過）" : ""}${missingIdCount ? `，缺事件ID ${missingIdCount} 堂` : ""}${pastMissingKeptCount ? `，歷史課程缺事件 ${pastMissingKeptCount} 堂（保留）` : ""}${pendingRemoveLessons.length && removedCount !== pendingRemoveLessons.length ? `，取消移除 ${pendingRemoveLessons.length - removedCount} 堂` : ""}${alignedSummary ? `，${alignedSummary}` : ""}`;
       addLog(`[日曆同步] ${summary}`);
       if (el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;
