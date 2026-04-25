@@ -1,4 +1,4 @@
-﻿(function () {
+(function () {
   "use strict";
 
   const STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -3994,7 +3994,41 @@
     if (!el.eventLog) {
       return;
     }
-    el.eventLog.innerHTML = state.eventLog.slice(0, 25).map((item) => `<li>${formatDateTime(item.at)} - ${item.message}</li>`).join("");
+    const isStudentPage = String(window.location.pathname || "").toLowerCase().includes("leave-student");
+    if (!isStudentPage) {
+      el.eventLog.innerHTML = state.eventLog.slice(0, 25).map((item) => `<li>${formatDateTime(item.at)} - ${item.message}</li>`).join("");
+      return;
+    }
+    const studentCode = normalizeParticipantCode(activeStudentCode);
+    if (!studentCode) {
+      el.eventLog.innerHTML = "<li>載入學生後會顯示自己的事件紀錄。</li>";
+      return;
+    }
+    const relatedIds = new Set([studentCode]);
+    state.lessons
+      .filter((lesson) => lesson.studentCode === studentCode)
+      .forEach((lesson) => relatedIds.add(lesson.id));
+    state.leaveRequests
+      .filter((leave) => leave.studentCode === studentCode)
+      .forEach((leave) => relatedIds.add(leave.id));
+    state.makeupRequests
+      .filter((request) => request.studentCode === studentCode)
+      .forEach((request) => relatedIds.add(request.id));
+    const otherStudentCodes = state.students
+      .map((student) => normalizeParticipantCode(student.code))
+      .filter((code) => code && code !== studentCode);
+    const visibleLogs = state.eventLog
+      .filter((item) => {
+        const message = String(item.message || "");
+        if (otherStudentCodes.some((code) => message.includes(code))) {
+          return false;
+        }
+        return Array.from(relatedIds).some((id) => id && message.includes(id));
+      })
+      .slice(0, 25);
+    el.eventLog.innerHTML = visibleLogs.length
+      ? visibleLogs.map((item) => `<li>${formatDateTime(item.at)} - ${item.message}</li>`).join("")
+      : "<li>目前沒有這位學生的事件紀錄。</li>";
   }
 
   function renderChargePanel() {
