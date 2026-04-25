@@ -1521,14 +1521,17 @@
 
   function alignCoachLessonsWithGoogleEvents(coachCode, events) {
     const usedLessonIds = new Set();
-    const eventIdToLesson = new Map();
+    const eventIdToLessons = new Map();
     state.lessons.forEach((lesson) => {
       if (lesson.coachCode !== coachCode || !isGoogleSyncLesson(lesson)) {
         return;
       }
       const key = normalizeCalendarEventId(lesson.calendarEventId);
       if (key) {
-        eventIdToLesson.set(key, lesson);
+        if (!eventIdToLessons.has(key)) {
+          eventIdToLessons.set(key, []);
+        }
+        eventIdToLessons.get(key).push(lesson);
       }
     });
 
@@ -1571,7 +1574,10 @@
       }
 
       const normalizedEventId = normalizeCalendarEventId(eventId);
-      let lesson = eventIdToLesson.get(normalizedEventId) || null;
+      const sameEventLessons = eventIdToLessons.get(normalizedEventId) || [];
+      let lesson = sameEventLessons
+        .filter((item) => !usedLessonIds.has(item.id))
+        .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - new Date(startAt).getTime()) - Math.abs(new Date(b.startAt).getTime() - new Date(startAt).getTime()))[0] || null;
       if (!lesson) {
         lesson = pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, startAt, maxRelinkDistanceMs);
       }
