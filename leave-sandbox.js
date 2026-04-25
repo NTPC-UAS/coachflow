@@ -4583,13 +4583,16 @@
       stage: String(stage || ""),
       urlParams: {
         coachCode: String(params.get("coachCode") || ""),
+        studentCode: String(params.get("studentCode") || ""),
         code: String(params.get("code") || "")
       },
       storedLeavePrefill: readJsonFromStorage(LEAVE_PREFILL_STORAGE_KEY),
       coachflowSession: readJsonFromStorage("coachflow-v2-session"),
       coachflowCurrentCoachId: String(readJsonFromStorage("coachflow-v2-state")?.currentCoachId || ""),
+      mergedStudentCode: String(payload.mergedStudentCode || ""),
       mergedCoachCode: String(payload.mergedCoachCode || ""),
       stateCoaches: Array.isArray(state.coaches) ? state.coaches.map((coach) => ({ ...coach })) : [],
+      activateStudentSessionResult: payload.activateStudentSessionResult,
       activateCoachSessionResult: payload.activateCoachSessionResult
     };
     window.__coachflowLeaveDebug = snapshot;
@@ -4691,10 +4694,15 @@
     );
     const storedPrefill = readLeavePrefillSession();
     const coachflowPrefill = readCoachflowSessionPrefill();
+    const hasUrlStudentCode = Boolean(studentCode);
+    const hasUrlCoachCode = Boolean(coachCode);
+    const hasStoredStudentPrefill = Boolean(storedPrefill?.studentCode);
+    const hasStoredCoachPrefill = Boolean(storedPrefill?.coachCode);
+    const coachflowSessionStudentCode = isStudentPage ? "" : coachflowPrefill?.studentCode;
     const mergedStudentCode = normalizeParticipantCode(
       studentCode ||
       storedPrefill?.studentCode ||
-      coachflowPrefill?.studentCode ||
+      coachflowSessionStudentCode ||
       ""
     );
     const mergedCoachCode = normalizeParticipantCode(
@@ -4708,6 +4716,9 @@
       (storedPrefill && (storedPrefill.coachCode || storedPrefill.studentCode)) ||
       (coachflowPrefill && (coachflowPrefill.coachCode || coachflowPrefill.studentCode))
     );
+    const hasActionablePrefill = isStudentPage
+      ? Boolean(hasUrlStudentCode || hasStoredStudentPrefill || (autoLoginRequested && (hasUrlStudentCode || hasStoredStudentPrefill)))
+      : Boolean(hasUrlCoachCode || hasStoredCoachPrefill || (autoLoginRequested && (hasUrlCoachCode || hasStoredCoachPrefill)));
 
     if (mergedStudentCode && el.studentCode) {
       el.studentCode.value = mergedStudentCode;
@@ -4719,13 +4730,15 @@
       el.coachCode.value = mergedCoachCode;
     }
     emitLeavePrefillDebug("applySessionPrefillFromUrl", {
+      mergedStudentCode,
       mergedCoachCode
     });
     return {
       studentCode: mergedStudentCode,
       coachCode: mergedCoachCode,
       from: mergedFrom,
-      autoLoginRequested: autoLoginRequested || hasFallbackPrefill
+      autoLoginRequested: (autoLoginRequested || hasFallbackPrefill) && hasActionablePrefill,
+      hasActionablePrefill
     };
   }
 
@@ -4743,9 +4756,14 @@
     })();
 
     const sessionPrefill = applySessionPrefillFromUrl();
-    const hasUrlPrefill = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
-    const shouldForceProfileFromUrl = hasUrlPrefill &&
-      (sessionPrefill.autoLoginRequested || String(sessionPrefill.from || "").toLowerCase().startsWith("coachflow"));
+    const hasPrefillValue = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
+    const shouldAutoLoginFromPrefill = Boolean(
+      sessionPrefill.autoLoginRequested &&
+      sessionPrefill.hasActionablePrefill
+    );
+    const shouldForceProfileFromUrl = hasPrefillValue &&
+      shouldAutoLoginFromPrefill &&
+      String(sessionPrefill.from || "").toLowerCase().startsWith("coachflow");
     if (shouldForceProfileFromUrl) {
       const fallbackCoachCode = normalizeParticipantCode(
         sessionPrefill.coachCode ||
@@ -4773,7 +4791,7 @@
     let autoStudentLoaded = false;
     let autoCoachLoaded = false;
 
-    if (hasUrlPrefill) {
+    if (shouldAutoLoginFromPrefill) {
       if (sessionPrefill.studentCode) {
         autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, sessionPrefill.coachCode, true);
       }
@@ -4789,7 +4807,7 @@
           autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
         }
       }
-    } else {
+    } else if (!hasPrefillValue) {
       autoStudentLoaded = el.studentCode && el.studentCoachCode
         ? activateStudentSession(el.studentCode.value, el.studentCoachCode.value, true)
         : false;
@@ -4811,7 +4829,9 @@
     setStudentLoginPromptVisibility(shouldHideStudentLoginPrompt);
     setCoachLoginPromptVisibility(shouldHideCoachLoginPrompt);
     emitLeavePrefillDebug("bootstrap-auto-login", {
+      mergedStudentCode: sessionPrefill.studentCode,
       mergedCoachCode: sessionPrefill.coachCode,
+      activateStudentSessionResult: autoStudentLoaded,
       activateCoachSessionResult: autoCoachLoaded
     });
 
