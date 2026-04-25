@@ -5178,11 +5178,6 @@
     if (!autoStudentLoaded && !autoCoachLoaded) {
       renderAll();
     }
-    if (autoStudentLoaded || autoCoachLoaded) {
-      setUiStatus("已自動帶入 CoachFlow 身份，可直接操作月曆。");
-    } else {
-      setUiStatus("已完成 coachflow 資料同步，可直接登入並點月曆。");
-    }
 
     try {
       const cloudSyncChanged = await cloudSyncPromise;
