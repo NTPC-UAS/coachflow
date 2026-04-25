@@ -81,6 +81,7 @@
     chargeStudentSelect: document.getElementById("charge-student-select"),
     chargeStudentEmailInput: document.getElementById("charge-student-email-input"),
     chargeStudentEmailSaveBtn: document.getElementById("charge-student-email-save-btn"),
+    chargeEmailSendBtn: document.getElementById("charge-email-send-btn"),
     chargeStudentEmailMeta: document.getElementById("charge-student-email-meta"),
     chargeBaseCountInput: document.getElementById("charge-base-count-input"),
     chargeBaseCountSaveBtn: document.getElementById("charge-base-count-save-btn"),
@@ -1997,6 +1998,25 @@
           ].join("\n")
         };
       }
+      case "billing_summary": {
+        return {
+          subject: `[CoachFlow] 計費摘要｜${studentText}`,
+          body: [
+            `${studentText} 您好：`,
+            "",
+            "以下為目前 CoachFlow 計費摘要：",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `累積扣堂：${payload.totalChargedCount ?? "-"}`,
+            `起始堂數：${payload.baseChargedCount ?? "-"}`,
+            `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
+            `繳費狀態：${payload.paymentStatusLabel || "-"}`,
+            `繳費註記：${payload.paymentNote || "無"}`,
+            "",
+            "此信件由 CoachFlow 請假系統手動發送。"
+          ].join("\n")
+        };
+      }
       case "leave_submitted": {
         return {
           subject: `[CoachFlow] 已收到請假申請｜${studentText}`,
@@ -2443,6 +2463,68 @@
       return sent;
     } finally {
       sendingChargeReminderKeys.delete(reminderKey);
+    }
+  }
+
+  async function sendSelectedStudentChargeEmail() {
+    const stats = getStudentChargeStats(selectedChargeStudentCode);
+    const student = stats.student;
+    if (!student) {
+      alert("請先選擇學生。");
+      return false;
+    }
+    const reminderLogs = Array.isArray(student.chargeReminderLogs) ? student.chargeReminderLogs : [];
+    const sendKey = `${student.code}:manual`;
+    if (sendingChargeReminderKeys.has(sendKey)) {
+      return false;
+    }
+    sendingChargeReminderKeys.add(sendKey);
+    if (el.chargeEmailSendBtn) {
+      el.chargeEmailSendBtn.disabled = true;
+      el.chargeEmailSendBtn.textContent = "寄送中...";
+    }
+
+    try {
+      const payload = {
+        studentCode: student.code,
+        coachCode: student.coachCode,
+        milestone: stats.totalChargedCount,
+        totalChargedCount: stats.totalChargedCount,
+        baseChargedCount: stats.startCount,
+        systemChargedCount: stats.chargedLessons.length,
+        paymentStatusLabel: getPaymentStatusLabel(student.paymentStatus),
+        paymentNote: String(student.paymentNote || ""),
+        triggerSource: "manual_charge_panel"
+      };
+      const recipientsText = resolveNoticeRecipients(payload).join(", ");
+      const sent = await trySendEmailNotice(
+        "billing_summary",
+        payload,
+        `${student.code} 計費摘要`
+      );
+      const logEntry = {
+        id: newId("BILLMAIL"),
+        milestone: stats.totalChargedCount,
+        label: `手動寄送（累計 ${stats.totalChargedCount} 堂）`,
+        status: sent ? "success" : "failed",
+        sentAt: new Date().toISOString(),
+        to: recipientsText,
+        note: sent
+          ? "計費摘要已手動寄送"
+          : (recipientsText ? "寄送失敗，已建立補償任務" : "缺少收件人，未寄送"),
+        triggerSource: "manual_charge_panel"
+      };
+      student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
+      addLog(`[計費] ${student.code} 計費摘要${sent ? "已寄送" : "未寄送"}。`);
+      saveState();
+      renderChargePanel();
+      return sent;
+    } finally {
+      sendingChargeReminderKeys.delete(sendKey);
+      if (el.chargeEmailSendBtn) {
+        el.chargeEmailSendBtn.disabled = false;
+        el.chargeEmailSendBtn.textContent = "寄送計費 Email";
+      }
     }
   }
 
@@ -4127,6 +4209,9 @@
       if (el.chargeStudentEmailMeta) {
         el.chargeStudentEmailMeta.textContent = "尚未設定學生通知 Email，將改用預設通知信箱。";
       }
+      if (el.chargeEmailSendBtn) {
+        el.chargeEmailSendBtn.disabled = true;
+      }
       if (el.chargeBaseCountInput) {
         el.chargeBaseCountInput.value = "0";
       }
@@ -4165,6 +4250,10 @@
     }
     if (el.chargeStudentEmailInput) {
       el.chargeStudentEmailInput.value = String(student.email || "");
+    }
+    if (el.chargeEmailSendBtn) {
+      el.chargeEmailSendBtn.disabled = false;
+      el.chargeEmailSendBtn.textContent = "寄送計費 Email";
     }
     if (el.chargeStudentEmailMeta) {
       const fallback = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
@@ -4210,7 +4299,7 @@
 
     const reminderRows = reminderLogs.map((item) => `
       <tr>
-        <td>第 ${item.milestone} 堂</td>
+        <td>${item.label || `第 ${item.milestone} 堂`}</td>
         <td>${getChargeReminderStatusPill(item.status)}</td>
         <td>${item.sentAt ? formatDateTime(item.sentAt) : "-"}</td>
         <td>${item.to || "-"}</td>
@@ -4628,6 +4717,13 @@
     }
     if (el.chargeStudentEmailSaveBtn) {
       el.chargeStudentEmailSaveBtn.addEventListener("click", saveSelectedStudentNotifyEmail);
+    }
+    if (el.chargeEmailSendBtn) {
+      el.chargeEmailSendBtn.addEventListener("click", () => {
+        sendSelectedStudentChargeEmail().catch((error) => {
+          console.error("manual billing email failed:", error);
+        });
+      });
     }
     if (el.chargeBaseCountSaveBtn) {
       el.chargeBaseCountSaveBtn.addEventListener("click", saveChargeStartCount);
