@@ -1467,6 +1467,22 @@
     const searchable = `${event?.title || ""}\n${event?.description || ""}\n${event?.location || ""}`.toLowerCase();
     const eventTitle = String(event?.title || "");
     const students = state.students.filter((student) => student.coachCode === coachCode);
+    const aliases = window.APP_CONFIG?.calendarStudentAliases && typeof window.APP_CONFIG.calendarStudentAliases === "object"
+      ? window.APP_CONFIG.calendarStudentAliases
+      : {};
+    const aliasKey = normalizeLooseText(eventTitle);
+    const aliasTarget = Object.entries(aliases).find(([alias]) => normalizeLooseText(alias) === aliasKey)?.[1];
+    if (aliasTarget) {
+      const targetText = String(aliasTarget || "").trim();
+      const targetLoose = normalizeLooseText(targetText);
+      const matchedByAlias = students.find((student) => (
+        String(student.code || "").trim().toLowerCase() === targetText.toLowerCase() ||
+        normalizeLooseText(student.name) === targetLoose
+      ));
+      if (matchedByAlias) {
+        return matchedByAlias.code;
+      }
+    }
     let bestCode = "";
     let bestScore = 0;
     let hasTie = false;
@@ -1577,7 +1593,10 @@
       const normalizedEventId = normalizeCalendarEventId(eventId);
       const sameEventLessons = eventIdToLessons.get(normalizedEventId) || [];
       let lesson = sameEventLessons
-        .filter((item) => !usedLessonIds.has(item.id))
+        .filter((item) => (
+          !usedLessonIds.has(item.id) &&
+          Math.abs(new Date(item.startAt).getTime() - new Date(startAt).getTime()) <= maxRelinkDistanceMs
+        ))
         .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - new Date(startAt).getTime()) - Math.abs(new Date(b.startAt).getTime() - new Date(startAt).getTime()))[0] || null;
       if (!lesson) {
         lesson = pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, startAt, maxRelinkDistanceMs);
@@ -1886,6 +1905,68 @@
         el.coachCalendarSyncBtn.disabled = false;
       }
     }
+  }
+
+  async function syncStudentCalendarEventsFromGoogle() {
+    if (!activeStudentCode || !activeCoachCode || !getAppsScriptUrl()) {
+      return false;
+    }
+    const calendarPayload = getCalendarPayloadForCoach(activeCoachCode);
+    if (!calendarPayload.calendarId && !calendarPayload.coachCalendarId) {
+      return false;
+    }
+    const monthStarts = [
+      getMonthStart(studentCalendarMonthStart || new Date()),
+      shiftMonth(studentCalendarMonthStart || new Date(), 1),
+      shiftMonth(studentCalendarMonthStart || new Date(), 2)
+    ];
+    let totalEvents = 0;
+    let totalMatched = 0;
+    let totalCreated = 0;
+    let totalRemovedPlaceholders = 0;
+    let syncedAny = false;
+    for (const monthStart of monthStarts) {
+      const monthRange = getMonthSyncRange(monthStart);
+      try {
+        const listResult = await callAppsScriptApi("listEvents", {
+          ...monthRange,
+          ...calendarPayload,
+          coachCode: activeCoachCode
+        });
+        const events = Array.isArray(listResult?.events) ? listResult.events : [];
+        const stats = alignCoachLessonsWithGoogleEvents(activeCoachCode, events);
+        const matchedLessonIds = new Set(Array.isArray(stats.matchedLessonIds) ? stats.matchedLessonIds : []);
+        const meta = getMonthMeta(monthStart);
+        const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
+        state.lessons
+          .filter((lesson) => (
+            lesson.coachCode === activeCoachCode &&
+            lesson.calendarOccupied &&
+            getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
+            !matchedLessonIds.has(lesson.id) &&
+            isGeneratedLocalCalendarEventId(lesson.calendarEventId)
+          ))
+          .forEach((lesson) => {
+            markLessonRemovedByCalendar(lesson, "student_google_auto_sync");
+            totalRemovedPlaceholders += 1;
+          });
+        totalEvents += stats.totalEvents;
+        totalMatched += stats.matchedEvents;
+        totalCreated += stats.createdLessons;
+        syncedAny = true;
+      } catch (error) {
+        const message = String(error?.message || "未知錯誤");
+        addLog(`[日曆同步] 學生端自動同步略過：${message}`);
+      }
+    }
+    if (syncedAny) {
+      ensureLessonCalendarEventIds();
+      ensureParticipantEmails();
+      ensureStudentBillingProfiles();
+      saveState();
+      addLog(`[日曆同步] 學生端已自動同步 Google 課程：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆。`);
+    }
+    return syncedAny;
   }
 
   function markLessonRemovedByCalendar(lesson, reason) {
@@ -5051,6 +5132,10 @@
 
     try {
       const cloudSyncChanged = await cloudSyncPromise;
+      let studentCalendarSynced = false;
+      if (autoStudentLoaded && activeStudentCode) {
+        studentCalendarSynced = await syncStudentCalendarEventsFromGoogle();
+      }
       if (cloudSyncChanged) {
         if (studentLoginPromptHidden && el.studentCode && activeStudentCode && el.studentCode.value !== activeStudentCode) {
           el.studentCode.value = activeStudentCode;
@@ -5058,6 +5143,9 @@
         if (coachLoginPromptHidden && el.coachCode && activeCoachCode && el.coachCode.value !== activeCoachCode) {
           el.coachCode.value = activeCoachCode;
         }
+        renderAll();
+      }
+      if (studentCalendarSynced && !cloudSyncChanged) {
         renderAll();
       }
     } catch (error) {
