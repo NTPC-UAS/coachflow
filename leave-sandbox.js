@@ -109,6 +109,7 @@
   let coachReviewPendingRequestId = "";
   let coachReviewPendingAction = "";
   let coachRejectReasonPreset = DEFAULT_REJECT_REASON;
+  let activeCoachReadOnly = false;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
   let studentLoginPromptHidden = false;
@@ -661,6 +662,66 @@
     return targetEl ? targetEl.closest(selector) : null;
   }
 
+  function isReadonlyParamEnabled() {
+    const params = new URLSearchParams(window.location.search);
+    const values = [
+      params.get("readonly"),
+      params.get("readOnly"),
+      params.get("mode"),
+      params.get("role"),
+      params.get("permission")
+    ].map((value) => String(value || "").trim().toLowerCase());
+    return values.some((value) => ["1", "true", "yes", "readonly", "read-only", "viewer", "view"].includes(value));
+  }
+
+  function isReadonlyCoachRole(coach) {
+    const role = String(coach?.role || "").trim().toLowerCase();
+    return ["readonly", "read-only", "viewer", "view"].includes(role);
+  }
+
+  function isCoachReadOnlyMode() {
+    return Boolean(activeCoachReadOnly);
+  }
+
+  function requireCoachWriteAccess() {
+    if (!isCoachReadOnlyMode()) {
+      return true;
+    }
+    alert("此帳號為唯讀權限，只能查看教練月曆，不能修改資料。");
+    return false;
+  }
+
+  function setSectionHiddenByElement(target, hidden) {
+    const section = target?.closest?.("section, article");
+    if (section) {
+      section.hidden = Boolean(hidden);
+    }
+  }
+
+  function updateCoachReadOnlyUi() {
+    const readOnly = isCoachReadOnlyMode();
+    document.body.classList.toggle("coach-readonly-mode", readOnly);
+    [
+      el.coachLeaveAddBtn,
+      el.coachLeaveTable,
+      el.calendarRemovedTable,
+      el.coachPendingTable,
+      el.chargeStudentSelect,
+      el.compensationTable,
+      el.eventLog
+    ].forEach((target) => setSectionHiddenByElement(target, readOnly));
+    if (el.coachCalendarSyncBtn) {
+      const syncRow = el.coachCalendarSyncBtn.closest(".btn-row");
+      if (syncRow) {
+        syncRow.hidden = readOnly;
+      }
+      el.coachCalendarSyncBtn.disabled = readOnly;
+    }
+    if (el.coachCalendarSyncText && readOnly) {
+      el.coachCalendarSyncText.textContent = "唯讀模式：只能查看教練月曆，不能同步或修改資料。";
+    }
+  }
+
   function updateModalBodyState() {
     const hasOpenModal = [el.studentDayModal, el.coachDayModal, el.coachReviewModal].some((modal) => modal && !modal.hidden);
     document.body.classList.toggle("modal-open", hasOpenModal);
@@ -773,6 +834,7 @@
       return false;
     }
     activeCoachCode = coachCode;
+    activeCoachReadOnly = isReadonlyParamEnabled() || isReadonlyCoachRole(coach);
     const coachPending = state.makeupRequests
       .filter((request) => request.coachCode === coachCode && request.status === "pending")
       .sort((a, b) => new Date(a.pendingAt) - new Date(b.pendingAt))[0];
@@ -791,6 +853,7 @@
     closeCoachDayModal();
     closeCoachReviewModal();
     renderAll();
+    updateCoachReadOnlyUi();
     setUiStatus(`教練 ${coach.name || coachCode} 已載入，可直接點月曆。`);
     return true;
   }
@@ -1713,6 +1776,9 @@
   }
 
   async function syncCoachCalendarEvents() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     if (!activeCoachCode) {
       alert("請先登入教練。");
       return;
@@ -2602,6 +2668,9 @@
   }
 
   async function sendSelectedStudentChargeEmail() {
+    if (!requireCoachWriteAccess()) {
+      return false;
+    }
     const stats = getStudentChargeStats(selectedChargeStudentCode);
     const student = stats.student;
     if (!student) {
@@ -2669,6 +2738,9 @@
   }
 
   function saveSelectedStudentNotifyEmail() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const student = getStudentByCode(selectedChargeStudentCode);
     if (!student) {
       alert("請先選擇學生。");
@@ -2687,6 +2759,9 @@
   }
 
   function saveChargeStartCount() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const student = getStudentByCode(selectedChargeStudentCode);
     if (!student) {
       alert("請先選擇學生。");
@@ -2703,6 +2778,9 @@
   }
 
   function saveStudentPaymentStatus() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const student = getStudentByCode(selectedChargeStudentCode);
     if (!student) {
       alert("請先選擇學生。");
@@ -2968,6 +3046,9 @@
   }
 
   async function addCoachLeaveBlock() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     if (!activeCoachCode) {
       alert("請先登入教練帳號。");
       return;
@@ -3079,6 +3160,9 @@
   }
 
   async function removeCoachLeaveBlock(blockId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const block = (state.coachBlocks || []).find((item) => item.id === blockId);
     if (!block || block.coachCode !== activeCoachCode) {
       return;
@@ -3199,6 +3283,9 @@
   }
 
   async function revokeNormalLeave(lessonId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.coachCode !== activeCoachCode) {
       alert("找不到可取消請假的課程。");
@@ -3257,6 +3344,9 @@
   }
 
   async function approveRequest(requestId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const request = state.makeupRequests.find((item) => item.id === requestId);
     if (!request || request.coachCode !== activeCoachCode || request.status !== "pending") {
       alert("找不到待審申請，或你沒有權限。");
@@ -3305,6 +3395,9 @@
   }
 
   async function rejectRequest(requestId, reason) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const request = state.makeupRequests.find((item) => item.id === requestId);
     if (!request || request.coachCode !== activeCoachCode || request.status !== "pending") {
       alert("找不到待審申請，或你沒有權限。");
@@ -3331,6 +3424,9 @@
   }
 
   function markLessonStatus(lessonId, statusType) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.coachCode !== activeCoachCode) {
       alert("找不到課程。");
@@ -3360,6 +3456,9 @@
   }
 
   function rescheduleLessonByCoach(lessonId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.coachCode !== activeCoachCode) {
       alert("找不到課程。");
@@ -3829,6 +3928,7 @@
       </tr>
     `).join("");
 
+    const readOnly = isCoachReadOnlyMode();
     const pendingRows = pendings.map((request) => `
       <tr>
         <td>${request.code || request.id}</td>
@@ -3837,10 +3937,10 @@
         <td>${formatDateTime(request.pendingAt)}</td>
         <td>${getStatusPill(request.status)}</td>
         <td>
-          <div class="btn-row">
+          ${readOnly ? "<span class='hint'>唯讀</span>" : `<div class="btn-row">
             <button data-day-review-id="${request.id}" data-day-review-action="approve" class="primary">核准</button>
             <button data-day-review-id="${request.id}" data-day-review-action="reject" class="danger">退回</button>
-          </div>
+          </div>`}
         </td>
       </tr>
     `).join("");
@@ -3879,6 +3979,9 @@
   }
 
   function renderCoachLessonActionButtons(lesson) {
+    if (isCoachReadOnlyMode()) {
+      return "<span class=\"hint\">唯讀</span>";
+    }
     const isNormalLeave = lesson.attendanceStatus === "leave-normal";
     if (isNormalLeave) {
       return `
@@ -4056,6 +4159,9 @@
   }
 
   async function restoreCalendarRemovedLesson(lessonId, options = {}) {
+    if (!requireCoachWriteAccess()) {
+      return false;
+    }
     const { skipConfirm = false, skipRender = false, silent = false } = options;
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.coachCode !== activeCoachCode || lesson.attendanceStatus !== "calendar-removed") {
@@ -4145,6 +4251,9 @@
   }
 
   async function restoreAllCalendarRemovedLessons() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     if (!activeCoachCode) {
       alert("請先登入教練。");
       return;
@@ -4267,6 +4376,9 @@
   }
 
   async function retryCompensationTask(taskId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const tasks = Array.isArray(state.compensationTasks) ? state.compensationTasks : [];
     const task = tasks.find((item) => item.id === taskId);
     if (!task) {
@@ -4315,6 +4427,9 @@
   }
 
   async function retryAllCompensationTasks() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
     const tasks = (state.compensationTasks || []).filter((item) => item.status !== "completed");
     for (const task of tasks) {
       await retryCompensationTask(task.id);
@@ -4540,7 +4655,7 @@
     if (el.coachSessionText) {
       const coachName = getCoachDisplayName(activeCoachCode || "");
       el.coachSessionText.textContent = activeCoachCode
-        ? `已載入教練：${coachName}`
+        ? `已載入教練：${coachName}${isCoachReadOnlyMode() ? "（唯讀）" : ""}`
         : "尚未載入教練。";
     }
   }
@@ -4558,6 +4673,7 @@
     renderCompensationPanel();
     renderLogs();
     renderChargePanel();
+    updateCoachReadOnlyUi();
   }
 
   function loadSlotsForSelectedLeave() {
@@ -4720,7 +4836,11 @@
       });
     }
     if (el.coachCalendarSyncBtn) {
-      el.coachCalendarSyncBtn.addEventListener("click", syncCoachCalendarEvents);
+      el.coachCalendarSyncBtn.addEventListener("click", () => {
+        if (requireCoachWriteAccess()) {
+          syncCoachCalendarEvents();
+        }
+      });
     }
     if (el.calendarRemovedRefreshBtn) {
       el.calendarRemovedRefreshBtn.addEventListener("click", () => {
@@ -4729,6 +4849,9 @@
     }
     if (el.calendarRemovedRestoreAllBtn) {
       el.calendarRemovedRestoreAllBtn.addEventListener("click", () => {
+        if (!requireCoachWriteAccess()) {
+          return;
+        }
         restoreAllCalendarRemovedLessons();
       });
     }
@@ -4742,6 +4865,9 @@
       el.calendarRemovedTable.addEventListener("click", (event) => {
         const button = closestFromEvent(event, "button[data-action='restore-removed'][data-id]");
         if (!button) {
+          return;
+        }
+        if (!requireCoachWriteAccess()) {
           return;
         }
         restoreCalendarRemovedLesson(button.dataset.id);
@@ -4766,6 +4892,9 @@
       el.coachDayDetail.addEventListener("click", (event) => {
         const lessonButton = closestFromEvent(event, "button[data-coach-lesson-id][data-coach-mark]");
         if (lessonButton) {
+          if (!requireCoachWriteAccess()) {
+            return;
+          }
           const lessonId = lessonButton.dataset.coachLessonId;
           const mark = lessonButton.dataset.coachMark;
           selectedCoachLessonId = lessonId;
@@ -4783,6 +4912,9 @@
 
         const reviewButton = closestFromEvent(event, "button[data-day-review-id][data-day-review-action]");
         if (!reviewButton) {
+          return;
+        }
+        if (!requireCoachWriteAccess()) {
           return;
         }
         openCoachReviewModal(reviewButton.dataset.dayReviewId, reviewButton.dataset.dayReviewAction);
@@ -4835,6 +4967,9 @@
 
     if (el.coachReviewModalConfirmBtn) {
       el.coachReviewModalConfirmBtn.addEventListener("click", () => {
+        if (!requireCoachWriteAccess()) {
+          return;
+        }
         const requestId = coachReviewPendingRequestId;
         const action = coachReviewPendingAction;
         closeCoachReviewModal();
@@ -4866,12 +5001,19 @@
     }
 
     if (el.coachLeaveAddBtn) {
-      el.coachLeaveAddBtn.addEventListener("click", addCoachLeaveBlock);
+      el.coachLeaveAddBtn.addEventListener("click", () => {
+        if (requireCoachWriteAccess()) {
+          addCoachLeaveBlock();
+        }
+      });
     }
     if (el.coachLeaveTable) {
       el.coachLeaveTable.addEventListener("click", (event) => {
         const button = closestFromEvent(event, "button[data-action='remove-coach-block']");
         if (!button) {
+          return;
+        }
+        if (!requireCoachWriteAccess()) {
           return;
         }
         removeCoachLeaveBlock(button.dataset.id);
@@ -4897,6 +5039,9 @@
     }
     if (el.compensationRetryAllBtn) {
       el.compensationRetryAllBtn.addEventListener("click", () => {
+        if (!requireCoachWriteAccess()) {
+          return;
+        }
         retryAllCompensationTasks();
       });
     }
@@ -4904,6 +5049,9 @@
       el.compensationTable.addEventListener("click", (event) => {
         const button = closestFromEvent(event, "button[data-action='retry-comp']");
         if (!button) {
+          return;
+        }
+        if (!requireCoachWriteAccess()) {
           return;
         }
         retryCompensationTask(button.dataset.id);
@@ -4917,20 +5065,35 @@
       });
     }
     if (el.chargeStudentEmailSaveBtn) {
-      el.chargeStudentEmailSaveBtn.addEventListener("click", saveSelectedStudentNotifyEmail);
+      el.chargeStudentEmailSaveBtn.addEventListener("click", () => {
+        if (requireCoachWriteAccess()) {
+          saveSelectedStudentNotifyEmail();
+        }
+      });
     }
     if (el.chargeEmailSendBtn) {
       el.chargeEmailSendBtn.addEventListener("click", () => {
+        if (!requireCoachWriteAccess()) {
+          return;
+        }
         sendSelectedStudentChargeEmail().catch((error) => {
           console.error("manual billing email failed:", error);
         });
       });
     }
     if (el.chargeBaseCountSaveBtn) {
-      el.chargeBaseCountSaveBtn.addEventListener("click", saveChargeStartCount);
+      el.chargeBaseCountSaveBtn.addEventListener("click", () => {
+        if (requireCoachWriteAccess()) {
+          saveChargeStartCount();
+        }
+      });
     }
     if (el.chargePaymentSaveBtn) {
-      el.chargePaymentSaveBtn.addEventListener("click", saveStudentPaymentStatus);
+      el.chargePaymentSaveBtn.addEventListener("click", () => {
+        if (requireCoachWriteAccess()) {
+          saveStudentPaymentStatus();
+        }
+      });
     }
   }
 
