@@ -110,6 +110,7 @@
   let coachRejectReasonPreset = DEFAULT_REJECT_REASON;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
+  let studentLoginPromptHidden = false;
   let coachLoginPromptHidden = false;
 
   function loadState() {
@@ -4553,6 +4554,29 @@
     }
   }
 
+  function setStudentLoginPromptVisibility(hidden) {
+    const shouldHide = Boolean(hidden);
+    studentLoginPromptHidden = shouldHide;
+    const studentLoginCard = el.studentCode?.closest("section");
+    if (studentLoginCard) {
+      studentLoginCard.hidden = shouldHide;
+    }
+    if (el.studentCode) {
+      el.studentCode.readOnly = shouldHide;
+    }
+    if (el.studentCoachCode) {
+      el.studentCoachCode.readOnly = shouldHide;
+    }
+    if (el.studentLoginBtn) {
+      el.studentLoginBtn.hidden = shouldHide;
+      el.studentLoginBtn.disabled = shouldHide;
+    }
+    if (el.studentResetBtn) {
+      el.studentResetBtn.hidden = true;
+      el.studentResetBtn.disabled = true;
+    }
+  }
+
   function emitLeavePrefillDebug(stage, payload = {}) {
     const params = new URLSearchParams(window.location.search);
     const snapshot = {
@@ -4779,6 +4803,12 @@
       sessionPrefill.coachCode &&
       shouldForceProfileFromUrl
     );
+    const shouldHideStudentLoginPrompt = Boolean(
+      autoStudentLoaded &&
+      sessionPrefill.studentCode &&
+      shouldForceProfileFromUrl
+    );
+    setStudentLoginPromptVisibility(shouldHideStudentLoginPrompt);
     setCoachLoginPromptVisibility(shouldHideCoachLoginPrompt);
     emitLeavePrefillDebug("bootstrap-auto-login", {
       mergedCoachCode: sessionPrefill.coachCode,
@@ -4797,6 +4827,9 @@
     try {
       const cloudSyncChanged = await cloudSyncPromise;
       if (cloudSyncChanged) {
+        if (studentLoginPromptHidden && el.studentCode && activeStudentCode && el.studentCode.value !== activeStudentCode) {
+          el.studentCode.value = activeStudentCode;
+        }
         if (coachLoginPromptHidden && el.coachCode && activeCoachCode && el.coachCode.value !== activeCoachCode) {
           el.coachCode.value = activeCoachCode;
         }

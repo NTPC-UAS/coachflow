@@ -11,7 +11,7 @@
     const current = new URL(window.location.href);
     const params = new URLSearchParams(current.search);
     params.set("mode", "admin");
-  params.set("v", "20260425-0002");
+  params.set("v", "20260425-0003");
     const target = new URL("index.html", PUBLIC_BASE_URL);
     params.forEach((value, key) => target.searchParams.set(key, value));
     target.hash = current.hash || "";
