@@ -284,6 +284,76 @@
       .metric-grid { grid-template-columns: 1fr; }
       .cal-cell { min-height: 96px; }
     }
+    @media (max-width: 640px) {
+      .shell {
+        padding: 16px 10px 32px;
+      }
+      .banner,
+      .card {
+        border-radius: 14px;
+      }
+      .card {
+        padding: 14px;
+      }
+      h1 {
+        font-size: 28px;
+        line-height: 1.2;
+      }
+      .calendar-topbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .calendar-topbar .btn-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+      .calendar-topbar button {
+        width: 100%;
+        justify-content: center;
+      }
+      body.coach-readonly-mode .calendar-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+        border: 0;
+        border-radius: 0;
+        overflow: visible;
+      }
+      body.coach-readonly-mode .cal-weekday,
+      body.coach-readonly-mode .cal-cell.dim,
+      body.coach-readonly-mode .cal-cell.no-lessons {
+        display: none;
+      }
+      body.coach-readonly-mode .cal-cell {
+        min-height: 0;
+        border: 1px solid #f2c9a5;
+        border-radius: 14px;
+        padding: 12px;
+        background: #fffdfa;
+        box-shadow: 0 8px 22px rgba(154, 52, 18, 0.08);
+        cursor: default;
+      }
+      body.coach-readonly-mode .cal-cell.today {
+        box-shadow: inset 0 0 0 2px #c2410c, 0 8px 22px rgba(154, 52, 18, 0.12);
+      }
+      body.coach-readonly-mode .cal-date {
+        font-size: 18px;
+      }
+      body.coach-readonly-mode .cal-date::after {
+        content: " 日";
+        font-size: 13px;
+        color: #9a3412;
+      }
+      body.coach-readonly-mode .cal-item {
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+        font-size: 15px;
+        line-height: 1.45;
+        padding: 9px 11px;
+        border-radius: 12px;
+      }
+    }
   </style>
 </head>
 <body>
@@ -481,7 +551,7 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260426-0001"></script>
-  <script src="leave-sandbox.js?v=20260426-0001"></script>
+  <script src="config.js?v=20260426-0002"></script>
+  <script src="leave-sandbox.js?v=20260426-0002"></script>
 </body>
 </html>

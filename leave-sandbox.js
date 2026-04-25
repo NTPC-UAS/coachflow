@@ -14,6 +14,7 @@
   const READ_ONLY_ACCOUNT_CODE = "READONLY";
   const READ_ONLY_DEFAULT_COACH_CODE = "MO001";
   const READ_ONLY_DEFAULT_COACH_NAME = "Monster Chang";
+  const READ_ONLY_MONTH_LOOKAHEAD = 1;
   const PAYMENT_STATUS_LABELS = {
     unknown: "未註記",
     paid: "已繳費",
@@ -581,6 +582,35 @@
     return makeTaipeiDateTime(`${String(year).padStart(4, "0")}-${String(month).padStart(2, "0")}-01`, "00:00");
   }
 
+  function getMonthStartTime(date) {
+    return getMonthStart(date).getTime();
+  }
+
+  function getReadOnlyMonthBounds() {
+    const minMonth = getMonthStart(new Date());
+    return {
+      minMonth,
+      maxMonth: shiftMonth(minMonth, READ_ONLY_MONTH_LOOKAHEAD)
+    };
+  }
+
+  function clampReadOnlyCoachMonth() {
+    if (!isCoachReadOnlyMode()) {
+      return false;
+    }
+    const { minMonth, maxMonth } = getReadOnlyMonthBounds();
+    const currentTime = getMonthStartTime(coachCalendarMonthStart);
+    if (currentTime < minMonth.getTime()) {
+      coachCalendarMonthStart = minMonth;
+      return true;
+    }
+    if (currentTime > maxMonth.getTime()) {
+      coachCalendarMonthStart = maxMonth;
+      return true;
+    }
+    return false;
+  }
+
   function getStudentLessonsForDate(studentCode, dateKey) {
     return state.lessons
       .filter(
@@ -870,12 +900,15 @@
     const coachLesson = state.lessons
       .filter((lesson) => lesson.coachCode === coachCode)
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0];
-    const focusDate = coachPending
-      ? new Date(coachPending.startAt)
-      : coachLesson
-        ? new Date(coachLesson.startAt)
-        : new Date();
+    const focusDate = activeCoachReadOnly
+      ? new Date()
+      : coachPending
+        ? new Date(coachPending.startAt)
+        : coachLesson
+          ? new Date(coachLesson.startAt)
+          : new Date();
     coachCalendarMonthStart = getMonthStart(focusDate);
+    clampReadOnlyCoachMonth();
     selectedCoachDateKey = getDateKeyInTaipei(focusDate);
     selectedCoachLessonId = "";
     closeStudentDayModal();
@@ -3867,9 +3900,27 @@
     if (el.coachCalendarSyncText && !el.coachCalendarSyncText.textContent.trim()) {
       el.coachCalendarSyncText.textContent = "可手動檢查是否有被外部刪除的事件。";
     }
+    clampReadOnlyCoachMonth();
 
     const meta = getMonthMeta(coachCalendarMonthStart);
     el.coachCalendarMonthLabel.textContent = `${meta.year}/${String(meta.month).padStart(2, "0")}`;
+    if (isCoachReadOnlyMode()) {
+      const { minMonth, maxMonth } = getReadOnlyMonthBounds();
+      const currentTime = getMonthStartTime(coachCalendarMonthStart);
+      if (el.coachCalendarPrevBtn) {
+        el.coachCalendarPrevBtn.disabled = currentTime <= minMonth.getTime();
+      }
+      if (el.coachCalendarNextBtn) {
+        el.coachCalendarNextBtn.disabled = currentTime >= maxMonth.getTime();
+      }
+    } else {
+      if (el.coachCalendarPrevBtn) {
+        el.coachCalendarPrevBtn.disabled = false;
+      }
+      if (el.coachCalendarNextBtn) {
+        el.coachCalendarNextBtn.disabled = false;
+      }
+    }
 
     const weekdays = ["日", "一", "二", "三", "四", "五", "六"];
     let html = weekdays.map((day) => `<div class="cal-weekday">${day}</div>`).join("");
@@ -3888,7 +3939,8 @@
       const classNames = [
         "cal-cell",
         dateKey === todayKey ? "today" : "",
-        dateKey === selectedCoachDateKey ? "selected" : ""
+        dateKey === selectedCoachDateKey ? "selected" : "",
+        lessons.length ? "" : "no-lessons"
       ].join(" ").trim();
       const todayBadge = dateKey === todayKey ? "<span class='today-badge'>今日</span>" : "";
       const readOnly = isCoachReadOnlyMode();
@@ -3914,10 +3966,10 @@
         ? renderCalendarItem(`+${lessons.length - 3}`)
         : "";
       const pendingSnippet = pendings.length
-        ? renderCalendarItem(`待審 ${pendings.length}`, "pending")
+        ? (readOnly ? "" : renderCalendarItem(`待審 ${pendings.length}`, "pending"))
         : "";
       const blockSnippet = blocks.length
-        ? renderCalendarItem(`教練請假 ${blocks.length}`)
+        ? (readOnly ? "" : renderCalendarItem(`教練請假 ${blocks.length}`))
         : "";
 
       html += `
@@ -4884,13 +4936,27 @@
 
     if (el.coachCalendarPrevBtn) {
       el.coachCalendarPrevBtn.addEventListener("click", () => {
+        if (isCoachReadOnlyMode()) {
+          const { minMonth } = getReadOnlyMonthBounds();
+          if (getMonthStartTime(coachCalendarMonthStart) <= minMonth.getTime()) {
+            return;
+          }
+        }
         coachCalendarMonthStart = shiftMonth(coachCalendarMonthStart, -1);
+        clampReadOnlyCoachMonth();
         renderCoachCalendar();
       });
     }
     if (el.coachCalendarNextBtn) {
       el.coachCalendarNextBtn.addEventListener("click", () => {
+        if (isCoachReadOnlyMode()) {
+          const { maxMonth } = getReadOnlyMonthBounds();
+          if (getMonthStartTime(coachCalendarMonthStart) >= maxMonth.getTime()) {
+            return;
+          }
+        }
         coachCalendarMonthStart = shiftMonth(coachCalendarMonthStart, 1);
+        clampReadOnlyCoachMonth();
         renderCoachCalendar();
       });
     }
