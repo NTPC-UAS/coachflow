@@ -79,7 +79,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260425-0014";
+const PUBLIC_APP_VERSION = "20260426-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -4979,12 +4979,6 @@ function renderCoachStudentLinks() {
     from: "coachflow",
     forceCoachCode: coachAccessCode
   });
-  const leaveCoachReadOnlyQuickUrl = buildCoachLeaveSystemUrl({
-    baseHref,
-    from: "coachflow-readonly",
-    forceCoachCode: coachAccessCode,
-    readOnly: true
-  });
   const leaveStudentBaseUrl =
     IS_LEAVE_SANDBOX_ENABLED && LEAVE_SANDBOX_STUDENT_PAGE
       ? new URL(LEAVE_SANDBOX_STUDENT_PAGE, baseHref)
@@ -5035,9 +5029,6 @@ function renderCoachStudentLinks() {
       ${leaveCoachQuickUrl
         ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachQuickUrl}" target="_blank" rel="noopener" data-open-coach-leave="1">開啟請假教練頁（測試）</a></div>`
         : ""}
-      ${leaveCoachReadOnlyQuickUrl
-        ? `<div class="coach-link-actions"><a class="ghost-button" href="${leaveCoachReadOnlyQuickUrl}" target="_blank" rel="noopener">開啟唯讀月曆</a></div>`
-        : ""}
     `;
     return;
   }
@@ -5067,13 +5058,6 @@ function renderCoachStudentLinks() {
         from: "coachflow",
         forceCoachCode: coachAccessCode
       });
-      const leaveCoachReadOnlyUrl = buildCoachLeaveSystemUrl({
-        baseHref,
-        from: "coachflow-readonly",
-        forceCoachCode: coachAccessCode,
-        readOnly: true
-      });
-
       return `
         <article class="coach-link-card">
             <div class="coach-link-top">
@@ -5124,9 +5108,6 @@ function renderCoachStudentLinks() {
               : ""}
             ${leaveCoachUrl
               ? `<a class="ghost-button" href="${leaveCoachUrl}" target="_blank" rel="noopener" data-open-coach-leave="1">開啟請假教練頁</a>`
-              : ""}
-            ${leaveCoachReadOnlyUrl
-              ? `<a class="ghost-button" href="${leaveCoachReadOnlyUrl}" target="_blank" rel="noopener">開啟唯讀月曆</a>`
               : ""}
             <button class="ghost-button" type="button" data-copy-student-qr="${student.id}" data-qr-link="${accessUrl.toString()}">複製 QR 連結內容</button>
             <button class="primary-button" type="button" data-copy-student-message="${student.id}" data-student-name="${student.name}" data-student-code="${student.accessCode || ""}" data-student-link="${accessUrl.toString()}" data-shared-url="${sharedUrl}">\u8907\u88fd\u7d66\u5b78\u751f\u7684\u8a0a\u606f</button>
@@ -6873,4 +6854,3 @@ function timestampNow() {
   const { year, month, day, hour, minute } = getDateTimePartsInAppZone(new Date());
   return `${year}-${month}-${day} ${hour}:${minute}`;
 }
-

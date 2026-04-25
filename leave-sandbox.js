@@ -11,6 +11,9 @@
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
   const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
   const LEAVE_PREFILL_MAX_AGE_MS = 10 * 60 * 1000;
+  const READ_ONLY_ACCOUNT_CODE = "READONLY";
+  const READ_ONLY_DEFAULT_COACH_CODE = "MO001";
+  const READ_ONLY_DEFAULT_COACH_NAME = "Monster Chang";
   const PAYMENT_STATUS_LABELS = {
     unknown: "未註記",
     paid: "已繳費",
@@ -683,6 +686,27 @@
     return Boolean(activeCoachReadOnly);
   }
 
+  function isReadOnlyLoginCode(code) {
+    return normalizeParticipantCode(code).replace(/[-_\s]/g, "") === READ_ONLY_ACCOUNT_CODE;
+  }
+
+  function resolveReadOnlyCoachCode() {
+    const configuredCoach = getCoachByCode(READ_ONLY_DEFAULT_COACH_CODE);
+    if (configuredCoach) {
+      return READ_ONLY_DEFAULT_COACH_CODE;
+    }
+    const monsterCoach = state.coaches.find((coach) => {
+      const code = normalizeParticipantCode(coach?.code);
+      const name = String(coach?.name || "").trim().toLowerCase();
+      return code.startsWith("MO") || name.includes("monster");
+    });
+    if (monsterCoach?.code) {
+      return normalizeParticipantCode(monsterCoach.code);
+    }
+    ensureCoachProfile(READ_ONLY_DEFAULT_COACH_CODE, READ_ONLY_DEFAULT_COACH_NAME);
+    return READ_ONLY_DEFAULT_COACH_CODE;
+  }
+
   function requireCoachWriteAccess() {
     if (!isCoachReadOnlyMode()) {
       return true;
@@ -719,6 +743,9 @@
     }
     if (el.coachCalendarSyncText && readOnly) {
       el.coachCalendarSyncText.textContent = "唯讀模式：只能查看教練月曆，不能同步或修改資料。";
+    }
+    if (el.coachCalendarGrid && readOnly) {
+      closeCoachDayModal();
     }
   }
 
@@ -800,6 +827,7 @@
     }
     activeStudentCode = studentCode;
     activeCoachCode = resolvedCoachCode;
+    activeCoachReadOnly = false;
     selectedChargeStudentCode = studentCode;
     if (el.studentCoachCode) {
       el.studentCoachCode.value = resolvedCoachCode;
@@ -825,7 +853,8 @@
   }
 
   function activateCoachSession(coachCodeInput, silentMode) {
-    const coachCode = normalizeParticipantCode(coachCodeInput);
+    const isReadOnlyLogin = isReadOnlyLoginCode(coachCodeInput);
+    const coachCode = isReadOnlyLogin ? resolveReadOnlyCoachCode() : normalizeParticipantCode(coachCodeInput);
     const coach = getCoachByCode(coachCode);
     if (!coach) {
       if (!silentMode) {
@@ -834,7 +863,7 @@
       return false;
     }
     activeCoachCode = coachCode;
-    activeCoachReadOnly = isReadonlyParamEnabled() || isReadonlyCoachRole(coach);
+    activeCoachReadOnly = isReadOnlyLogin || isReadonlyParamEnabled() || isReadonlyCoachRole(coach);
     const coachPending = state.makeupRequests
       .filter((request) => request.coachCode === coachCode && request.status === "pending")
       .sort((a, b) => new Date(a.pendingAt) - new Date(b.pendingAt))[0];
@@ -854,7 +883,7 @@
     closeCoachReviewModal();
     renderAll();
     updateCoachReadOnlyUi();
-    setUiStatus(`教練 ${coach.name || coachCode} 已載入，可直接點月曆。`);
+    setUiStatus(`教練 ${coach.name || coachCode} 已載入${activeCoachReadOnly ? "（唯讀）" : ""}。`);
     return true;
   }
 
@@ -3862,27 +3891,39 @@
         dateKey === selectedCoachDateKey ? "selected" : ""
       ].join(" ").trim();
       const todayBadge = dateKey === todayKey ? "<span class='today-badge'>今日</span>" : "";
+      const readOnly = isCoachReadOnlyMode();
+      const renderCalendarItem = (text, extraClass = "", attrs = "") => {
+        const classText = ["cal-item", extraClass].filter(Boolean).join(" ");
+        if (readOnly) {
+          return `<span class="${classText}">${text}</span>`;
+        }
+        return `<button class="${classText}" type="button" data-coach-cal-date="${dateKey}" ${attrs}>${text}</button>`;
+      };
 
       const lessonSnippets = lessons.slice(0, 3).map((lesson) => {
         const typeClass = lesson.sourceType === "MAKEUP" ? "makeup" : "";
         const prefix = lesson.sourceType === "MAKEUP" ? "補課" : "原課";
         const selectedClass = lesson.id === selectedCoachLessonId ? "selected" : "";
-        return `<button class="cal-item ${typeClass} ${selectedClass}" type="button" data-coach-cal-date="${dateKey}" data-coach-lesson-id="${lesson.id}">${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}</button>`;
+        return renderCalendarItem(
+          `${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}`,
+          [typeClass, selectedClass].filter(Boolean).join(" "),
+          `data-coach-lesson-id="${lesson.id}"`
+        );
       }).join("");
       const lessonMoreSnippet = lessons.length > 3
-        ? `<button class="cal-item" type="button" data-coach-cal-date="${dateKey}">+${lessons.length - 3}</button>`
+        ? renderCalendarItem(`+${lessons.length - 3}`)
         : "";
       const pendingSnippet = pendings.length
-        ? `<button class="cal-item pending" type="button" data-coach-cal-date="${dateKey}">待審 ${pendings.length}</button>`
+        ? renderCalendarItem(`待審 ${pendings.length}`, "pending")
         : "";
       const blockSnippet = blocks.length
-        ? `<button class="cal-item" type="button" data-coach-cal-date="${dateKey}">教練請假 ${blocks.length}</button>`
+        ? renderCalendarItem(`教練請假 ${blocks.length}`)
         : "";
 
       html += `
-        <div class="${classNames}" data-coach-cal-date="${dateKey}">
-          <div class="cal-date-row"><div class="cal-date">${dayNumber}</div>${todayBadge}</div>
-          ${lessonSnippets || `<button class="cal-item" type="button" data-coach-cal-date="${dateKey}">無課程</button>`}
+          <div class="${classNames}" data-coach-cal-date="${dateKey}">
+            <div class="cal-date-row"><div class="cal-date">${dayNumber}</div>${todayBadge}</div>
+          ${lessonSnippets || renderCalendarItem("無課程")}
           ${lessonMoreSnippet}
           ${pendingSnippet}
           ${blockSnippet}
@@ -4711,9 +4752,27 @@
 
     if (el.coachLoginBtn) {
       el.coachLoginBtn.addEventListener("click", async () => {
-      await syncCoachflowRosterFromCloud();
-      syncCoachflowRosterFromLocalState();
-      activateCoachSession(el.coachCode?.value, false);
+        const coachCodeInput = el.coachCode?.value;
+        const readOnlyLogin = isReadOnlyLoginCode(coachCodeInput);
+        syncCoachflowRosterFromLocalState();
+        const loaded = activateCoachSession(coachCodeInput, false);
+        if (loaded && isCoachReadOnlyMode()) {
+          setCoachLoginPromptVisibility(true);
+        }
+        const syncFromCloud = async () => {
+          const cloudChanged = await syncCoachflowRosterFromCloud();
+          const localChanged = syncCoachflowRosterFromLocalState();
+          if (cloudChanged || localChanged) {
+            renderAll();
+          }
+        };
+        if (readOnlyLogin) {
+          syncFromCloud().catch((error) => {
+            console.warn("CoachFlow roster sync failed via read-only login:", error);
+          });
+          return;
+        }
+        await syncFromCloud();
       });
     }
 
@@ -4875,6 +4934,9 @@
     }
     if (el.coachCalendarGrid) {
       el.coachCalendarGrid.addEventListener("click", (event) => {
+        if (isCoachReadOnlyMode()) {
+          return;
+        }
         const target = closestFromEvent(event, "[data-coach-cal-date]");
         if (!target) {
           return;
@@ -5387,8 +5449,7 @@
 
     const shouldHideCoachLoginPrompt = Boolean(
       autoCoachLoaded &&
-      sessionPrefill.coachCode &&
-      shouldForceProfileFromUrl
+      (activeCoachReadOnly || (sessionPrefill.coachCode && shouldForceProfileFromUrl))
     );
     const shouldHideStudentLoginPrompt = Boolean(
       autoStudentLoaded &&

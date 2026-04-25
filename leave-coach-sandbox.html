@@ -288,15 +288,15 @@
 </head>
 <body>
   <main class="shell">
-    <div class="banner">教練測試頁：可審核補課、管理教練請假、查看月曆與扣堂面板。</div>
-    <h1>請假 / 補課測試頁（教練）</h1>
-    <p class="sub">登入教練後可審核待審申請、設定教練請假時段，並查看課程狀態。</p>
+    <div class="banner">教練頁：輸入教練代碼可管理請假；輸入 read-only 只能查看教練月曆。</div>
+    <h1>請假 / 補課系統（教練）</h1>
+    <p class="sub">輸入 read-only 會載入 Monster Chang 的唯讀月曆，不會顯示任何修改功能。</p>
 
     <section class="card">
       <span class="role">教練端</span>
-      <h2>登入與審核設定</h2>
-      <label>教練代碼
-        <input id="coach-code" value="CH001">
+      <h2>登入</h2>
+      <label>教練代碼 / 唯讀帳號
+        <input id="coach-code" value="" placeholder="例：MO001 或 read-only">
       </label>
       <div class="btn-row" style="margin-top:10px;">
         <button id="coach-login-btn" class="primary" type="button">載入教練資料</button>
@@ -481,8 +481,7 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260425-0014"></script>
-  <script src="leave-sandbox.js?v=20260425-0014"></script>
+  <script src="config.js?v=20260426-0001"></script>
+  <script src="leave-sandbox.js?v=20260426-0001"></script>
 </body>
 </html>
-
