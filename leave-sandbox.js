@@ -1370,6 +1370,61 @@
     return hash.toString(36).toUpperCase().padStart(5, "0").slice(0, 5);
   }
 
+  function readCalendarDateTime(value) {
+    if (!value) {
+      return "";
+    }
+    if (typeof value === "string") {
+      return value;
+    }
+    if (typeof value === "object") {
+      return String(value.dateTime || value.date || value.value || "").trim();
+    }
+    return "";
+  }
+
+  function normalizeGoogleCalendarEvent(rawEvent) {
+    if (!rawEvent || typeof rawEvent !== "object") {
+      return null;
+    }
+    const startAtText = readCalendarDateTime(
+      rawEvent.startAt ||
+      rawEvent.startTime ||
+      rawEvent.start ||
+      rawEvent.startDateTime
+    );
+    const startDate = new Date(startAtText);
+    if (!startAtText || Number.isNaN(startDate.getTime())) {
+      return null;
+    }
+    const endAtText = readCalendarDateTime(
+      rawEvent.endAt ||
+      rawEvent.endTime ||
+      rawEvent.end ||
+      rawEvent.endDateTime
+    );
+    const endDate = new Date(endAtText);
+    const fallbackEndDate = new Date(startDate.getTime() + 60 * 60 * 1000);
+    const eventId = String(
+      rawEvent.eventId ||
+      rawEvent.calendarEventId ||
+      rawEvent.id ||
+      rawEvent.iCalUID ||
+      ""
+    ).trim();
+    const title = String(rawEvent.title || rawEvent.summary || rawEvent.name || rawEvent.subject || "").trim();
+    return {
+      ...rawEvent,
+      eventId,
+      id: eventId || rawEvent.id || "",
+      title,
+      description: String(rawEvent.description || rawEvent.notes || "").trim(),
+      location: String(rawEvent.location || "").trim(),
+      startAt: startDate.toISOString(),
+      endAt: Number.isNaN(endDate.getTime()) ? fallbackEndDate.toISOString() : endDate.toISOString()
+    };
+  }
+
   function ensureGoogleEventStudentProfile(event, coachCode) {
     const title = String(event?.title || "").trim();
     const fallbackKey = normalizeCalendarEventId(event?.eventId || event?.id || "") || `${event?.startAt || ""}-${title}`;
@@ -1441,25 +1496,34 @@
     return bestCode;
   }
 
-  function pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, targetStartAt) {
+  function isGoogleSyncLesson(lesson) {
+    return lesson?.sourceType === "REGULAR" || lesson?.sourceType === "GOOGLE_CALENDAR";
+  }
+
+  function pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, targetStartAt, maxDistanceMs = Infinity) {
     const targetTime = new Date(targetStartAt).getTime();
     const candidates = state.lessons
       .filter(
         (lesson) =>
           lesson.studentCode === studentCode &&
           lesson.coachCode === coachCode &&
-          lesson.sourceType === "REGULAR" &&
+          isGoogleSyncLesson(lesson) &&
           !usedLessonIds.has(lesson.id)
       )
       .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - targetTime) - Math.abs(new Date(b.startAt).getTime() - targetTime));
-    return candidates[0] || null;
+    const closest = candidates[0] || null;
+    if (!closest) {
+      return null;
+    }
+    const distance = Math.abs(new Date(closest.startAt).getTime() - targetTime);
+    return distance <= maxDistanceMs ? closest : null;
   }
 
   function alignCoachLessonsWithGoogleEvents(coachCode, events) {
     const usedLessonIds = new Set();
     const eventIdToLesson = new Map();
     state.lessons.forEach((lesson) => {
-      if (lesson.coachCode !== coachCode || lesson.sourceType !== "REGULAR") {
+      if (lesson.coachCode !== coachCode || !isGoogleSyncLesson(lesson)) {
         return;
       }
       const key = normalizeCalendarEventId(lesson.calendarEventId);
@@ -1476,7 +1540,11 @@
     let skippedUnmatchedStudent = 0;
     let skippedNonLessonEvent = 0;
 
-    const sortedEvents = [...events].sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    const maxRelinkDistanceMs = Math.max(1, Number(window.APP_CONFIG?.googleRelinkMaxHours || 12)) * 60 * 60 * 1000;
+    const sortedEvents = [...events]
+      .map(normalizeGoogleCalendarEvent)
+      .filter(Boolean)
+      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
     sortedEvents.forEach((event) => {
       const startAt = String(event?.startAt || "").trim();
       const eventId = String(event?.eventId || "").trim();
@@ -1505,12 +1573,13 @@
       const normalizedEventId = normalizeCalendarEventId(eventId);
       let lesson = eventIdToLesson.get(normalizedEventId) || null;
       if (!lesson) {
-        lesson = pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, startAt);
+        lesson = pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, startAt, maxRelinkDistanceMs);
       }
       if (!lesson) {
         const dateKey = getDateKeyInTaipei(new Date(startAt));
         const timeText = getTimeText(startAt);
         lesson = makeLesson(newId("L"), studentCode, coachCode, dateKey, timeText);
+        lesson.sourceType = "GOOGLE_CALENDAR";
         state.lessons.push(lesson);
         createdLessons += 1;
       }
