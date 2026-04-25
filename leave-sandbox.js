@@ -3393,7 +3393,7 @@
       .filter(
         (lesson) =>
           lesson.studentCode === student.code &&
-          lesson.sourceType === "REGULAR" &&
+          isGoogleSyncLesson(lesson) &&
           lesson.attendanceStatus !== "coach-leave" &&
           lesson.attendanceStatus !== "calendar-removed"
       )
@@ -3408,9 +3408,9 @@
       const statusInfo = approvedMakeup ? `<div class="hint">補課已核准：${formatDateTime(approvedMakeup.startAt)}</div>` : "";
       let actionHtml = "<span class=\"hint\">不可送出</span>";
       if (canLeave) {
-        actionHtml = `<button data-action="leave" data-id="${lesson.id}">送出請假</button>`;
+        actionHtml = `<button class="student-action-btn" data-action="leave" data-id="${lesson.id}">送出請假申請</button>`;
       } else if (canCancelLeave) {
-        actionHtml = `<button data-action="cancel-leave" data-id="${lesson.id}" class="danger">取消請假</button>`;
+        actionHtml = `<button class="student-action-btn danger" data-action="cancel-leave" data-id="${lesson.id}">取消請假</button>`;
       } else if (approvedMakeup) {
         actionHtml = `<span class="hint">補課已核准：${formatDateTime(approvedMakeup.startAt)}</span>`;
       } else if (leave && lesson.attendanceStatus === "leave-normal" && !isLeaveOpen(lesson)) {
@@ -3460,9 +3460,13 @@
       const dateKey = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
       const lessons = getStudentLessonsForDate(student.code, dateKey);
       const coachBlocks = getStudentCoachBlocksForDate(student.code, dateKey);
+      const hasLessons = lessons.length > 0;
+      const hasCoachBlocks = coachBlocks.length > 0;
       const todayKey = getDateKeyInTaipei(new Date());
       const classNames = [
         "cal-cell",
+        hasLessons ? "has-lessons" : "no-lessons",
+        hasCoachBlocks ? "has-coach-blocks" : "",
         dateKey === todayKey ? "today" : "",
         dateKey === selectedStudentDateKey ? "selected" : ""
       ].join(" ").trim();
@@ -3548,17 +3552,17 @@
     const rows = lessons.map((lesson) => {
       const leave = getLeaveByLesson(lesson.id);
       const approvedMakeup = getApprovedMakeupByLessonId(lesson.id);
-      const canLeave = lesson.sourceType === "REGULAR" && lesson.attendanceStatus === "scheduled" && !leave && isLeaveOpen(lesson);
-      const canCancelLeave = lesson.sourceType === "REGULAR" && !!leave && !approvedMakeup && lesson.attendanceStatus === "leave-normal" && isLeaveOpen(lesson);
-      const cutoffText = lesson.sourceType === "REGULAR"
+      const canLeave = isGoogleSyncLesson(lesson) && lesson.attendanceStatus === "scheduled" && !leave && isLeaveOpen(lesson);
+      const canCancelLeave = isGoogleSyncLesson(lesson) && !!leave && !approvedMakeup && lesson.attendanceStatus === "leave-normal" && isLeaveOpen(lesson);
+      const cutoffText = isGoogleSyncLesson(lesson)
         ? formatDateTime(getCutoffForLesson(lesson).toISOString())
         : "-";
       const statusInfo = approvedMakeup ? `<div class='hint'>補課已核准：${formatDateTime(approvedMakeup.startAt)}</div>` : "";
       let actionHtml = "<span class='hint'>不可送出</span>";
       if (canLeave) {
-        actionHtml = `<button data-action="leave" data-id="${lesson.id}">送出請假</button>`;
+        actionHtml = `<button class="student-action-btn" data-action="leave" data-id="${lesson.id}">送出請假申請</button>`;
       } else if (canCancelLeave) {
-        actionHtml = `<button data-action="cancel-leave" data-id="${lesson.id}" class="danger">取消請假</button>`;
+        actionHtml = `<button class="student-action-btn danger" data-action="cancel-leave" data-id="${lesson.id}">取消請假</button>`;
       } else if (approvedMakeup) {
         actionHtml = `<span class='hint'>補課已核准：${formatDateTime(approvedMakeup.startAt)}</span>`;
       } else if (leave && lesson.attendanceStatus === "leave-normal" && !isLeaveOpen(lesson)) {
@@ -3576,6 +3580,44 @@
       `;
     }).join("");
 
+    const lessonCards = lessons.map((lesson) => {
+      const leave = getLeaveByLesson(lesson.id);
+      const approvedMakeup = getApprovedMakeupByLessonId(lesson.id);
+      const canLeave = isGoogleSyncLesson(lesson) && lesson.attendanceStatus === "scheduled" && !leave && isLeaveOpen(lesson);
+      const canCancelLeave = isGoogleSyncLesson(lesson) && !!leave && !approvedMakeup && lesson.attendanceStatus === "leave-normal" && isLeaveOpen(lesson);
+      const cutoffText = isGoogleSyncLesson(lesson)
+        ? formatDateTime(getCutoffForLesson(lesson).toISOString())
+        : "-";
+      const statusInfo = approvedMakeup ? `<div class="hint">補課已核准：${formatDateTime(approvedMakeup.startAt)}</div>` : "";
+      let actionHtml = "<span class='hint'>目前不可送出請假</span>";
+      if (canLeave) {
+        actionHtml = `<button class="student-action-btn" data-action="leave" data-id="${lesson.id}">送出請假申請</button>`;
+      } else if (canCancelLeave) {
+        actionHtml = `<button class="student-action-btn danger" data-action="cancel-leave" data-id="${lesson.id}">取消請假</button>`;
+      } else if (approvedMakeup) {
+        actionHtml = `<span class="hint">補課已核准：${formatDateTime(approvedMakeup.startAt)}</span>`;
+      } else if (leave && lesson.attendanceStatus === "leave-normal" && !isLeaveOpen(lesson)) {
+        actionHtml = "<span class='hint'>已過取消截止</span>";
+      }
+      return `
+        <article class="student-lesson-card ${lesson.id === selectedStudentLessonId ? "is-selected" : ""}">
+          <div class="student-lesson-card-head">
+            <div>
+              <div class="student-lesson-time">${getTimeText(lesson.startAt)}</div>
+              <div class="student-lesson-meta">${lesson.sourceType === "MAKEUP" ? "補課" : "原課"}</div>
+            </div>
+            <div>${getStatusPill(lesson.attendanceStatus, lesson, "student")}</div>
+          </div>
+          ${statusInfo}
+          <div class="student-lesson-facts">
+            <div>扣堂：${lesson.charged ? "是" : "否"}</div>
+            <div>請假截止：${cutoffText}</div>
+          </div>
+          <div class="student-lesson-action">${actionHtml}</div>
+        </article>
+      `;
+    }).join("");
+
     const blockRows = coachBlocks
       .map(
         (block) => `
@@ -3586,16 +3628,28 @@
       )
       .join("");
 
+    const blockCards = coachBlocks
+      .map((block) => `
+        <div class="student-coach-block-card">
+          <strong>教練請假時段</strong><br>
+          ${formatDateTime(block.startAt)} - ${getTimeText(block.endAt || block.startAt)}<br>
+          原因：${block.reason || "-"}
+        </div>
+      `)
+      .join("");
+
     el.studentDayDetail.innerHTML = `
       <h3>${selectedStudentDateKey} 課程明細</h3>
-      <div class="table-wrap">
+      <div class="student-lesson-cards">${lessonCards || "<p class='hint'>無課程</p>"}</div>
+      <div class="table-wrap student-day-table">
         <table>
           <thead><tr><th>時間</th><th>類型</th><th>狀態</th><th>扣堂</th><th>請假截止</th><th>操作</th></tr></thead>
           <tbody>${rows || "<tr><td colspan='6'>無課程</td></tr>"}</tbody>
         </table>
       </div>
       <div style="height:8px;"></div>
-      <div class="table-wrap">
+      <div class="student-coach-blocks">${blockCards || ""}</div>
+      <div class="table-wrap student-coach-block-table">
         <table>
           <thead><tr><th>教練請假時段</th><th>原因</th></tr></thead>
           <tbody>${blockRows || "<tr><td colspan='2'>無教練請假</td></tr>"}</tbody>
@@ -5155,4 +5209,3 @@
 
   bootstrap();
 })();
-

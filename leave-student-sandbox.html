@@ -200,6 +200,70 @@
     .cal-item.leave { border-color: #bae6fd; background: #ecfeff; color: #155e75; }
     .day-detail { margin-top: 10px; border: 1px solid #dbeafe; border-radius: 10px; padding: 10px; background: #f8fbff; }
     .day-detail h3 { margin: 0 0 8px; font-size: 16px; color: #1e40af; }
+    .student-lesson-cards { display: none; }
+    .student-lesson-card {
+      border: 1px solid #dbeafe;
+      border-radius: 14px;
+      background: #ffffff;
+      padding: 12px;
+      box-shadow: 0 8px 22px rgba(37, 99, 235, 0.08);
+    }
+    .student-lesson-card + .student-lesson-card { margin-top: 10px; }
+    .student-lesson-card.is-selected {
+      border-color: #2563eb;
+      box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.14);
+    }
+    .student-lesson-card-head {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+      margin-bottom: 8px;
+    }
+    .student-lesson-time {
+      font-size: 20px;
+      line-height: 1;
+      font-weight: 900;
+      color: #1e3a8a;
+    }
+    .student-lesson-meta {
+      margin-top: 4px;
+      font-size: 12px;
+      color: var(--muted);
+    }
+    .student-lesson-facts {
+      display: grid;
+      gap: 6px;
+      margin: 10px 0;
+      font-size: 13px;
+      color: #475569;
+    }
+    .student-lesson-action button {
+      width: 100%;
+      min-height: 44px;
+      border-radius: 12px;
+      font-weight: 900;
+    }
+    .student-lesson-action button[data-action="leave"] {
+      border-color: #1d4ed8;
+      background: #1d4ed8;
+      color: #ffffff;
+    }
+    .student-lesson-action button.danger {
+      border-color: #dc2626;
+      background: #dc2626;
+      color: #ffffff;
+    }
+    .student-coach-blocks { display: none; margin-top: 10px; }
+    .student-coach-block-card {
+      border: 1px solid #bae6fd;
+      border-radius: 12px;
+      background: #ecfeff;
+      padding: 10px;
+      color: #155e75;
+      font-size: 13px;
+    }
+    .student-coach-block-card + .student-coach-block-card { margin-top: 8px; }
     .modal {
       position: fixed;
       inset: 0;
@@ -244,6 +308,79 @@
     @media (max-width: 860px) {
       .form-row { grid-template-columns: 1fr; }
       .cal-cell { min-height: 94px; }
+    }
+    @media (max-width: 640px) {
+      .shell { padding: 14px 10px 34px; }
+      h1 { font-size: 22px; }
+      .sub { font-size: 14px; }
+      .card { padding: 12px; border-radius: 16px; }
+      .calendar-topbar {
+        align-items: stretch;
+        flex-direction: column;
+      }
+      .calendar-topbar .btn-row {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+      }
+      .calendar-topbar .btn-row button { min-height: 42px; }
+      .calendar-grid {
+        display: block;
+        border: none;
+        border-radius: 0;
+        overflow: visible;
+      }
+      .cal-weekday,
+      .cal-cell.dim,
+      .cal-cell.no-lessons:not(.today):not(.selected) {
+        display: none;
+      }
+      .cal-cell {
+        min-height: 0;
+        margin-bottom: 10px;
+        border: 1px solid #dbeafe;
+        border-radius: 16px;
+        padding: 10px;
+        box-shadow: 0 10px 26px rgba(30, 64, 175, 0.08);
+      }
+      .cal-cell.today {
+        box-shadow: inset 0 0 0 2px #1d4ed8, 0 10px 26px rgba(29, 78, 216, 0.14);
+      }
+      .cal-cell.selected {
+        box-shadow: inset 0 0 0 2px #3b82f6, 0 10px 26px rgba(59, 130, 246, 0.16);
+      }
+      .cal-date { font-size: 16px; color: #1e3a8a; }
+      .cal-date::after {
+        content: " 日";
+        font-size: 12px;
+        color: #64748b;
+      }
+      .cal-item {
+        min-height: 40px;
+        border-radius: 12px;
+        padding: 9px 10px;
+        font-size: 14px;
+        font-weight: 800;
+        white-space: normal;
+        overflow: visible;
+        text-overflow: clip;
+      }
+      .modal { padding: 10px; align-items: flex-end; }
+      .modal-panel {
+        width: 100%;
+        max-height: 88vh;
+        border-radius: 18px 18px 0 0;
+        padding: 12px;
+      }
+      .student-day-table,
+      .student-coach-block-table {
+        display: none;
+      }
+      .student-lesson-cards {
+        display: block;
+      }
+      .student-coach-blocks {
+        display: block;
+      }
     }
   </style>
 </head>
@@ -332,8 +469,8 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260425-0009"></script>
-  <script src="leave-sandbox.js?v=20260425-0009"></script>
+  <script src="config.js?v=20260425-0010"></script>
+  <script src="leave-sandbox.js?v=20260425-0010"></script>
 </body>
 </html>
 
