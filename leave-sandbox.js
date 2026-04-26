@@ -716,6 +716,13 @@
     return Boolean(activeCoachReadOnly);
   }
 
+  function isReadOnlyVisibleCoachLesson(lesson) {
+    if (!isCoachReadOnlyMode()) {
+      return true;
+    }
+    return !isGeneratedLocalCalendarEventId(lesson?.calendarEventId);
+  }
+
   function isReadOnlyLoginCode(code) {
     return normalizeParticipantCode(code).replace(/[-_\s]/g, "") === READ_ONLY_ACCOUNT_CODE;
   }
@@ -2100,6 +2107,62 @@
       addLog(`[日曆同步] 學生端已自動同步 Google 課程：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆。`);
     }
     return syncedAny;
+  }
+
+  async function syncReadOnlyCoachCalendarFromGoogle(coachCodeInput) {
+    const coachCode = normalizeParticipantCode(coachCodeInput || activeCoachCode);
+    if (!coachCode || !getAppsScriptUrl()) {
+      return false;
+    }
+    const calendarPayload = getCalendarPayloadForCoach(coachCode);
+    if (!calendarPayload.calendarId && !calendarPayload.coachCalendarId) {
+      return false;
+    }
+    const { minMonth, maxMonth } = getReadOnlyMonthBounds();
+    const monthStarts = [minMonth, maxMonth];
+    let totalEvents = 0;
+    let totalMatched = 0;
+    let totalCreated = 0;
+    let removedPlaceholders = 0;
+    let syncedAny = false;
+    for (const monthStart of monthStarts) {
+      const monthRange = getMonthSyncRange(monthStart);
+      const listResult = await callAppsScriptApi("listEvents", {
+        ...monthRange,
+        ...calendarPayload,
+        coachCode
+      });
+      const events = Array.isArray(listResult?.events) ? listResult.events : [];
+      const stats = alignCoachLessonsWithGoogleEvents(coachCode, events);
+      const matchedLessonIds = new Set(Array.isArray(stats.matchedLessonIds) ? stats.matchedLessonIds : []);
+      const meta = getMonthMeta(monthStart);
+      const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
+      state.lessons
+        .filter((lesson) => (
+          lesson.coachCode === coachCode &&
+          lesson.calendarOccupied &&
+          getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
+          !matchedLessonIds.has(lesson.id) &&
+          isGeneratedLocalCalendarEventId(lesson.calendarEventId)
+        ))
+        .forEach((lesson) => {
+          markLessonRemovedByCalendar(lesson, "readonly_google_auto_sync");
+          removedPlaceholders += 1;
+        });
+      totalEvents += stats.totalEvents;
+      totalMatched += stats.matchedEvents;
+      totalCreated += stats.createdLessons;
+      syncedAny = true;
+    }
+    if (syncedAny) {
+      ensureLessonCalendarEventIds();
+      ensureParticipantEmails();
+      ensureStudentBillingProfiles();
+      saveState();
+      addLog(`[日曆同步] 唯讀月曆已同步 Google：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${removedPlaceholders} 筆。`);
+      return true;
+    }
+    return false;
   }
 
   function markLessonRemovedByCalendar(lesson, reason) {
@@ -3935,7 +3998,7 @@
         continue;
       }
       const dateKey = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
-      const lessons = getCoachLessonsForDate(activeCoachCode, dateKey);
+      const lessons = getCoachLessonsForDate(activeCoachCode, dateKey).filter(isReadOnlyVisibleCoachLesson);
       const pendings = getCoachPendingForDate(activeCoachCode, dateKey);
       const blocks = getCoachBlocksForDate(activeCoachCode, dateKey);
       const todayKey = getDateKeyInTaipei(new Date());
@@ -4003,7 +4066,7 @@
       return;
     }
 
-    const lessons = getCoachLessonsForDate(activeCoachCode, selectedCoachDateKey);
+    const lessons = getCoachLessonsForDate(activeCoachCode, selectedCoachDateKey).filter(isReadOnlyVisibleCoachLesson);
     const pendings = getCoachPendingForDate(activeCoachCode, selectedCoachDateKey);
     const blocks = getCoachBlocksForDate(activeCoachCode, selectedCoachDateKey);
     if (selectedCoachLessonId && !lessons.some((lesson) => lesson.id === selectedCoachLessonId)) {
@@ -4826,6 +4889,16 @@
           }
         };
         if (readOnlyLogin) {
+          syncReadOnlyCoachCalendarFromGoogle(activeCoachCode)
+            .then((changed) => {
+              if (changed) {
+                renderAll();
+              }
+            })
+            .catch((error) => {
+              console.warn("Read-only Google calendar sync failed:", error);
+              setUiStatus("唯讀月曆目前無法同步 Google，請稍後重新整理。");
+            });
           syncFromCloud().catch((error) => {
             console.warn("CoachFlow roster sync failed via read-only login:", error);
           });
@@ -5548,6 +5621,10 @@
       if (autoStudentLoaded && activeStudentCode) {
         studentCalendarSynced = await syncStudentCalendarEventsFromGoogle();
       }
+      let readOnlyCalendarSynced = false;
+      if (autoCoachLoaded && activeCoachReadOnly && activeCoachCode) {
+        readOnlyCalendarSynced = await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
+      }
       if (cloudSyncChanged) {
         if (studentLoginPromptHidden && el.studentCode && activeStudentCode && el.studentCode.value !== activeStudentCode) {
           el.studentCode.value = activeStudentCode;
@@ -5558,6 +5635,9 @@
         renderAll();
       }
       if (studentCalendarSynced && !cloudSyncChanged) {
+        renderAll();
+      }
+      if (readOnlyCalendarSynced && !cloudSyncChanged) {
         renderAll();
       }
     } catch (error) {
