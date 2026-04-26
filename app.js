@@ -6578,11 +6578,14 @@ function renderStudentHistoryFilters() {
       .map((log) => log.exercise)
   )].sort();
   const currentValue = els.studentHistoryExercise.value;
+  const nextValue = exercises.includes(currentValue) ? currentValue : "";
   els.studentHistoryExerciseOptions.innerHTML = exercises
     .map((exercise) => `<option value="${exercise}"></option>`)
     .join("");
-  els.studentHistoryExercise.value = exercises.includes(currentValue) ? currentValue : "";
-  studentHistoryVisibleCount = 1;
+  els.studentHistoryExercise.value = nextValue;
+  if (nextValue !== currentValue) {
+    studentHistoryVisibleCount = 1;
+  }
 }
 
 function renderStudentHistory() {

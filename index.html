@@ -1,9 +1,9 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="zh-Hant">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CoachFlow 重訓課表與紀錄系統</title>
+  <title>CoachFlow ??隤脰”???頂蝯?/title>
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
@@ -13,36 +13,36 @@
   <div class="app-shell">
     <header class="hero">
       <div class="hero-copy">
-        <p class="eyebrow">CoachFlow 重訓課表與紀錄系統</p>
-        <h1>教練建立課表，學生完成紀錄</h1>
+        <p class="eyebrow">CoachFlow ??隤脰”???頂蝯?/p>
+        <h1>?毀撱箇?隤脰”嚗飛??????/h1>
       </div>
       <div class="hero-note">
-        <span class="hero-chip">雲端連線</span>
+        <span class="hero-chip">?脩垢???</span>
         <h3>Google Sheets + Apps Script</h3>
-        <p>首次登入可能短暫等待。</p>
+        <p>擐活?餃?航?剜蝑???/p>
       </div>
     </header>
 
     <nav class="main-tabs" aria-label="Primary">
-      <button class="main-tab is-active" data-panel="coach-panel">教練管理</button>
-      <button class="main-tab" data-panel="student-panel">學生填寫</button>
+      <button class="main-tab is-active" data-panel="coach-panel">?毀蝞∠?</button>
+      <button class="main-tab" data-panel="student-panel">摮貊?憛怠神</button>
     </nav>
 
     <main>
       <section id="coach-panel" class="panel is-active">
         <div class="panel-header">
           <div>
-            <p class="section-kicker">教練管理工作台</p>
-            <h2>教練建立課表與管理紀錄</h2>
-            <p class="muted-copy">建立課表、查看今日紀錄、管理學生，並追蹤訓練歷史資料。</p>
+            <p class="section-kicker">?毀蝞∠?撌乩???/p>
+            <h2>?毀撱箇?隤脰”?恣????/h2>
+            <p class="muted-copy">撱箇?隤脰”????亦??恣?飛??銝西蕭頩方?蝺湔風?脰???/p>
             <label class="coach-session-inline">
-              目前教練
+              ?桀??毀
               <select id="current-coach-select"></select>
             </label>
           </div>
           <div class="view-toggle" aria-label="Coach layout mode">
-            <button class="view-toggle-button is-active" id="coach-global-view-desktop" type="button">網頁版介面</button>
-            <button class="view-toggle-button" id="coach-global-view-mobile" type="button">手機版介面</button>
+            <button class="view-toggle-button is-active" id="coach-global-view-desktop" type="button">蝬脤?????/button>
+            <button class="view-toggle-button" id="coach-global-view-mobile" type="button">??????/button>
           </div>
         </div>
 
@@ -50,17 +50,17 @@
           <article class="card compact-card" id="coach-auth-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">教練登入</p>
-                <h3>教練專屬入口</h3>
+                <p class="section-kicker">?毀?餃</p>
+                <h3>?毀撠惇?亙</h3>
               </div>
             </div>
             <label>
-              教練代碼
-              <input type="text" id="coach-access-code" placeholder="例如：CL001">
+              ?毀隞?Ⅳ
+              <input type="text" id="coach-access-code" placeholder="靘?嚗L001">
             </label>
-            <p class="muted-copy">也可以直接使用教練專屬連結進入，系統會自動帶入你的身份。</p>
+            <p class="muted-copy">銋隞亦?乩蝙?冽?蝺游?撅祇???脣嚗頂蝯望??芸?撣嗅雿?頨思遢??/p>
             <div class="student-entry-submit">
-              <button class="ghost-button" id="confirm-coach-access" type="button">確認身份並進入教練工作台</button>
+              <button class="ghost-button" id="confirm-coach-access" type="button">蝣箄?頨思遢銝阡脣?毀撌乩???/button>
             </div>
             <div class="student-summary" id="coach-summary"></div>
           </article>
@@ -69,17 +69,17 @@
         <div class="coach-active-bar is-hidden" id="coach-active-bar">
           <div class="coach-active-copy" id="coach-active-copy"></div>
           <div class="coach-active-actions">
-            <button class="ghost-button" id="change-coach-access" type="button">切換教練</button>
+            <button class="ghost-button" id="change-coach-access" type="button">???毀</button>
           </div>
         </div>
 
         <nav class="sub-tabs" aria-label="Coach sections">
-          <button class="sub-tab is-active" data-coach-tab="coach-editor">建立課表</button>
-          <button class="sub-tab" data-coach-tab="coach-coaches">教練管理</button>
-          <button class="sub-tab" data-coach-tab="coach-students">學生管理</button>
-          <button class="sub-tab" data-coach-tab="coach-today">今日紀錄</button>
-          <button class="sub-tab" data-coach-tab="coach-history">歷史查詢</button>
-          <button class="sub-tab" id="open-coach-leave-system-tab" type="button">請假系統</button>
+          <button class="sub-tab is-active" data-coach-tab="coach-editor">撱箇?隤脰”</button>
+          <button class="sub-tab" data-coach-tab="coach-coaches">?毀蝞∠?</button>
+          <button class="sub-tab" data-coach-tab="coach-students">摮貊?蝞∠?</button>
+          <button class="sub-tab" data-coach-tab="coach-today">隞蝝??/button>
+          <button class="sub-tab" data-coach-tab="coach-history">甇瑕?亥岷</button>
+          <button class="sub-tab" id="open-coach-leave-system-tab" type="button">隢?蝟餌絞</button>
         </nav>
 
         <section id="coach-editor" class="sub-panel is-active">
@@ -87,49 +87,49 @@
             <article class="card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">課表編輯</p>
-                  <h3>建立今日共用課表</h3>
+                  <p class="section-kicker">隤脰”蝺刻摩</p>
+                  <h3>撱箇?隞?梁隤脰”</h3>
                 </div>
               </div>
 
               <div class="form-grid compact-form-grid">
                 <label>
-                  課表代碼
-                  <input type="text" id="program-code" placeholder="例如：0329A">
+                  隤脰”隞?Ⅳ
+                  <input type="text" id="program-code" placeholder="靘?嚗?329A">
                 </label>
                 <label>
-                  課表日期
+                  隤脰”?交?
                   <input type="date" id="program-date">
                 </label>
                 <label>
-                  教練名稱
-                  <input type="text" id="coach-name" placeholder="例如：Coach Lin">
+                  ?毀?迂
+                  <input type="text" id="coach-name" placeholder="靘?嚗oach Lin">
                 </label>
                 <label class="span-full">
-                  課表備註
-                  <textarea id="program-notes" rows="3" placeholder="可填寫當日提醒或訓練重點"></textarea>
+                  隤脰”?酉
+                  <textarea id="program-notes" rows="3" placeholder="?臬‵撖怎?交???閮毀??"></textarea>
                 </label>
               </div>
 
               <div class="editor-topbar">
                 <div>
-                  <h3>課表項目</h3>
-                  <p class="muted-copy">可自行新增或刪除，圖片高度會跟著項目數量自動調整。</p>
+                  <h3>隤脰”?</h3>
+                  <p class="muted-copy">?航銵憓??芷嚗???摨行?頝???賊??芸?隤踵??/p>
                 </div>
-                <button class="ghost-button" id="add-program-item" type="button">新增一列</button>
+                <button class="ghost-button" id="add-program-item" type="button">?啣?銝??/button>
               </div>
 
               <div class="table-wrap editor-table-wrap">
                 <table class="editor-table">
                   <thead>
                     <tr>
-                      <th>分類</th>
-                      <th>動作名稱</th>
-                      <th>組數</th>
-                      <th>類型</th>
-                      <th>次數</th>
-                      <th>備註</th>
-                      <th>排序</th>
+                      <th>??</th>
+                      <th>???迂</th>
+                      <th>蝯</th>
+                      <th>憿?</th>
+                      <th>甈⊥</th>
+                      <th>?酉</th>
+                      <th>??</th>
                       <th></th>
                     </tr>
                   </thead>
@@ -138,40 +138,40 @@
               </div>
 
               <div class="button-row">
-                <button class="ghost-button" id="save-program" type="button">儲存課表</button>
-                <button class="primary-button" id="publish-program" type="button">發布課表</button>
+                <button class="ghost-button" id="save-program" type="button">?脣?隤脰”</button>
+                <button class="primary-button" id="publish-program" type="button">?澆?隤脰”</button>
               </div>
             </article>
 
             <article class="card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">歷史課表</p>
-                  <h3>歷史課表</h3>
+                  <p class="section-kicker">甇瑕隤脰”</p>
+                  <h3>甇瑕隤脰”</h3>
                 </div>
                 <div class="library-heading-actions">
                   <label class="sort-inline-label" for="program-library-sort">
-                    排序
+                    ??
                     <select id="program-library-sort">
-                      <option value="date-desc">日期新到舊</option>
-                      <option value="date-asc">日期舊到新</option>
-                      <option value="code-asc">代碼 A-Z</option>
-                      <option value="code-desc">代碼 Z-A</option>
+                      <option value="date-desc">?交??啣??/option>
+                      <option value="date-asc">?交????/option>
+                      <option value="code-asc">隞?Ⅳ A-Z</option>
+                      <option value="code-desc">隞?Ⅳ Z-A</option>
                     </select>
                   </label>
-                  <span class="status-pill" id="program-library-count">共 0 份</span>
+                  <span class="status-pill" id="program-library-count">??0 隞?/span>
                 </div>
               </div>
-              <p class="muted-copy">可查看歷史課表內容，並載入編輯或重新設為目前課表。</p>
+              <p class="muted-copy">?舀?風?脰玨銵典摰對?銝西??亦楊頛舀??閮剔?桀?隤脰”??/p>
               <div class="coach-link-search single-field">
                 <label>
-                  搜尋課表
-                  <input type="text" id="program-library-search" placeholder="可搜尋課表代碼或日期">
+                  ??隤脰”
+                  <input type="text" id="program-library-search" placeholder="?舀?撠玨銵其誨蝣潭??交?">
                 </label>
               </div>
               <div class="coach-link-list" id="program-library-list"></div>
               <div class="button-row library-more-row">
-                <button class="ghost-button" id="program-library-more" type="button">顯示更多</button>
+                <button class="ghost-button" id="program-library-more" type="button">憿舐內?游?</button>
               </div>
             </article>
           </div>
@@ -181,35 +181,35 @@
           <article class="card compact-card" id="coach-roster-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">教練設定</p>
-                <h3>教練管理</h3>
+                <p class="section-kicker">?毀閮剖?</p>
+                <h3>?毀蝞∠?</h3>
               </div>
-              <span class="status-pill" id="coach-roster-count">共 0 位</span>
+              <span class="status-pill" id="coach-roster-count">??0 雿?/span>
             </div>
-            <p class="muted-copy">可新增教練、修改名稱、停用教練，並查看每位教練的最後使用狀態。</p>
+            <p class="muted-copy">?舀憓?蝺氬耨?孵?蝔晞??冽?蝺湛?銝行??雿?蝺渡??敺蝙?函???/p>
             <div class="student-manager-toolbar">
               <div class="student-manager-block">
-                <p class="student-manager-label">新增教練</p>
+                <p class="student-manager-label">?啣??毀</p>
                 <div class="coach-link-search single-field">
                   <label>
-                    教練姓名
-                    <input type="text" id="new-coach-name" placeholder="例如：王教練">
+                    ?毀憪?
+                    <input type="text" id="new-coach-name" placeholder="靘?嚗??毀">
                   </label>
                 </div>
                 <div class="button-row">
-                  <button class="primary-button" id="add-coach" type="button">新增教練</button>
+                  <button class="primary-button" id="add-coach" type="button">?啣??毀</button>
                 </div>
               </div>
 
               <div class="student-manager-block">
-                <p class="student-manager-label">目前登入</p>
+                <p class="student-manager-label">?桀??餃</p>
                 <div class="coach-link-search single-field">
                   <label>
-                    教練身份
-                    <input type="text" id="coach-session-name" placeholder="管理者模式不使用" readonly>
+                    ?毀頨思遢
+                    <input type="text" id="coach-session-name" placeholder="蝞∠??芋撘?雿輻" readonly>
                   </label>
                 </div>
-                <p class="muted-copy">正式版將由教練專屬入口登入，管理者頁不再切換目前教練。</p>
+                <p class="muted-copy">甇?????望?蝺游?撅砍???伐?蝞∠???銝????桀??毀??/p>
               </div>
             </div>
             <div class="coach-link-list" id="coach-roster"></div>
@@ -220,20 +220,19 @@
           <article class="card compact-card" id="coach-student-links-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">學生專屬網址</p>
-                <h3>學生專屬網址</h3>
+                <p class="section-kicker">摮貊?撠惇蝬脣?</p>
+                <h3>摮貊?撠惇蝬脣?</h3>
               </div>
             </div>
-            <p class="muted-copy">可依學生姓名快速查看專屬網址與共用入口，方便傳給學生登入。</p>
+            <p class="muted-copy">?臭?摮貊?憪?敹恍??撅祉雯???典????嫣噶?喟策摮貊??餃??/p>
             <div class="coach-link-search">
               <label>
-                學生姓名
-                    <input type="text" id="coach-student-link-name" list="coach-student-link-options" placeholder="請輸入學生姓名">
+                摮貊?憪?
+                    <input type="text" id="coach-student-link-name" list="coach-student-link-options" placeholder="隢撓?亙飛????>
               </label>
               <label>
-                或直接選擇學生
-                <select id="coach-student-link-select">
-                  <option value="">請選擇學生</option>
+                ??仿?飛??                <select id="coach-student-link-select">
+                  <option value="">隢?飛??/option>
                 </select>
               </label>
             </div>
@@ -244,24 +243,24 @@
           <article class="card compact-card" id="history-import-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">歷史資料匯入</p>
-                <h3>批次匯入訓練紀錄</h3>
+                <p class="section-kicker">甇瑕鞈??臬</p>
+                <h3>?寞活?臬閮毀蝝??/h3>
               </div>
-              <span class="status-pill" id="history-import-count">等待匯入</span>
+              <span class="status-pill" id="history-import-count">蝑??臬</span>
             </div>
-            <p class="muted-copy">可下載匯入範本 CSV，整理完成後再批次匯入舊訓練紀錄。</p>
+            <p class="muted-copy">?臭?頛?亦???CSV嚗?????甈∪?亥?閮毀蝝??/p>
             <div class="student-manager-toolbar">
               <div class="student-manager-block">
-                <p class="student-manager-label">步驟 1</p>
+                <p class="student-manager-label">甇仿? 1</p>
                 <div class="button-row">
-                  <button class="ghost-button" id="download-history-template" type="button">下載匯入範本</button>
+                  <button class="ghost-button" id="download-history-template" type="button">銝??臬蝭</button>
                 </div>
               </div>
               <div class="student-manager-block">
-                <p class="student-manager-label">步驟 2</p>
+                <p class="student-manager-label">甇仿? 2</p>
                 <div class="coach-link-search single-field">
                   <label>
-                    上傳 CSV 檔案
+                    銝 CSV 瑼?
                     <input type="file" id="history-import-file" accept=".csv,text/csv">
                   </label>
                 </div>
@@ -271,67 +270,66 @@
               <table>
                 <thead>
                   <tr>
-                    <th>學生姓名</th>
-                    <th>日期</th>
-                    <th>動作</th>
-                    <th>分類</th>
-                    <th>目標格式</th>
-                    <th>匯入狀態</th>
+                    <th>摮貊?憪?</th>
+                    <th>?交?</th>
+                    <th>??</th>
+                    <th>??</th>
+                    <th>?格??澆?</th>
+                    <th>?臬???/th>
                   </tr>
                 </thead>
                 <tbody id="history-import-preview-body">
-                  <tr><td colspan="6" class="empty-state">請先下載範本並上傳 CSV。</td></tr>
+                  <tr><td colspan="6" class="empty-state">隢?銝?蝭銝虫???CSV??/td></tr>
                 </tbody>
               </table>
             </div>
             <div class="button-row">
-              <button class="primary-button" id="confirm-history-import" type="button" disabled>確認匯入</button>
+              <button class="primary-button" id="confirm-history-import" type="button" disabled>蝣箄??臬</button>
             </div>
           </article>
 
           <article class="card wide-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">學生管理</p>
-                <h3>學生管理</h3>
+                <p class="section-kicker">摮貊?蝞∠?</p>
+                <h3>摮貊?蝞∠?</h3>
               </div>
-              <span class="status-pill" id="coach-student-count">共 0 人</span>
+              <span class="status-pill" id="coach-student-count">??0 鈭?/span>
             </div>
-            <p class="muted-copy">可新增學生、搜尋學生、查看學生狀態，並管理學生代碼與主要教練。</p>
+            <p class="muted-copy">?舀憓飛??撠飛??飛????銝衣恣?飛?誨蝣潸?銝餉??毀??/p>
             <div class="student-manager-toolbar">
               <div class="student-manager-block">
-                <p class="student-manager-label">新增學生</p>
+                <p class="student-manager-label">?啣?摮貊?</p>
                 <div class="coach-link-search single-field">
                   <label>
-                    學生姓名
-                    <input type="text" id="new-student-name" placeholder="請輸入學生姓名">
+                    摮貊?憪?
+                    <input type="text" id="new-student-name" placeholder="隢撓?亙飛????>
                   </label>
                 </div>
                 <div class="button-row">
-                  <button class="primary-button" id="add-student" type="button">新增學生</button>
+                  <button class="primary-button" id="add-student" type="button">?啣?摮貊?</button>
                 </div>
               </div>
 
               <div class="student-manager-block">
-                <p class="student-manager-label">搜尋學生</p>
+                <p class="student-manager-label">??摮貊?</p>
                 <div class="coach-link-search single-field">
                   <label>
-                    搜尋關鍵字
-                    <input type="text" id="coach-student-roster-search" placeholder="可搜尋學生姓名或代碼">
+                    ???摮?                    <input type="text" id="coach-student-roster-search" placeholder="?舀?撠飛????隞?Ⅳ">
                   </label>
                 </div>
                 <div class="button-row">
-                  <button class="ghost-button" id="clear-student-roster-search" type="button">清除搜尋</button>
+                  <button class="ghost-button" id="clear-student-roster-search" type="button">皜??</button>
                 </div>
               </div>
             </div>
             <div class="card-heading student-roster-heading">
               <div>
-                <p class="section-kicker">學生名單</p>
-                <h3>學生名單</h3>
-                <p class="muted-copy student-roster-summary" id="coach-student-roster-summary">目前顯示 0 / 0 人</p>
+                <p class="section-kicker">摮貊??</p>
+                <h3>摮貊??</h3>
+                <p class="muted-copy student-roster-summary" id="coach-student-roster-summary">?桀?憿舐內 0 / 0 鈭?/p>
               </div>
-              <p class="muted-copy">可直接查看網址、修改姓名、複製代碼、查看全部紀錄、停用或刪除學生。</p>
+              <p class="muted-copy">?舐?交?雯??耨?孵???鋆賭誨蝣潦??函????冽??芷摮貊???/p>
             </div>
             <div class="coach-link-list" id="coach-student-roster"></div>
           </article>
@@ -344,20 +342,20 @@
             <article class="card compact-card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">提交狀況</p>
-                  <h3>提交狀況</h3>
+                  <p class="section-kicker">?漱?瘜?/p>
+                  <h3>?漱?瘜?/h3>
                 </div>
               </div>
               <label>
-                查看日期
+                ?亦??交?
                 <input type="date" id="coach-today-date">
               </label>
               <div class="status-block">
-                <h4>已送出</h4>
+                <h4>撌脤</h4>
                 <ul id="submitted-list" class="name-list"></ul>
               </div>
               <div class="status-block">
-                <h4>未送出</h4>
+                <h4>?芷</h4>
                 <ul id="pending-list" class="name-list"></ul>
               </div>
             </article>
@@ -365,38 +363,37 @@
             <article class="card wide-card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">今日紀錄</p>
-                  <h3>今日全班紀錄</h3>
+                  <p class="section-kicker">隞蝝??/p>
+                  <h3>隞?函蝝??/h3>
                 </div>
-                <span class="status-pill" id="today-logs-count">共 0 筆</span>
+                <span class="status-pill" id="today-logs-count">??0 蝑?/span>
               </div>
               <div class="coach-link-search single-field">
                 <label>
-                  搜尋今日紀錄
-                  <input type="text" id="today-logs-search" placeholder="可搜尋學生姓名或動作">
+                  ??隞蝝??                  <input type="text" id="today-logs-search" placeholder="?舀?撠飛??????">
                 </label>
               </div>
               <div class="button-row coach-history-mobile-toggle">
-                <button class="ghost-button full-width" id="toggle-coach-history-results" type="button">查看歷史紀錄</button>
+                <button class="ghost-button full-width" id="toggle-coach-history-results" type="button">?亦?甇瑕蝝??/button>
               </div>
               <div class="table-wrap" id="coach-history-results-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>學生</th>
-                      <th>分類</th>
-                      <th>動作</th>
-                      <th>目標</th>
-                      <th>實際結果</th>
-                      <th>備註</th>
-                      <th>送出時間</th>
+                      <th>摮貊?</th>
+                      <th>??</th>
+                      <th>??</th>
+                      <th>?格?</th>
+                      <th>撖阡?蝯?</th>
+                      <th>?酉</th>
+                      <th>???</th>
                     </tr>
                   </thead>
                   <tbody id="today-logs-body"></tbody>
                 </table>
               </div>
               <div class="button-row library-more-row">
-                <button class="ghost-button" id="today-logs-more" type="button">查看更多</button>
+                <button class="ghost-button" id="today-logs-more" type="button">?亦??游?</button>
               </div>
             </article>
           </div>
@@ -404,28 +401,28 @@
           <article class="card" id="today-student-detail-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">學生當日紀錄</p>
-                <h3>學生當日完整紀錄</h3>
+                <p class="section-kicker">摮貊??嗆蝝??/p>
+                <h3>摮貊??嗆摰蝝??/h3>
               </div>
-              <span class="status-pill" id="today-student-detail-status">請先選擇學生</span>
+              <span class="status-pill" id="today-student-detail-status">隢??豢?摮貊?</span>
             </div>
             <div class="table-wrap">
               <table>
                 <thead>
                   <tr>
-                    <th>分類</th>
-                    <th>動作</th>
-                    <th>目標</th>
-                    <th>實際結果</th>
-                    <th>備註</th>
-                    <th>送出時間</th>
+                    <th>??</th>
+                    <th>??</th>
+                    <th>?格?</th>
+                    <th>撖阡?蝯?</th>
+                    <th>?酉</th>
+                    <th>???</th>
                   </tr>
                 </thead>
                 <tbody id="today-student-detail-body"></tbody>
               </table>
             </div>
             <div class="button-row library-more-row">
-              <button class="ghost-button" id="today-student-detail-more" type="button">查看更多</button>
+              <button class="ghost-button" id="today-student-detail-more" type="button">?亦??游?</button>
             </div>
           </article>
         </section>
@@ -435,60 +432,60 @@
             <article class="card compact-card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">歷史查詢條件</p>
-                  <h3>歷史查詢</h3>
+                  <p class="section-kicker">甇瑕?亥岷璇辣</p>
+                  <h3>甇瑕?亥岷</h3>
                 </div>
               </div>
               <label>
-                學生
+                摮貊?
                 <select id="coach-history-student"></select>
               </label>
               <label>
-                動作
+                ??
                 <select id="coach-history-exercise"></select>
               </label>
               <label>
-                開始日期
+                ???交?
                 <input type="date" id="coach-history-date-from">
               </label>
               <label>
-                結束日期
+                蝯??交?
                 <input type="date" id="coach-history-date-to">
               </label>
               <div class="button-row">
-                <button class="ghost-button full-width" id="coach-history-last-30" type="button">最近 30 天</button>
-                <button class="ghost-button full-width" id="run-coach-history" type="button">查看歷史紀錄</button>
-                <button class="ghost-button full-width" id="reset-coach-history" type="button">清除條件</button>
-                <button class="primary-button full-width" id="export-coach-history" type="button">匯出 CSV</button>
+                <button class="ghost-button full-width" id="coach-history-last-30" type="button">?餈?30 憭?/button>
+                <button class="ghost-button full-width" id="run-coach-history" type="button">?亦?甇瑕蝝??/button>
+                <button class="ghost-button full-width" id="reset-coach-history" type="button">皜璇辣</button>
+                <button class="primary-button full-width" id="export-coach-history" type="button">?臬 CSV</button>
               </div>
             </article>
 
             <article class="card wide-card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">歷史紀錄</p>
-                  <h3>學生／動作歷史紀錄</h3>
+                  <p class="section-kicker">甇瑕蝝??/p>
+                  <h3>摮貊?嚗?雿風?脩???/h3>
                 </div>
-                <span class="status-pill" id="coach-history-count">共 0 筆</span>
+                <span class="status-pill" id="coach-history-count">??0 蝑?/span>
               </div>
               <div class="table-wrap">
                 <table>
                   <thead>
                     <tr>
-                      <th>日期</th>
-                      <th>學生</th>
-                      <th>分類</th>
-                      <th>動作</th>
-                      <th>目標</th>
-                      <th>實際結果</th>
-                      <th>備註</th>
+                      <th>?交?</th>
+                      <th>摮貊?</th>
+                      <th>??</th>
+                      <th>??</th>
+                      <th>?格?</th>
+                      <th>撖阡?蝯?</th>
+                      <th>?酉</th>
                     </tr>
                   </thead>
                   <tbody id="coach-history-body"></tbody>
                 </table>
               </div>
               <div class="button-row library-more-row">
-                <button class="ghost-button" id="coach-history-more" type="button">查看更多</button>
+                <button class="ghost-button" id="coach-history-more" type="button">?亦??游?</button>
               </div>
             </article>
           </div>
@@ -498,13 +495,13 @@
       <section id="student-panel" class="panel">
         <div class="panel-header">
           <div>
-            <p class="section-kicker">學生填寫入口</p>
-            <h2>學生今日課表與訓練紀錄</h2>
-            <p class="muted-copy">可載入今日課表、填寫訓練內容，並查詢個人歷史紀錄。</p>
+            <p class="section-kicker">摮貊?憛怠神?亙</p>
+            <h2>摮貊?隞隤脰”??蝺渡???/h2>
+            <p class="muted-copy">?航??乩??亥玨銵具‵撖怨?蝺游摰對?銝行閰Ｗ犖甇瑕蝝??/p>
           </div>
           <div class="view-toggle" aria-label="Student layout mode">
-            <button class="view-toggle-button is-active" id="student-global-view-card" type="button">手機版介面</button>
-            <button class="view-toggle-button" id="student-global-view-table" type="button">網頁版介面</button>
+            <button class="view-toggle-button is-active" id="student-global-view-card" type="button">??????/button>
+            <button class="view-toggle-button" id="student-global-view-table" type="button">蝬脤?????/button>
           </div>
         </div>
 
@@ -512,19 +509,19 @@
           <article class="card compact-card" id="student-auth-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">身份確認</p>
-                <h3>學生專屬入口</h3>
+                <p class="section-kicker">頨思遢蝣箄?</p>
+                <h3>摮貊?撠惇?亙</h3>
               </div>
             </div>
             <label>
-              專屬代碼
-              <input type="text" id="student-access-code" placeholder="例如：WM001">
+              撠惇隞?Ⅳ
+              <input type="text" id="student-access-code" placeholder="靘?嚗M001">
             </label>
-            <p class="auto-login-banner is-hidden" id="student-autologin-banner">正在自動登入並載入課表，請稍候...</p>
-            <p class="muted-copy">也可以直接使用專屬連結進入，網站會自動帶入你的身份。</p>
+            <p class="auto-login-banner is-hidden" id="student-autologin-banner">甇??芸??餃銝西??亥玨銵剁?隢???..</p>
+            <p class="muted-copy">銋隞亦?乩蝙?典?撅祇???脣嚗雯蝡??芸?撣嗅雿?頨思遢??/p>
             <select id="student-program-select" hidden aria-hidden="true"></select>
             <div class="student-entry-submit">
-              <button class="ghost-button" id="confirm-student-access" type="button">確認身份並載入今日課表</button>
+              <button class="ghost-button" id="confirm-student-access" type="button">蝣箄?頨思遢銝西??乩??亥玨銵?/button>
             </div>
             <div class="student-summary" id="student-summary"></div>
           </article>
@@ -534,44 +531,43 @@
           <article class="card wide-card" id="student-program-card">
             <div class="card-heading">
               <div>
-                  <p class="section-kicker">今日課表</p>
-                  <h3>今日訓練課表</h3>
+                  <p class="section-kicker">隞隤脰”</p>
+                  <h3>隞閮毀隤脰”</h3>
               </div>
               <div class="student-view-tools">
-                <span class="status-pill" id="student-program-status">等待載入</span>
+                <span class="status-pill" id="student-program-status">蝑?頛</span>
                 <div class="view-toggle" aria-label="Student view">
-                  <button class="view-toggle-button is-active" id="student-view-card" type="button">卡片版</button>
-                  <button class="view-toggle-button" id="student-view-table" type="button">表格版</button>
+                  <button class="view-toggle-button is-active" id="student-view-card" type="button">?∠???/button>
+                  <button class="view-toggle-button" id="student-view-table" type="button">銵冽??/button>
                 </div>
               </div>
             </div>
             <div class="button-row is-hidden" id="student-leave-entry-row">
-              <button class="primary-button" id="open-student-leave-system-main" type="button" hidden>前往請假系統</button>
+              <button class="primary-button" id="open-student-leave-system-main" type="button" hidden>??隢?蝟餌絞</button>
             </div>
 
             <div class="student-active-bar is-hidden" id="student-active-bar">
               <div class="student-active-copy" id="student-active-copy"></div>
               <div class="student-active-actions">
-                <button class="primary-button" id="load-student-program-inline" type="button">載入今日課表</button>
-                <button class="ghost-button" id="open-student-leave-system-inline" type="button" hidden>前往請假系統</button>
-                <button class="ghost-button" id="edit-student-program" type="button">編輯課表項目</button>
-                <button class="ghost-button" id="change-student-access" type="button">切換身份 / 課表</button>
+                <button class="primary-button" id="load-student-program-inline" type="button">頛隞隤脰”</button>
+                <button class="ghost-button" id="open-student-leave-system-inline" type="button" hidden>??隢?蝟餌絞</button>
+                <button class="ghost-button" id="edit-student-program" type="button">蝺刻摩隤脰”?</button>
+                <button class="ghost-button" id="change-student-access" type="button">??頨思遢 / 隤脰”</button>
               </div>
             </div>
 
-            <div class="recorded-banner is-hidden" id="student-recorded-banner">本次訓練內容已記錄。</div>
+            <div class="recorded-banner is-hidden" id="student-recorded-banner">?祆活閮毀?批捆撌脰???/div>
 
             <div class="student-phone-frame" id="student-phone-frame">
               <div class="student-mobile-tools" id="student-mobile-tools">
-                <button class="primary-button full-width" id="load-student-program-mobile" type="button">載入今日課表</button>
-                <button class="ghost-button full-width" id="edit-student-program-mobile-top" type="button">編輯課表項目</button>
-                <button class="ghost-button full-width" id="open-student-leave-system-mobile-primary" type="button" hidden>前往請假系統</button>
+                <button class="primary-button full-width" id="load-student-program-mobile" type="button">頛隞隤脰”</button>
+                <button class="ghost-button full-width" id="edit-student-program-mobile-top" type="button">蝺刻摩隤脰”?</button>
+                <button class="ghost-button full-width" id="open-student-leave-system-mobile-primary" type="button" hidden>??隢?蝟餌絞</button>
               </div>
               <div class="student-card-list" id="student-card-list"></div>
               <div class="student-mobile-secondary-actions" id="student-mobile-secondary-actions">
-                <button class="ghost-button full-width" id="edit-student-program-mobile" type="button">編輯課表項目</button>
-                <button class="ghost-button full-width" id="open-student-leave-system-mobile-secondary" type="button" hidden>前往請假系統</button>
-                <button class="ghost-button full-width" id="open-student-history-mobile" type="button">查看我的歷史紀錄</button>
+                <button class="ghost-button full-width" id="edit-student-program-mobile" type="button">蝺刻摩隤脰”?</button>
+                <button class="ghost-button full-width" id="open-student-history-mobile" type="button">?亦???甇瑕蝝??/button>
               </div>
             </div>
 
@@ -579,10 +575,10 @@
               <table>
                 <thead>
                   <tr>
-                    <th>分類</th>
-                    <th>動作</th>
-                    <th>目標</th>
-                    <th>填寫內容</th>
+                    <th>??</th>
+                    <th>??</th>
+                    <th>?格?</th>
+                    <th>憛怠神?批捆</th>
                   </tr>
                 </thead>
                 <tbody id="student-program-body"></tbody>
@@ -590,12 +586,12 @@
             </div>
 
             <div class="button-row" id="student-desktop-actions">
-              <button class="primary-button" id="submit-student-log" type="button">確認本次填寫內容</button>
-              <button class="ghost-button" id="open-student-history" type="button">查看我的歷史紀錄</button>
+              <button class="primary-button" id="submit-student-log" type="button">蝣箄??祆活憛怠神?批捆</button>
+              <button class="ghost-button" id="open-student-history" type="button">?亦???甇瑕蝝??/button>
             </div>
 
             <div class="student-mobile-submit-bar" id="student-mobile-submit-bar">
-              <button class="primary-button full-width" id="submit-student-log-mobile" type="button">確認本次填寫內容</button>
+              <button class="primary-button full-width" id="submit-student-log-mobile" type="button">蝣箄??祆活憛怠神?批捆</button>
             </div>
           </article>
         </div>
@@ -603,15 +599,15 @@
         <article class="card" id="student-history-card">
           <div class="card-heading">
             <div>
-              <p class="section-kicker">歷史紀錄</p>
-              <h3>我的歷史紀錄</h3>
+              <p class="section-kicker">甇瑕蝝??/p>
+              <h3>??甇瑕蝝??/h3>
             </div>
-            <span class="status-pill" id="student-history-count">共 0 筆</span>
+            <span class="status-pill" id="student-history-count">??0 蝑?/span>
           </div>
           <div class="history-toolbar">
             <label>
-              項目
-              <input type="text" id="student-history-exercise" list="student-history-exercise-options" placeholder="請選擇或輸入項目">
+              ?
+              <input type="text" id="student-history-exercise" list="student-history-exercise-options" placeholder="隢??頛詨?">
             </label>
           </div>
           <datalist id="student-history-exercise-options"></datalist>
@@ -619,12 +615,12 @@
             <table>
               <thead>
                 <tr>
-                  <th>日期</th>
-                  <th>分類</th>
-                  <th>動作</th>
-                  <th>目標</th>
-                  <th>實際結果</th>
-                  <th>備註</th>
+                  <th>?交?</th>
+                  <th>??</th>
+                  <th>??</th>
+                  <th>?格?</th>
+                  <th>撖阡?蝯?</th>
+                  <th>?酉</th>
                 </tr>
               </thead>
               <tbody id="student-history-body"></tbody>
@@ -632,7 +628,7 @@
           </div>
           <div class="student-history-card-list" id="student-history-card-list"></div>
           <div class="button-row library-more-row">
-            <button class="ghost-button" id="student-history-more" type="button">查看更多</button>
+            <button class="ghost-button" id="student-history-more" type="button">?亦??游?</button>
           </div>
         </article>
       </section>
@@ -643,12 +639,12 @@
     <tr>
       <td>
         <select class="category-input">
-          <option value="爆發力">爆發力</option>
-          <option value="主項目">主項目</option>
-          <option value="輔助項">輔助項</option>
+          <option value="???>???/option>
+          <option value="銝駁???>銝駁???/option>
+          <option value="頛??>頛??/option>
         </select>
       </td>
-      <td><input type="text" class="exercise-input" placeholder="請輸入動作名稱" list="coach-exercise-options"></td>
+      <td><input type="text" class="exercise-input" placeholder="隢撓?亙?雿?蝔? list="coach-exercise-options"></td>
       <td><input type="number" class="sets-input" min="1" value="4"></td>
       <td>
         <select class="type-input">
@@ -658,9 +654,9 @@
         </select>
       </td>
       <td><input type="number" class="value-input" min="1" value="8"></td>
-      <td><input type="text" class="item-note-input" placeholder="可留空"></td>
+      <td><input type="text" class="item-note-input" placeholder="?舐?蝛?></td>
       <td><input type="number" class="sort-input" min="1" value="1"></td>
-      <td><button type="button" class="icon-button remove-item">刪除</button></td>
+      <td><button type="button" class="icon-button remove-item">?芷</button></td>
     </tr>
   </template>
 
@@ -679,12 +675,12 @@
     <tr>
       <td>
         <select class="student-edit-category">
-          <option value="爆發力">爆發力</option>
-          <option value="主項目">主項目</option>
-          <option value="輔助項">輔助項</option>
+          <option value="???>???/option>
+          <option value="銝駁???>銝駁???/option>
+          <option value="頛??>頛??/option>
         </select>
       </td>
-      <td><input type="text" class="student-edit-exercise" placeholder="請輸入動作名稱"></td>
+      <td><input type="text" class="student-edit-exercise" placeholder="隢撓?亙?雿?蝔?></td>
       <td><input type="number" class="student-edit-sets" min="1" value="4"></td>
       <td>
         <select class="student-edit-type">
@@ -694,7 +690,7 @@
         </select>
       </td>
       <td><input type="number" class="student-edit-value" min="1" value="8"></td>
-      <td><button type="button" class="icon-button remove-student-edit-row">刪除</button></td>
+      <td><button type="button" class="icon-button remove-student-edit-row">?芷</button></td>
     </tr>
   </template>
 
@@ -702,10 +698,10 @@
     <div class="modal-card" id="confirm-modal-card" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
       <div class="card-heading">
         <div>
-          <p class="section-kicker">送出前確認</p>
-          <h3 id="confirm-title">確認本次填寫內容</h3>
+          <p class="section-kicker">??Ⅱ隤?/p>
+          <h3 id="confirm-title">蝣箄??祆活憛怠神?批捆</h3>
         </div>
-        <button class="icon-button" id="close-confirm-modal" type="button">關閉</button>
+        <button class="icon-button" id="close-confirm-modal" type="button">??</button>
       </div>
       <p class="muted-copy" id="confirm-summary"></p>
       <div class="confirm-card-list" id="confirm-card-list"></div>
@@ -713,19 +709,19 @@
         <table>
           <thead>
             <tr>
-              <th>分類</th>
-              <th>動作</th>
-              <th>目標</th>
-              <th>實際結果</th>
-              <th>備註</th>
+              <th>??</th>
+              <th>??</th>
+              <th>?格?</th>
+              <th>撖阡?蝯?</th>
+              <th>?酉</th>
             </tr>
           </thead>
           <tbody id="confirm-body"></tbody>
         </table>
       </div>
       <div class="button-row modal-row">
-        <button class="ghost-button" id="cancel-submit" type="button">返回修改</button>
-        <button class="primary-button" id="confirm-submit" type="button">確認送出</button>
+        <button class="ghost-button" id="cancel-submit" type="button">餈?靽格</button>
+        <button class="primary-button" id="confirm-submit" type="button">蝣箄??</button>
       </div>
     </div>
   </div>
@@ -734,21 +730,21 @@
     <div class="modal-card preview-modal-card" role="dialog" aria-modal="true" aria-labelledby="program-preview-title">
       <div class="card-heading">
         <div>
-          <p class="section-kicker">課表圖片預覽</p>
-          <h3 id="program-preview-title">課表圖片預覽</h3>
+          <p class="section-kicker">隤脰”???汗</p>
+          <h3 id="program-preview-title">隤脰”???汗</h3>
         </div>
-        <button class="icon-button" id="close-program-preview-modal" type="button">關閉</button>
+        <button class="icon-button" id="close-program-preview-modal" type="button">??</button>
       </div>
-      <p class="muted-copy">預覽完成後，可直接匯出 PNG 圖片檔。</p>
+      <p class="muted-copy">?汗摰?敺??舐?亙??PNG ??瑼?/p>
       <div class="program-preview modal-program-preview">
-        <div class="program-preview-header" id="modal-preview-code">請先儲存課表</div>
+        <div class="program-preview-header" id="modal-preview-code">隢??脣?隤脰”</div>
         <div class="program-preview-body" id="modal-program-preview-body">
-          <div class="program-preview-empty">請先輸入課表內容。</div>
+          <div class="program-preview-empty">隢?頛詨隤脰”?批捆??/div>
         </div>
       </div>
       <div class="button-row modal-row">
-        <button class="ghost-button" id="modal-export-program-image" type="button">匯出 PNG</button>
-        <button class="primary-button" id="modal-close-preview" type="button">完成</button>
+        <button class="ghost-button" id="modal-export-program-image" type="button">?臬 PNG</button>
+        <button class="primary-button" id="modal-close-preview" type="button">摰?</button>
       </div>
     </div>
   </div>
@@ -757,8 +753,8 @@
     <div class="modal-card" id="success-modal-card" role="dialog" aria-modal="true" aria-labelledby="success-title">
       <div class="card-heading">
         <div>
-          <p class="section-kicker">完成送出</p>
-          <h3 id="success-title">課表已完成</h3>
+          <p class="section-kicker">摰??</p>
+          <h3 id="success-title">隤脰”撌脣???/h3>
         </div>
       </div>
       <p class="muted-copy" id="success-summary"></p>
@@ -767,20 +763,20 @@
         <table>
           <thead>
             <tr>
-              <th>分類</th>
-              <th>動作</th>
-              <th>目標</th>
-              <th>實際結果</th>
-              <th>備註</th>
+              <th>??</th>
+              <th>??</th>
+              <th>?格?</th>
+              <th>撖阡?蝯?</th>
+              <th>?酉</th>
             </tr>
           </thead>
           <tbody id="success-body"></tbody>
         </table>
       </div>
       <div class="button-row modal-row">
-        <button class="ghost-button" id="download-success-image" type="button">下載圖片</button>
-        <button class="ghost-button" id="success-open-history" type="button">返回歷史紀錄</button>
-        <button class="primary-button" id="close-success-modal" type="button">完成</button>
+        <button class="ghost-button" id="download-success-image" type="button">銝???</button>
+        <button class="ghost-button" id="success-open-history" type="button">餈?甇瑕蝝??/button>
+        <button class="primary-button" id="close-success-modal" type="button">摰?</button>
       </div>
     </div>
   </div>
@@ -789,25 +785,25 @@
     <div class="modal-card" id="student-program-edit-modal-card" role="dialog" aria-modal="true" aria-labelledby="student-program-edit-title">
       <div class="card-heading">
         <div>
-          <p class="section-kicker">課表編輯視窗</p>
-          <h3 id="student-program-edit-title">編輯課表項目</h3>
+          <p class="section-kicker">隤脰”蝺刻摩閬?</p>
+          <h3 id="student-program-edit-title">蝺刻摩隤脰”?</h3>
         </div>
-        <button class="icon-button" id="close-student-program-edit-modal" type="button">關閉</button>
+        <button class="icon-button" id="close-student-program-edit-modal" type="button">??</button>
       </div>
-      <p class="muted-copy">如需新增、刪除或調整項目，可先在這裡修改，再套用到本次課表。</p>
+      <p class="muted-copy">憒??啣???斗?隤踵?嚗??ㄐ靽格嚗?憟?唳甈∟玨銵具?/p>
       <div class="button-row modal-row student-edit-toolbar">
-        <button class="ghost-button" id="add-student-edit-row" type="button">新增一列</button>
+        <button class="ghost-button" id="add-student-edit-row" type="button">?啣?銝??/button>
       </div>
       <p class="student-edit-notice" id="student-program-edit-notice" aria-live="polite"></p>
       <div class="table-wrap editor-table-wrap">
         <table class="editor-table student-edit-table">
           <thead>
             <tr>
-              <th>分類</th>
-              <th>動作名稱</th>
-              <th>組數</th>
-              <th>類型</th>
-              <th>次數</th>
+              <th>??</th>
+              <th>???迂</th>
+              <th>蝯</th>
+              <th>憿?</th>
+              <th>甈⊥</th>
               <th></th>
             </tr>
           </thead>
@@ -816,8 +812,8 @@
       </div>
       <div class="student-edit-mobile-list" id="student-edit-mobile-list"></div>
       <div class="button-row modal-row">
-        <button class="ghost-button" id="cancel-student-program-edit" type="button">取消</button>
-        <button class="primary-button" id="save-student-program-edit" type="button">套用到本次課表</button>
+        <button class="ghost-button" id="cancel-student-program-edit" type="button">??</button>
+        <button class="primary-button" id="save-student-program-edit" type="button">憟?唳甈∟玨銵?/button>
       </div>
     </div>
   </div>
@@ -826,19 +822,19 @@
     <div class="modal-card" role="dialog" aria-modal="true" aria-labelledby="assign-coach-title">
       <div class="card-heading">
         <div>
-          <p class="section-kicker">學生指派</p>
-          <h3 id="assign-coach-title">指派主要教練</h3>
+          <p class="section-kicker">摮貊??晷</p>
+          <h3 id="assign-coach-title">?晷銝餉??毀</h3>
         </div>
-        <button class="icon-button" id="close-assign-coach-modal" type="button">關閉</button>
+        <button class="icon-button" id="close-assign-coach-modal" type="button">??</button>
       </div>
-      <p class="muted-copy" id="assign-coach-summary">請選擇要指派給這位學生的主要教練。</p>
+      <p class="muted-copy" id="assign-coach-summary">隢???晷蝯阡?摮貊??蜓閬?蝺氬?/p>
       <label>
-        主要教練
+        銝餉??毀
         <select id="assign-coach-select"></select>
       </label>
       <div class="button-row modal-row">
-        <button class="ghost-button" id="cancel-assign-coach" type="button">取消</button>
-        <button class="primary-button" id="save-assign-coach" type="button">儲存指派</button>
+        <button class="ghost-button" id="cancel-assign-coach" type="button">??</button>
+        <button class="primary-button" id="save-assign-coach" type="button">?脣??晷</button>
       </div>
     </div>
   </div>
@@ -847,3 +843,4 @@
   <script charset="UTF-8" src="app.js?v=20260426-0011"></script>
 </body>
 </html>
+
