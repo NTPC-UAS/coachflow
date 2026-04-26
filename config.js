@@ -9,10 +9,16 @@ window.APP_CONFIG = {
   calendarStudentAliases: {
     "宇含": "ST013",
     "宇涵": "ST013",
+    "宇菡": "ST013",
     "建銘": "ST010",
+    "建名": "ST010",
     "亭昀": "ST014",
+    "亭勻": "ST014",
     "學姐": "ZO006",
-    "妹妹": "ST007"
+    "zoe": "ZO006",
+    "Zoe": "ZO006",
+    "妹妹": "ST007",
+    "阿尼": "ST007"
   },
   publicBaseUrl: "https://ntpc-uas.github.io/coachflow/",
   requestTimeoutMs: 12000,
