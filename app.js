@@ -79,7 +79,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260426-0007";
+const PUBLIC_APP_VERSION = "20260426-0008";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -5265,7 +5265,8 @@ function buildHistoryImportPreview(text) {
   return dataRows.map((row, index) => {
     const raw = Object.fromEntries(headers.map((header, cellIndex) => [header, String(row[cellIndex] || "").trim()]));
     const student = state.students.find((item) => item.name === raw.student_name);
-    const targetType = raw.target_type;
+    // Allow CSV imports to use RM / rm / Reps / TIME without failing on case alone.
+    const targetType = String(raw.target_type || "").trim().toLowerCase();
     const targetSets = Number(raw.target_sets || 0);
     const targetValue = Number(raw.target_value || 0);
     const actualWeight = raw.actual_weight ? Number(raw.actual_weight) : "";
@@ -5309,6 +5310,12 @@ function renderHistoryImportPreview() {
   }
 
   const validCount = pendingHistoryImportRows.filter((row) => row.valid).length;
+  const previewRows = [...pendingHistoryImportRows].sort((a, b) => {
+    if (a.valid === b.valid) {
+      return a.rowNumber - b.rowNumber;
+    }
+    return a.valid ? 1 : -1;
+  });
   if (els.historyImportCount) {
     els.historyImportCount.textContent = pendingHistoryImportRows.length
       ? `可匯入 ${validCount} / ${pendingHistoryImportRows.length} 筆`
@@ -5319,9 +5326,8 @@ function renderHistoryImportPreview() {
     els.confirmHistoryImportButton.disabled = validCount === 0;
   }
 
-  els.historyImportPreviewBody.innerHTML = pendingHistoryImportRows.length
-    ? pendingHistoryImportRows
-        .slice(0, 12)
+  els.historyImportPreviewBody.innerHTML = previewRows.length
+    ? previewRows
         .map((row) => `
           <tr>
             <td>${row.studentName || "-"}</td>
@@ -5329,7 +5335,7 @@ function renderHistoryImportPreview() {
             <td>${row.exercise || "-"}</td>
             <td>${formatTarget(row)}</td>
             <td>${formatActual(row)}</td>
-            <td>${row.valid ? "可匯入" : row.statusText}</td>
+            <td>${row.valid ? "可匯入" : `第 ${row.rowNumber} 列：${row.statusText}`}</td>
           </tr>
         `)
         .join("")
