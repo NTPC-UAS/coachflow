@@ -5004,6 +5004,26 @@
     }
   }
 
+  function deleteCompensationTask(taskId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
+    const tasks = Array.isArray(state.compensationTasks) ? state.compensationTasks : [];
+    const task = tasks.find((item) => item.id === taskId);
+    if (!task) {
+      return;
+    }
+    const ok = window.confirm(`確定刪除這筆補償任務？\n${task.type || "-"} / ${summarizeCompensationTask(task)}`);
+    if (!ok) {
+      return;
+    }
+    state.compensationTasks = tasks.filter((item) => item.id !== taskId);
+    addLog(`[補償任務] 已刪除 ${task.type || "-"}（${task.id}）。`);
+    saveState();
+    renderCompensationPanel();
+    renderLogs();
+  }
+
   function renderCompensationPanel() {
     if (!el.compensationTable) {
       return;
@@ -5013,16 +5033,21 @@
     if (el.compensationSummary) {
       el.compensationSummary.textContent = `待處理：${pendingCount}`;
     }
-    const rows = tasks.map((task) => `
+    const rows = tasks.map((task) => {
+      const retryButton = task.status === "completed" ? "" : `<button data-action="retry-comp" data-id="${task.id}">重送</button>`;
+      const deleteButton = `<button class="danger" data-action="delete-comp" data-id="${task.id}">刪除</button>`;
+      const actionHtml = [retryButton, deleteButton].filter(Boolean).join(" ");
+      return `
       <tr>
         <td>${formatDateTime(task.createdAt || new Date().toISOString())}</td>
         <td>${task.type || "-"}</td>
         <td>${summarizeCompensationTask(task)}</td>
         <td>${task.reason || task.lastError || "-"}</td>
         <td>${getCompensationStatusPill(task.status || "pending")}</td>
-        <td>${task.status === "completed" ? "-" : `<button data-action="retry-comp" data-id="${task.id}">重送</button>`}</td>
+        <td>${actionHtml || "-"}</td>
       </tr>
-    `).join("");
+    `;
+    }).join("");
     el.compensationTable.innerHTML = `
       <thead><tr><th>建立時間</th><th>類型</th><th>摘要</th><th>原因</th><th>狀態</th><th>操作</th></tr></thead>
       <tbody>${rows || "<tr><td colspan='6'>目前沒有補償任務</td></tr>"}</tbody>
@@ -5676,11 +5701,15 @@
     }
     if (el.compensationTable) {
       el.compensationTable.addEventListener("click", (event) => {
-        const button = closestFromEvent(event, "button[data-action='retry-comp']");
+        const button = closestFromEvent(event, "button[data-action='retry-comp'], button[data-action='delete-comp']");
         if (!button) {
           return;
         }
         if (!requireCoachWriteAccess()) {
+          return;
+        }
+        if (button.dataset.action === "delete-comp") {
+          deleteCompensationTask(button.dataset.id);
           return;
         }
         retryCompensationTask(button.dataset.id);
