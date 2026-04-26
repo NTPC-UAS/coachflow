@@ -1111,6 +1111,152 @@
     saveState();
   }
 
+  function getLessonCloudMatchKey(lesson) {
+    if (!lesson) {
+      return "";
+    }
+    return [
+      normalizeParticipantCode(lesson.studentCode),
+      normalizeParticipantCode(lesson.coachCode),
+      new Date(lesson.startAt || "").toISOString()
+    ].join("|");
+  }
+
+  function buildCloudLeaveRecord(leave, lesson) {
+    const targetLesson = lesson || getLessonById(leave?.lessonId);
+    if (!leave || !targetLesson) {
+      return null;
+    }
+    return {
+      id: leave.id,
+      lessonId: leave.lessonId,
+      lessonKey: getLessonCloudMatchKey(targetLesson),
+      calendarEventId: targetLesson.calendarEventId || "",
+      studentCode: normalizeParticipantCode(leave.studentCode || targetLesson.studentCode),
+      coachCode: normalizeParticipantCode(leave.coachCode || targetLesson.coachCode),
+      lessonStartAt: targetLesson.startAt,
+      type: leave.type || "normal",
+      submittedAt: leave.submittedAt || new Date().toISOString(),
+      makeupEligible: leave.makeupEligible !== false,
+      revokedAt: leave.revokedAt || "",
+      revokedBy: leave.revokedBy || ""
+    };
+  }
+
+  function findLessonForCloudLeaveRecord(record) {
+    if (!record) {
+      return null;
+    }
+    const lessonId = String(record.lessonId || "").trim();
+    if (lessonId) {
+      const byId = getLessonById(lessonId);
+      if (byId) {
+        return byId;
+      }
+    }
+    const recordEventId = normalizeCalendarEventId(record.calendarEventId);
+    if (recordEventId) {
+      const byEventId = state.lessons.find((lesson) => normalizeCalendarEventId(lesson.calendarEventId) === recordEventId);
+      if (byEventId) {
+        return byEventId;
+      }
+    }
+    const studentCode = normalizeParticipantCode(record.studentCode);
+    const coachCode = normalizeParticipantCode(record.coachCode);
+    const startTime = new Date(record.lessonStartAt || "").getTime();
+    if (!studentCode || !coachCode || !Number.isFinite(startTime)) {
+      return null;
+    }
+    return state.lessons
+      .filter((lesson) => (
+        normalizeParticipantCode(lesson.studentCode) === studentCode &&
+        normalizeParticipantCode(lesson.coachCode) === coachCode &&
+        Math.abs(new Date(lesson.startAt).getTime() - startTime) <= 2 * 60 * 1000
+      ))
+      .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - startTime) - Math.abs(new Date(b.startAt).getTime() - startTime))[0] || null;
+  }
+
+  function applyCloudLeaveRecord(record) {
+    if (!record || String(record.type || "normal") !== "normal") {
+      return false;
+    }
+    const lesson = findLessonForCloudLeaveRecord(record);
+    if (!lesson) {
+      return false;
+    }
+    const existing = state.leaveRequests.find((leave) => leave.id === record.id) ||
+      state.leaveRequests.find((leave) => leave.lessonId === lesson.id && leave.studentCode === record.studentCode && !leave.revokedAt);
+    let changed = false;
+    const revokedAt = String(record.revokedAt || "").trim();
+    if (revokedAt) {
+      if (existing && !existing.revokedAt) {
+        existing.revokedAt = revokedAt;
+        existing.revokedBy = record.revokedBy || "cloud";
+        changed = true;
+      }
+      if (lesson.attendanceStatus === "leave-normal") {
+        lesson.attendanceStatus = "scheduled";
+        lesson.calendarOccupied = true;
+        changed = true;
+      }
+      return changed;
+    }
+
+    if (!existing) {
+      state.leaveRequests.push({
+        id: record.id || newId("LEAVE"),
+        lessonId: lesson.id,
+        studentCode: record.studentCode,
+        coachCode: record.coachCode,
+        type: "normal",
+        submittedAt: record.submittedAt || new Date().toISOString(),
+        makeupEligible: record.makeupEligible !== false
+      });
+      changed = true;
+    }
+    if (lesson.attendanceStatus !== "leave-normal" || lesson.calendarOccupied !== false) {
+      lesson.attendanceStatus = "leave-normal";
+      lesson.calendarOccupied = false;
+      changed = true;
+    }
+    return changed;
+  }
+
+  async function pushCloudLeaveRecord(leave, lesson) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const record = buildCloudLeaveRecord(leave, lesson);
+    if (!record) {
+      return false;
+    }
+    const result = await callAppsScriptApi("saveLeaveRecord", { record });
+    return result?.ok !== false;
+  }
+
+  async function syncCloudLeaveRecords(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const payload = {
+      coachCode: normalizeParticipantCode(scope.coachCode || activeCoachCode || ""),
+      studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
+    };
+    const result = await callAppsScriptApi("listLeaveRecords", payload, "GET");
+    const records = Array.isArray(result?.records) ? result.records : [];
+    let changed = false;
+    records.forEach((record) => {
+      if (applyCloudLeaveRecord(record)) {
+        changed = true;
+      }
+    });
+    if (changed) {
+      addLog(`[雲端請假] 已同步 ${records.length} 筆請假紀錄。`);
+      saveState();
+    }
+    return changed;
+  }
+
   function getCoachByCode(coachCode) {
     return state.coaches.find((coach) => coach.code === coachCode);
   }
@@ -3172,7 +3318,7 @@
     }
 
     const leaveId = newId("LEAVE");
-    state.leaveRequests.push({
+    const leaveRecord = {
       id: leaveId,
       lessonId,
       studentCode: lesson.studentCode,
@@ -3180,12 +3326,22 @@
       type: "normal",
       submittedAt: new Date().toISOString(),
       makeupEligible: true
-    });
+    };
+    state.leaveRequests.push(leaveRecord);
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
     addLog(`學生 ${lesson.studentCode} 送出請假（課程 ${lesson.id}）。`);
     saveState();
     renderAll();
+    try {
+      await pushCloudLeaveRecord(leaveRecord, lesson);
+      addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
+      saveState();
+    } catch (error) {
+      const message = String(error?.message || "未知錯誤");
+      addLog(`[雲端請假] 上傳請假紀錄失敗：${message}`);
+      saveState();
+    }
     await trySendEmailNotice(
       "leave_submitted",
       {
@@ -3249,6 +3405,12 @@
     addLog(`學生 ${activeStudentCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
+    try {
+      await pushCloudLeaveRecord(leave, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 上傳取消請假失敗：${String(error?.message || "未知錯誤")}`);
+      saveState();
+    }
     await trySendEmailNotice(
       "leave_cancelled_by_student",
       {
@@ -3609,6 +3771,12 @@
     addLog(`教練 ${activeCoachCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
+    try {
+      await pushCloudLeaveRecord(leave, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 上傳教練取消請假失敗：${String(error?.message || "未知錯誤")}`);
+      saveState();
+    }
     await trySendEmailNotice(
       "leave_revoked_by_coach",
       {
@@ -5044,9 +5212,19 @@
   function bindEvents() {
     if (el.studentLoginBtn) {
       el.studentLoginBtn.addEventListener("click", async () => {
-      await syncCoachflowRosterFromCloud();
-      syncCoachflowRosterFromLocalState();
-      activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
+        await syncCoachflowRosterFromCloud();
+        syncCoachflowRosterFromLocalState();
+        const loaded = activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
+        if (loaded) {
+          try {
+            const changed = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode });
+            if (changed) {
+              renderAll();
+            }
+          } catch (error) {
+            console.warn("Cloud leave sync failed for student login:", error);
+          }
+        }
       });
     }
 
@@ -5062,7 +5240,13 @@
         const syncFromCloud = async () => {
           const cloudChanged = await syncCoachflowRosterFromCloud();
           const localChanged = syncCoachflowRosterFromLocalState();
-          if (cloudChanged || localChanged) {
+          let leaveChanged = false;
+          try {
+            leaveChanged = await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+          } catch (error) {
+            console.warn("Cloud leave sync failed for coach login:", error);
+          }
+          if (cloudChanged || localChanged || leaveChanged) {
             renderAll();
           }
         };
@@ -5799,6 +5983,17 @@
       if (autoStudentLoaded && activeStudentCode) {
         studentCalendarSynced = await syncStudentCalendarEventsFromGoogle();
       }
+      let cloudLeaveSynced = false;
+      if ((autoStudentLoaded || autoCoachLoaded) && (activeStudentCode || activeCoachCode)) {
+        try {
+          cloudLeaveSynced = await syncCloudLeaveRecords({
+            studentCode: activeStudentCode,
+            coachCode: activeCoachCode
+          });
+        } catch (error) {
+          console.warn("Cloud leave sync failed during bootstrap:", error);
+        }
+      }
       let readOnlyCalendarSynced = false;
       if (autoCoachLoaded && activeCoachReadOnly && activeCoachCode) {
         readOnlyCalendarSynced = await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
@@ -5813,6 +6008,9 @@
         renderAll();
       }
       if (studentCalendarSynced && !cloudSyncChanged) {
+        renderAll();
+      }
+      if (cloudLeaveSynced && !cloudSyncChanged && !studentCalendarSynced) {
         renderAll();
       }
       if (readOnlyCalendarSynced && !cloudSyncChanged) {

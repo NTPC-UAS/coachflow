@@ -8,6 +8,9 @@
  * - createEvent
  * - updateEvent
  * - deleteEvent
+ * - deleteSingleEvent
+ * - listLeaveRecords
+ * - saveLeaveRecord
  * - sendEmail
  *
  * Optional Script Property:
@@ -69,6 +72,12 @@ function handleAction_(action, payload) {
         strictSingleOccurrence: true
       }));
 
+    case "listLeaveRecords":
+      return listLeaveRecords_(payload || {});
+
+    case "saveLeaveRecord":
+      return saveLeaveRecord_(payload || {});
+
     case "sendEmail":
       return sendEmailNotice_(payload || {});
 
@@ -76,7 +85,7 @@ function handleAction_(action, payload) {
       return {
         ok: false,
         action: action,
-        message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteEvent/deleteSingleEvent/sendEmail."
+        message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/sendEmail."
       };
   }
 }
@@ -301,6 +310,63 @@ function deleteCalendarEvent_(payload) {
   };
 }
 
+function listLeaveRecords_(payload) {
+  const coachCode = normalizeCode_(payload.coachCode);
+  const studentCode = normalizeCode_(payload.studentCode);
+  const records = getLeaveRecords_()
+    .filter(function(record) {
+      const recordCoachCode = normalizeCode_(record.coachCode);
+      const recordStudentCode = normalizeCode_(record.studentCode);
+      return (!coachCode || recordCoachCode === coachCode) &&
+        (!studentCode || recordStudentCode === studentCode);
+    })
+    .sort(function(a, b) {
+      return new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0);
+    });
+  return {
+    ok: true,
+    action: "listLeaveRecords",
+    count: records.length,
+    records: records
+  };
+}
+
+function saveLeaveRecord_(payload) {
+  const record = normalizeLeaveRecord_(payload.record || payload);
+  if (!record.id && !record.lessonKey) {
+    return {
+      ok: false,
+      action: "saveLeaveRecord",
+      message: "Missing leave record id or lessonKey."
+    };
+  }
+  const records = getLeaveRecords_();
+  const recordKey = getLeaveRecordKey_(record);
+  let replaced = false;
+  const nextRecords = records.map(function(item) {
+    if (getLeaveRecordKey_(item) === recordKey) {
+      replaced = true;
+      return Object.assign({}, item, record, {
+        updatedAt: nowIso_()
+      });
+    }
+    return item;
+  });
+  if (!replaced) {
+    nextRecords.unshift(Object.assign({}, record, {
+      createdAt: record.createdAt || nowIso_(),
+      updatedAt: nowIso_()
+    }));
+  }
+  setLeaveRecords_(nextRecords.slice(0, 500));
+  return {
+    ok: true,
+    action: "saveLeaveRecord",
+    record: record,
+    replaced: replaced
+  };
+}
+
 function sendEmailNotice_(payload) {
   const to = safeString_(payload.to, "");
   if (!to) {
@@ -444,6 +510,80 @@ function findSingleOccurrenceForDelete_(calendar, payload, rawEventId) {
   }
 
   return tied ? null : bestEvent;
+}
+
+function normalizeCode_(value) {
+  return safeString_(value, "").toUpperCase();
+}
+
+function normalizeLeaveRecord_(record) {
+  return {
+    id: safeString_(record.id, ""),
+    lessonId: safeString_(record.lessonId, ""),
+    lessonKey: safeString_(record.lessonKey, ""),
+    calendarEventId: safeString_(record.calendarEventId, ""),
+    studentCode: normalizeCode_(record.studentCode),
+    coachCode: normalizeCode_(record.coachCode),
+    lessonStartAt: safeString_(record.lessonStartAt, ""),
+    type: safeString_(record.type, "normal"),
+    submittedAt: safeString_(record.submittedAt, nowIso_()),
+    makeupEligible: record.makeupEligible === false || String(record.makeupEligible).toLowerCase() === "false" ? false : true,
+    revokedAt: safeString_(record.revokedAt, ""),
+    revokedBy: normalizeCode_(record.revokedBy),
+    createdAt: safeString_(record.createdAt, ""),
+    updatedAt: safeString_(record.updatedAt, "")
+  };
+}
+
+function getLeaveRecordKey_(record) {
+  return safeString_(record.id, "") || safeString_(record.lessonKey, "");
+}
+
+function getLeaveRecords_() {
+  const raw = readChunkedProperty_("LEAVE_RECORDS_V1");
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeLeaveRecord_) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function setLeaveRecords_(records) {
+  writeChunkedProperty_("LEAVE_RECORDS_V1", JSON.stringify(records || []));
+}
+
+function readChunkedProperty_(baseKey) {
+  const props = PropertiesService.getScriptProperties();
+  const chunkCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
+  if (!chunkCount) {
+    return props.getProperty(baseKey) || "";
+  }
+  const chunks = [];
+  for (var index = 0; index < chunkCount; index += 1) {
+    chunks.push(props.getProperty(baseKey + "_" + index) || "");
+  }
+  return chunks.join("");
+}
+
+function writeChunkedProperty_(baseKey, value) {
+  const props = PropertiesService.getScriptProperties();
+  const text = String(value || "");
+  const previousCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
+  for (var oldIndex = 0; oldIndex < previousCount; oldIndex += 1) {
+    props.deleteProperty(baseKey + "_" + oldIndex);
+  }
+  props.deleteProperty(baseKey);
+
+  const chunkSize = 8000;
+  const chunkCount = Math.max(1, Math.ceil(text.length / chunkSize));
+  for (var index = 0; index < chunkCount; index += 1) {
+    props.setProperty(baseKey + "_" + index, text.slice(index * chunkSize, (index + 1) * chunkSize));
+  }
+  props.setProperty(baseKey + "_CHUNKS", String(chunkCount));
 }
 
 function buildEventDescription_(payload) {
