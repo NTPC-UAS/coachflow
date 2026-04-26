@@ -4018,22 +4018,39 @@
         return `<button class="${classText}" type="button" data-coach-cal-date="${dateKey}" ${attrs}>${text}</button>`;
       };
 
-      const readonlyLessonLimit = 3;
-      const lessonSnippets = lessons.slice(0, readOnly ? readonlyLessonLimit : 3).map((lesson) => {
+      const readonlyLessonLimit = 2;
+      const getLessonHour = (lesson) => Number(getDateTimePartsInTaipei(new Date(lesson.startAt)).hour || 0);
+      const renderReadonlyPeriod = (label, periodLessons) => {
+        if (!periodLessons.length) {
+          return "";
+        }
+        const visibleLessons = periodLessons.slice(0, readonlyLessonLimit);
+        const hiddenCount = periodLessons.length - visibleLessons.length;
+        return `
+          <div class="readonly-period">
+            <span class="readonly-period-label">${label}</span>
+            ${visibleLessons.map((lesson) => `<span class="cal-item readonly-name">${getStudentDisplayName(lesson.studentCode)}</span>`).join("")}
+            ${hiddenCount > 0 ? `<span class="cal-item readonly-more">+${hiddenCount}</span>` : ""}
+          </div>
+        `;
+      };
+      const lessonSnippets = readOnly
+        ? [
+          renderReadonlyPeriod("上午", lessons.filter((lesson) => getLessonHour(lesson) < 12)),
+          renderReadonlyPeriod("下午", lessons.filter((lesson) => getLessonHour(lesson) >= 12))
+        ].join("")
+        : lessons.slice(0, 3).map((lesson) => {
         const typeClass = lesson.sourceType === "MAKEUP" ? "makeup" : "";
         const prefix = lesson.sourceType === "MAKEUP" ? "補課" : "原課";
         const selectedClass = lesson.id === selectedCoachLessonId ? "selected" : "";
         return renderCalendarItem(
-          readOnly
-            ? getStudentDisplayName(lesson.studentCode)
-            : `${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}`,
+          `${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}`,
           [typeClass, selectedClass].filter(Boolean).join(" "),
           `data-coach-lesson-id="${lesson.id}"`
         );
       }).join("");
-      const lessonDisplayLimit = readOnly ? readonlyLessonLimit : 3;
-      const lessonMoreSnippet = lessons.length > lessonDisplayLimit
-        ? renderCalendarItem(`+${lessons.length - lessonDisplayLimit}`)
+      const lessonMoreSnippet = !readOnly && lessons.length > 3
+        ? renderCalendarItem(`+${lessons.length - 3}`)
         : "";
       const pendingSnippet = pendings.length
         ? (readOnly ? "" : renderCalendarItem(`待審 ${pendings.length}`, "pending"))
