@@ -1434,6 +1434,16 @@
     return addSingleEventDeleteGuards(basePayload);
   }
 
+  function isDeleteSingleEventEndpointUnsupported(message) {
+    return /unsupported action|invalid action|deleteSingleEvent/i.test(String(message || ""));
+  }
+
+  function queueSingleEventDeleteCompensation(lesson, payload, message) {
+    enqueueCompensationTask("deleteSingleEvent", payload, message);
+    addLog(`[Google日曆] 單堂刪除暫未完成，已排入補償任務：${lesson.id}（${message}）`);
+    saveState();
+  }
+
   function getCalendarPayloadForCoach(coachCodeInput) {
     const coachCode = normalizeParticipantCode(coachCodeInput || activeCoachCode);
     const coach = getCoachByCode(coachCode) || {};
@@ -1872,7 +1882,9 @@
       lesson.startAt = new Date(startAt).toISOString();
       lesson.coachCode = coachCode;
       lesson.studentCode = studentCode;
-      lesson.calendarOccupied = true;
+      if (lesson.attendanceStatus !== "leave-normal") {
+        lesson.calendarOccupied = true;
+      }
       if (lesson.attendanceStatus === "calendar-removed") {
         const previous = lesson.beforeCalendarRemoved || {};
         lesson.attendanceStatus = previous.attendanceStatus || "scheduled";
@@ -1920,13 +1932,8 @@
       const resolvedEvent = await resolveSingleCalendarEventForLesson(lesson, eventId);
       if (!resolvedEvent) {
         const safeMessage = "無法在 Google 日曆確認這堂課的單一事件，已停止刪除以避免誤刪整個週期課程。請先同步 Google 日曆後再請假。";
-        if (strictMode) {
-          throw new Error(safeMessage);
-        }
-        enqueueCompensationTask("deleteSingleEvent", deletePayload, safeMessage);
-        addLog(`[Google日曆] 已停止刪除 ${eventId}：${safeMessage}`);
-        saveState();
-        return false;
+        queueSingleEventDeleteCompensation(lesson, deletePayload, safeMessage);
+        return Boolean(strictMode);
       }
       deletePayload = buildSingleLessonDeletePayload(lesson, {
         reason,
@@ -1937,13 +1944,8 @@
       });
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
-      if (strictMode) {
-        throw new Error(`Google 日曆單堂刪除前檢查失敗：${message}`);
-      }
-      enqueueCompensationTask("deleteSingleEvent", deletePayload, message);
-      addLog(`[Google日曆] 單堂刪除前檢查失敗，已改記補償任務：${lesson.id}（${message}）`);
-      saveState();
-      return false;
+      queueSingleEventDeleteCompensation(lesson, deletePayload, `單堂刪除前檢查失敗：${message}`);
+      return Boolean(strictMode);
     }
 
     try {
@@ -1961,11 +1963,11 @@
         saveState();
         return true;
       }
-      if (strictMode) {
+      if (strictMode && !isDeleteSingleEventEndpointUnsupported(message)) {
         throw new Error(`Google 日曆單堂刪除失敗：${message}`);
       }
-      enqueueCompensationTask("deleteSingleEvent", deletePayload, message);
-      return false;
+      queueSingleEventDeleteCompensation(lesson, deletePayload, message);
+      return Boolean(strictMode);
     }
   }
 
