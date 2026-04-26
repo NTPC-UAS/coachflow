@@ -888,6 +888,7 @@
       selectedStudentDateKey = getDateKeyInTaipei(focusDate);
     }
     renderAll();
+    setStudentLoginPromptVisibility(true);
     setUiStatus(`學生 ${student.name || studentCode} 已載入，可直接點月曆。`);
     return true;
   }
@@ -926,6 +927,7 @@
     closeCoachReviewModal();
     renderAll();
     updateCoachReadOnlyUi();
+    setCoachLoginPromptVisibility(true);
     setUiStatus(`教練 ${coach.name || coachCode} 已載入${activeCoachReadOnly ? "（唯讀）" : ""}。`);
     return true;
   }
@@ -5862,6 +5864,10 @@
   function setCoachLoginPromptVisibility(hidden) {
     const shouldHide = Boolean(hidden);
     coachLoginPromptHidden = shouldHide;
+    const coachLoginCard = el.coachCode?.closest("section");
+    if (coachLoginCard) {
+      coachLoginCard.hidden = shouldHide;
+    }
     if (el.coachCode) {
       const coachCodeLabel = el.coachCode.closest("label");
       if (coachCodeLabel) {
@@ -6137,15 +6143,8 @@
         : false;
     }
 
-    const shouldHideCoachLoginPrompt = Boolean(
-      autoCoachLoaded &&
-      (activeCoachReadOnly || (sessionPrefill.coachCode && shouldForceProfileFromUrl))
-    );
-    const shouldHideStudentLoginPrompt = Boolean(
-      autoStudentLoaded &&
-      sessionPrefill.studentCode &&
-      shouldForceProfileFromUrl
-    );
+    const shouldHideCoachLoginPrompt = Boolean(autoCoachLoaded);
+    const shouldHideStudentLoginPrompt = Boolean(autoStudentLoaded);
     setStudentLoginPromptVisibility(shouldHideStudentLoginPrompt);
     setCoachLoginPromptVisibility(shouldHideCoachLoginPrompt);
     emitLeavePrefillDebug("bootstrap-auto-login", {
