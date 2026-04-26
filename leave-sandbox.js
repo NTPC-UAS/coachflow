@@ -1364,7 +1364,7 @@
   }
 
   function ensureStudentProfile(studentCode, coachCode, options = {}) {
-    const { studentName = "", silentMode = true } = options;
+    const { studentName = "", studentEmail = "", silentMode = true } = options;
     const normalizedStudentCode = normalizeParticipantCode(studentCode);
     if (!normalizedStudentCode) {
       return null;
@@ -1379,6 +1379,10 @@
       if (nextCoachCode && existed.coachCode !== nextCoachCode) {
         existed.coachCode = nextCoachCode;
       }
+      const nextEmail = normalizeEmailList(studentEmail).join(", ");
+      if (nextEmail && existed.email !== nextEmail) {
+        existed.email = nextEmail;
+      }
       return existed;
     }
 
@@ -1386,11 +1390,12 @@
     ensureCoachProfile(normalizedCoachCode);
 
     const fallbackEmail = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
+    const normalizedEmail = normalizeEmailList(studentEmail).join(", ");
     const created = {
       code: normalizedStudentCode,
       name: String(studentName || "").trim() || `${normalizedStudentCode} 學生`,
       coachCode: normalizedCoachCode,
-      email: fallbackEmail,
+      email: normalizedEmail || fallbackEmail,
       chargeStartCount: 0,
       paidThroughCount: 0,
       paymentStatus: "unknown",
@@ -1454,6 +1459,16 @@
       const studentName = String(
         student?.name || student?.student_name || student?.studentName || `${studentCode} 學生`
       ).trim();
+      const studentEmail = String(
+        student?.email ||
+        student?.studentEmail ||
+        student?.student_email ||
+        student?.notifyEmail ||
+        student?.notify_email ||
+        student?.parentEmail ||
+        student?.parent_email ||
+        ""
+      ).trim();
       const primaryCoachId = String(
         student?.primaryCoachId || student?.primary_coach_id || student?.coachId || student?.coach_id || ""
       ).trim();
@@ -1469,7 +1484,7 @@
       const fallbackCoachCode = mappedCoachCode || normalizeParticipantCode(state.coaches[0]?.code) || "CH001";
       const before = JSON.stringify(getStudentByCode(studentCode) || {});
       ensureCoachProfile(fallbackCoachCode);
-      ensureStudentProfile(studentCode, fallbackCoachCode, { studentName, silentMode: true });
+      ensureStudentProfile(studentCode, fallbackCoachCode, { studentName, studentEmail, silentMode: true });
       const after = JSON.stringify(getStudentByCode(studentCode) || {});
       if (before !== after) {
         changed = true;
@@ -3272,6 +3287,16 @@
     return Array.from(recipients);
   }
 
+  function getStudentNoticeEmail(studentCode) {
+    const student = getStudentByCode(studentCode);
+    return normalizeEmailList(student?.email).join(", ");
+  }
+
+  function getCoachNoticeEmail(coachCode) {
+    const coach = getCoachByCode(coachCode);
+    return normalizeEmailList(coach?.email).join(", ");
+  }
+
   function getLessonById(lessonId) {
     return state.lessons.find((lesson) => lesson.id === lessonId);
   }
@@ -3360,11 +3385,19 @@
       addLog(`[雲端請假] 上傳請假紀錄失敗：${message}`);
       saveState();
     }
+    const studentEmail = getStudentNoticeEmail(lesson.studentCode);
+    const coachEmail = getCoachNoticeEmail(lesson.coachCode);
+    if (!studentEmail) {
+      addLog(`[Email] ${lesson.studentCode} 未設定學生 Email，請於計費面板補上學生通知 Email。`);
+      saveState();
+    }
     await trySendEmailNotice(
       "leave_submitted",
       {
         studentCode: lesson.studentCode,
         coachCode: lesson.coachCode,
+        studentEmail,
+        coachEmail,
         lessonId: lesson.id,
         lessonStartAt: lesson.startAt,
         leaveId
