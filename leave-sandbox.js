@@ -760,8 +760,10 @@
   }
 
   function updateCoachReadOnlyUi() {
+    const hasCoachSession = Boolean(activeCoachCode);
     const readOnly = isCoachReadOnlyMode();
     document.body.classList.toggle("coach-readonly-mode", readOnly);
+    document.body.classList.toggle("coach-session-active", hasCoachSession);
     [
       el.coachLeaveAddBtn,
       el.coachLeaveTable,
@@ -770,13 +772,14 @@
       el.chargeStudentSelect,
       el.compensationTable,
       el.eventLog
-    ].forEach((target) => setSectionHiddenByElement(target, readOnly));
+    ].forEach((target) => setSectionHiddenByElement(target, !hasCoachSession || readOnly));
+    setSectionHiddenByElement(el.coachCalendarGrid, !hasCoachSession);
     if (el.coachCalendarSyncBtn) {
       const syncRow = el.coachCalendarSyncBtn.closest(".btn-row");
       if (syncRow) {
-        syncRow.hidden = readOnly;
+        syncRow.hidden = !hasCoachSession || readOnly;
       }
-      el.coachCalendarSyncBtn.disabled = readOnly;
+      el.coachCalendarSyncBtn.disabled = !hasCoachSession || readOnly;
     }
     if (el.coachCalendarSyncText && readOnly) {
       el.coachCalendarSyncText.textContent = "唯讀模式：只能查看教練月曆，不能同步或修改資料。";
