@@ -45,6 +45,7 @@ let lastSubmittedSnapshot = null;
 let studentAutoLoginPending = false;
 let studentEditNoticeTimer = null;
 let sessionStudentDraft = null;
+let sessionStudentProgramEditDraft = null;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -79,7 +80,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260426-0008";
+const PUBLIC_APP_VERSION = "20260426-0009";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -990,6 +991,7 @@ function applyStaticCopy() {
 
   if (els.loadStudentProgramInline) els.loadStudentProgramInline.textContent = "載入今日課表";
   if (els.loadStudentProgramMobile) els.loadStudentProgramMobile.textContent = "載入今日課表";
+  if (els.editStudentProgramMobileTop) els.editStudentProgramMobileTop.textContent = "編輯課表項目";
   if (els.editStudentProgramMobile) els.editStudentProgramMobile.textContent = "編輯課表項目";
   if (els.openStudentHistoryMobile) els.openStudentHistoryMobile.textContent = "查看我的歷史紀錄";
   if (els.submitStudentLog) els.submitStudentLog.textContent = "確認本次填寫內容";
@@ -1306,6 +1308,7 @@ const els = {
   studentViewTableButton: document.querySelector("#student-view-table"),
   loadStudentProgramInline: document.querySelector("#load-student-program-inline"),
   loadStudentProgramMobile: document.querySelector("#load-student-program-mobile"),
+  editStudentProgramMobileTop: document.querySelector("#edit-student-program-mobile-top"),
   editStudentProgram: document.querySelector("#edit-student-program"),
   editStudentProgramMobile: document.querySelector("#edit-student-program-mobile"),
   openStudentLeaveSystemInline: document.querySelector("#open-student-leave-system-inline"),
@@ -1739,6 +1742,7 @@ function bindEvents() {
   document.querySelector("#confirm-student-access").addEventListener("click", confirmStudentAccessAndLoadProgram);
   els.loadStudentProgramInline.addEventListener("click", () => loadStudentProgram({ preserveIfDirty: true }));
   els.loadStudentProgramMobile.addEventListener("click", () => loadStudentProgram({ preserveIfDirty: true }));
+  els.editStudentProgramMobileTop?.addEventListener("click", handleStudentDetailAction);
   els.editStudentProgram.addEventListener("click", handleStudentDetailAction);
   els.editStudentProgramMobile.addEventListener("click", handleStudentDetailAction);
   document.querySelector("#submit-student-log").addEventListener("click", openSubmissionConfirm);
@@ -1773,7 +1777,12 @@ function bindEvents() {
   document.querySelector("#add-student-edit-row").addEventListener("click", () => {
     addStudentProgramEditRow();
     showStudentProgramEditNotice("已新增 1 個課表項目，記得按「套用到本次課表」。");
+    captureStudentProgramEditDraftFromDom();
   });
+  els.studentProgramEditBody?.addEventListener("input", captureStudentProgramEditDraftFromDom);
+  els.studentProgramEditBody?.addEventListener("change", captureStudentProgramEditDraftFromDom);
+  els.studentEditMobileList?.addEventListener("input", captureStudentProgramEditDraftFromDom);
+  els.studentEditMobileList?.addEventListener("change", captureStudentProgramEditDraftFromDom);
   els.closeAssignCoachModal?.addEventListener("click", closeAssignCoachModal);
   els.cancelAssignCoach?.addEventListener("click", closeAssignCoachModal);
   els.saveAssignCoach?.addEventListener("click", saveAssignedCoach);
@@ -1916,6 +1925,7 @@ function bindEvents() {
   window.addEventListener("focus", handleVisibilityRefresh);
   document.addEventListener("visibilitychange", handleVisibilityRefresh);
   window.addEventListener("beforeunload", handleBeforeUnload);
+  window.addEventListener("pagehide", handlePageHide);
 }
 
 function hydrateFromStorage() {
@@ -2019,6 +2029,10 @@ function hydrateSession() {
       sessionStudentDraft = parsed.studentDraft && typeof parsed.studentDraft === "object"
         ? parsed.studentDraft
         : null;
+      sessionStudentProgramEditDraft =
+        parsed.studentProgramEditDraft && typeof parsed.studentProgramEditDraft === "object"
+          ? parsed.studentProgramEditDraft
+          : null;
       coachViewMode = parsed.coachViewMode || coachViewMode;
       studentViewMode = parsed.studentViewMode || studentViewMode;
     } catch {
@@ -2061,10 +2075,20 @@ function persistSession() {
       : String(existing.studentViewMode || studentViewMode),
     studentDraft: shouldPersistStudentSession
       ? buildCurrentStudentDraftSession()
-      : (existing.studentDraft && typeof existing.studentDraft === "object" ? existing.studentDraft : null)
+      : (existing.studentDraft && typeof existing.studentDraft === "object" ? existing.studentDraft : null),
+    studentProgramEditDraft: shouldPersistStudentSession
+      ? buildCurrentStudentProgramEditDraftSession(
+          existing.studentProgramEditDraft && typeof existing.studentProgramEditDraft === "object"
+            ? existing.studentProgramEditDraft
+            : null
+        )
+      : (existing.studentProgramEditDraft && typeof existing.studentProgramEditDraft === "object"
+          ? existing.studentProgramEditDraft
+          : null)
   };
 
   sessionStudentDraft = nextSession.studentDraft || null;
+  sessionStudentProgramEditDraft = nextSession.studentProgramEditDraft || null;
   localStorage.setItem(SESSION_KEY, JSON.stringify(nextSession));
 }
 
@@ -2122,6 +2146,125 @@ function getSessionStudentDraft(studentId, programId) {
     return null;
   }
   return sessionStudentDraft;
+}
+
+function sanitizeStudentProgramEditDraftRows(rows = []) {
+  return rows.map((row) => ({
+    sourceIndex:
+      String(row.sourceIndex ?? "").trim() !== "" && Number.isInteger(Number(row.sourceIndex))
+        ? Number(row.sourceIndex)
+        : -1,
+    category: String(row.category || "主項目"),
+    exercise: String(row.exercise || "").trim(),
+    targetSets: String(row.targetSets ?? ""),
+    targetType: row.targetType === "time" || row.targetType === "rm" ? row.targetType : "reps",
+    targetValue: String(row.targetValue ?? "")
+  }));
+}
+
+function collectStudentProgramEditDraftRowsFromDom() {
+  const editRows = studentViewMode === "card"
+    ? [...(els.studentEditMobileList?.querySelectorAll(".student-edit-mobile-card") || [])]
+    : [...(els.studentProgramEditBody?.querySelectorAll("tr") || [])];
+
+  return sanitizeStudentProgramEditDraftRows(
+    editRows.map((row) => ({
+      sourceIndex: Number(row.dataset.sourceIndex),
+      category: row.querySelector(".student-edit-category")?.value || "主項目",
+      exercise: row.querySelector(".student-edit-exercise")?.value || "",
+      targetSets: row.querySelector(".student-edit-sets")?.value || "",
+      targetType: row.querySelector(".student-edit-type")?.value || "reps",
+      targetValue: row.querySelector(".student-edit-value")?.value || ""
+    }))
+  );
+}
+
+function buildCurrentStudentProgramEditDraftSession(existingDraft = null) {
+  const studentId = String(currentStudentId || "").trim();
+  const programId = String(currentStudentProgramId || loadedStudentProgramId || "").trim();
+  if (!studentId || !programId) {
+    return null;
+  }
+
+  if (els.studentProgramEditModal && !els.studentProgramEditModal.classList.contains("is-hidden")) {
+    const rows = collectStudentProgramEditDraftRowsFromDom();
+    if (!rows.length) {
+      return null;
+    }
+    return {
+      studentId,
+      programId,
+      savedAt: timestampNow(),
+      rows
+    };
+  }
+
+  if (
+    sessionStudentProgramEditDraft
+    && String(sessionStudentProgramEditDraft.studentId || "") === studentId
+    && String(sessionStudentProgramEditDraft.programId || "") === programId
+    && Array.isArray(sessionStudentProgramEditDraft.rows)
+    && sessionStudentProgramEditDraft.rows.length
+  ) {
+    return sessionStudentProgramEditDraft;
+  }
+
+  if (
+    existingDraft
+    && String(existingDraft.studentId || "") === studentId
+    && String(existingDraft.programId || "") === programId
+    && Array.isArray(existingDraft.rows)
+    && existingDraft.rows.length
+  ) {
+    return existingDraft;
+  }
+
+  return null;
+}
+
+function getSessionStudentProgramEditDraft(studentId, programId) {
+  if (!sessionStudentProgramEditDraft || typeof sessionStudentProgramEditDraft !== "object") {
+    return null;
+  }
+  if (String(sessionStudentProgramEditDraft.studentId || "") !== String(studentId || "")) {
+    return null;
+  }
+  if (String(sessionStudentProgramEditDraft.programId || "") !== String(programId || "")) {
+    return null;
+  }
+  const rows = Array.isArray(sessionStudentProgramEditDraft.rows) ? sessionStudentProgramEditDraft.rows : [];
+  if (!rows.length) {
+    return null;
+  }
+  return sessionStudentProgramEditDraft;
+}
+
+function clearStudentProgramEditDraft(shouldPersist = true) {
+  sessionStudentProgramEditDraft = null;
+  if (shouldPersist) {
+    persistSession();
+  }
+}
+
+function captureStudentProgramEditDraftFromDom() {
+  if (!els.studentProgramEditModal || els.studentProgramEditModal.classList.contains("is-hidden")) {
+    return;
+  }
+  const studentId = String(currentStudentId || "").trim();
+  const programId = String(currentStudentProgramId || loadedStudentProgramId || "").trim();
+  if (!studentId || !programId) {
+    return;
+  }
+  const rows = collectStudentProgramEditDraftRowsFromDom();
+  sessionStudentProgramEditDraft = rows.length
+    ? {
+        studentId,
+        programId,
+        savedAt: timestampNow(),
+        rows
+      }
+    : null;
+  persistSession();
 }
 
 function captureStudentEntryDraftsFromDom() {
@@ -2432,6 +2575,7 @@ async function syncCloudWorkspaceOnActivate() {
 
 function handleVisibilityRefresh() {
   if (document.visibilityState && document.visibilityState !== "visible") {
+    tryPersistStudentProgress();
     return;
   }
   if (hasUnsavedDraft()) {
@@ -2465,8 +2609,24 @@ function handleBeforeUnload(event) {
   if (!hasUnsavedDraft()) {
     return;
   }
+  tryPersistStudentProgress();
   event.preventDefault();
   event.returnValue = "";
+}
+
+function tryPersistStudentProgress() {
+  if (loadedStudentEntries.length) {
+    captureStudentEntryDraftsFromDom();
+  }
+  if (els.studentProgramEditModal && !els.studentProgramEditModal.classList.contains("is-hidden")) {
+    captureStudentProgramEditDraftFromDom();
+  } else if (APP_MODE === "student" || APP_MODE === "dual") {
+    persistSession();
+  }
+}
+
+function handlePageHide() {
+  tryPersistStudentProgress();
 }
 
 function handleCurrentCoachChange() {
@@ -2694,6 +2854,7 @@ function addStudentProgramEditRow(item = {}, sourceIndex = -1) {
           : "已刪除最後一個項目，至少保留 1 筆才能套用。",
         count > 0 ? "info" : "warning"
       );
+      captureStudentProgramEditDraftFromDom();
     });
     sync();
     els.studentEditMobileList.appendChild(card);
@@ -2742,6 +2903,7 @@ function addStudentProgramEditRow(item = {}, sourceIndex = -1) {
         : "已刪除最後一個項目，至少保留 1 筆才能套用。",
       count > 0 ? "info" : "warning"
     );
+    captureStudentProgramEditDraftFromDom();
   });
   sync();
   els.studentProgramEditBody.appendChild(fragment);
@@ -3867,6 +4029,9 @@ function renderStudentProgramEntries() {
   els.studentCardList.innerHTML = "";
   els.studentRecordedBanner.classList.toggle("is-hidden", !studentSubmissionCompleted);
   els.editStudentProgram.textContent = studentSubmissionCompleted ? "\u67e5\u770b\u672c\u6b21\u8a13\u7df4\u7d00\u9304" : "\u7de8\u8f2f\u8ab2\u8868\u9805\u76ee";
+  if (els.editStudentProgramMobileTop) {
+    els.editStudentProgramMobileTop.textContent = studentSubmissionCompleted ? "\u67e5\u770b\u672c\u6b21\u8a13\u7df4\u7d00\u9304" : "\u7de8\u8f2f\u8ab2\u8868\u9805\u76ee";
+  }
   els.editStudentProgramMobile.textContent = studentSubmissionCompleted ? "\u67e5\u770b\u672c\u6b21\u8a13\u7df4\u7d00\u9304" : "\u7de8\u8f2f\u8ab2\u8868\u9805\u76ee";
 
   if (!loadedStudentEntries.length) {
@@ -4306,11 +4471,20 @@ function openStudentProgramEditModal() {
   els.studentProgramEditBody.innerHTML = "";
   els.studentEditMobileList.innerHTML = "";
   clearStudentProgramEditNotice();
-  loadedStudentEntries.forEach((entry, index) => addStudentProgramEditRow(entry, index));
+  const editDraft = getSessionStudentProgramEditDraft(
+    currentStudentId || getSelectedStudent()?.id || "",
+    currentStudentProgramId || loadedStudentProgramId || ""
+  );
+  if (editDraft?.rows?.length) {
+    editDraft.rows.forEach((entry) => addStudentProgramEditRow(entry, entry.sourceIndex));
+  } else {
+    loadedStudentEntries.forEach((entry, index) => addStudentProgramEditRow(entry, index));
+  }
   els.studentProgramEditModal.classList.toggle("is-mobile-preview", studentViewMode === "card");
   els.studentProgramEditModalCard.classList.toggle("is-mobile-preview", studentViewMode === "card");
   els.studentProgramEditModal.classList.remove("is-hidden");
   els.studentProgramEditModal.setAttribute("aria-hidden", "false");
+  captureStudentProgramEditDraftFromDom();
 }
 
 function closeStudentProgramEditModal() {
@@ -4464,6 +4638,7 @@ function saveStudentProgramEdits() {
 
   loadedStudentEntries = editedEntries;
   studentEntriesDirty = true;
+  clearStudentProgramEditDraft(false);
   persistSession();
   renderStudentProgramEntries();
   closeStudentProgramEditModal();
@@ -4555,8 +4730,9 @@ function applyStudentViewMode() {
   els.studentPhoneFrame.classList.toggle("is-active", isCard);
   els.studentTableWrap.classList.toggle("is-hidden", isCard);
   els.studentMobileSubmitBar.classList.toggle("is-visible", isCard && hasLoadedProgram);
-  els.studentMobileTools.classList.toggle("is-visible", isCard && hasStudent && !hasLoadedProgram);
+  els.studentMobileTools.classList.toggle("is-visible", isCard && hasStudent);
   els.studentMobileSecondaryActions.classList.toggle("is-visible", isCard && hasLoadedProgram);
+  els.editStudentProgramMobileTop?.classList.toggle("is-hidden", !isCard || !hasLoadedProgram);
   els.studentProgramCard.classList.toggle("is-mobile-preview", isCard);
   els.studentHistoryCard.classList.toggle("is-mobile-preview", isCard);
   els.studentHistoryCard.classList.toggle("is-mobile-open", !isCard || studentHistoryOpened);
@@ -4601,13 +4777,17 @@ function syncStudentAccessUI() {
   els.studentHistoryCard.classList.toggle("is-hidden-mobile-entry", isCard && !hasStudent);
   els.loadStudentProgramInline?.classList.toggle("is-hidden", hasLoadedProgram);
   els.loadStudentProgramMobile?.classList.toggle("is-hidden", hasLoadedProgram);
+  els.editStudentProgramMobileTop?.classList.toggle("is-hidden", !hasLoadedProgram);
   if (els.loadStudentProgramInline) {
     els.loadStudentProgramInline.hidden = hasLoadedProgram;
   }
   if (els.loadStudentProgramMobile) {
     els.loadStudentProgramMobile.hidden = hasLoadedProgram;
   }
-  els.studentMobileTools.classList.toggle("is-visible", hasStudent && isCard && !hasLoadedProgram);
+  if (els.editStudentProgramMobileTop) {
+    els.editStudentProgramMobileTop.hidden = !hasLoadedProgram;
+  }
+  els.studentMobileTools.classList.toggle("is-visible", hasStudent && isCard);
   els.studentMobileSecondaryActions.classList.toggle("is-visible", hasStudent && isCard && hasLoadedProgram);
   if (els.studentPanelViewToggle) {
     els.studentPanelViewToggle.hidden = false;
@@ -4618,6 +4798,7 @@ function syncStudentAccessUI() {
     els.studentMobileSubmitBar.classList.remove("is-visible");
     els.studentMobileTools.classList.remove("is-visible");
     els.studentMobileSecondaryActions.classList.remove("is-visible");
+    els.editStudentProgramMobileTop?.classList.add("is-hidden");
   }
 }
 
@@ -4631,6 +4812,7 @@ function showStudentAccessPanel() {
   studentSubmissionCompleted = false;
   lastSubmittedLogs = [];
   lastSubmittedSnapshot = null;
+  clearStudentProgramEditDraft(false);
   clearModeAccessInUrl();
   applyStudentViewMode();
   els.studentAuthShell.classList.remove("is-collapsed");
@@ -4687,6 +4869,7 @@ async function finalizeSubmission() {
   loadedStudentEntries = [];
   loadedStudentProgramId = currentStudentProgramId || loadedStudentProgramId;
   studentEntriesDirty = false;
+  clearStudentProgramEditDraft(false);
   persistSession();
   renderStudentProgramEntries();
   els.studentProgramStatus.textContent = `\u672c\u6b21\u8a13\u7df4\u5df2\u8a18\u9304\uff5c\u6700\u5f8c\u66f4\u65b0 ${formatDateTimeDisplay(lastSubmittedLogs[0]?.submittedAt || "", "")}`;
