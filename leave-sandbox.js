@@ -3952,18 +3952,22 @@
         return `<button class="${classText}" type="button" data-coach-cal-date="${dateKey}" ${attrs}>${text}</button>`;
       };
 
-      const lessonSnippets = lessons.slice(0, 3).map((lesson) => {
+      const readonlyLessonLimit = 3;
+      const lessonSnippets = lessons.slice(0, readOnly ? readonlyLessonLimit : 3).map((lesson) => {
         const typeClass = lesson.sourceType === "MAKEUP" ? "makeup" : "";
         const prefix = lesson.sourceType === "MAKEUP" ? "補課" : "原課";
         const selectedClass = lesson.id === selectedCoachLessonId ? "selected" : "";
         return renderCalendarItem(
-          `${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}`,
+          readOnly
+            ? getStudentDisplayName(lesson.studentCode)
+            : `${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}`,
           [typeClass, selectedClass].filter(Boolean).join(" "),
           `data-coach-lesson-id="${lesson.id}"`
         );
       }).join("");
-      const lessonMoreSnippet = lessons.length > 3
-        ? renderCalendarItem(`+${lessons.length - 3}`)
+      const lessonDisplayLimit = readOnly ? readonlyLessonLimit : 3;
+      const lessonMoreSnippet = lessons.length > lessonDisplayLimit
+        ? renderCalendarItem(`+${lessons.length - lessonDisplayLimit}`)
         : "";
       const pendingSnippet = pendings.length
         ? (readOnly ? "" : renderCalendarItem(`待審 ${pendings.length}`, "pending"))
@@ -3975,7 +3979,7 @@
       html += `
           <div class="${classNames}" data-coach-cal-date="${dateKey}">
             <div class="cal-date-row"><div class="cal-date">${dayNumber}</div>${todayBadge}</div>
-          ${lessonSnippets || renderCalendarItem("無課程")}
+          ${lessonSnippets || (readOnly ? "" : renderCalendarItem("無課程"))}
           ${lessonMoreSnippet}
           ${pendingSnippet}
           ${blockSnippet}

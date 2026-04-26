@@ -312,46 +312,54 @@
         justify-content: center;
       }
       body.coach-readonly-mode .calendar-grid {
-        display: flex;
-        flex-direction: column;
-        gap: 10px;
-        border: 0;
-        border-radius: 0;
-        overflow: visible;
+        display: grid;
+        grid-template-columns: repeat(7, minmax(0, 1fr));
+        border: 1px solid #f2c9a5;
+        border-radius: 12px;
+        overflow: hidden;
+        width: 100%;
       }
-      body.coach-readonly-mode .cal-weekday,
-      body.coach-readonly-mode .cal-cell.dim,
-      body.coach-readonly-mode .cal-cell.no-lessons {
-        display: none;
+      body.coach-readonly-mode .cal-weekday {
+        display: block;
+        padding: 5px 2px;
+        font-size: 11px;
       }
       body.coach-readonly-mode .cal-cell {
-        min-height: 0;
-        border: 1px solid #f2c9a5;
-        border-radius: 14px;
-        padding: 12px;
+        min-height: 74px;
+        border-right: 1px solid #f3e2d0;
+        border-bottom: 1px solid #f3e2d0;
+        border-radius: 0;
+        padding: 4px 3px;
+        gap: 3px;
         background: #fffdfa;
-        box-shadow: 0 8px 22px rgba(154, 52, 18, 0.08);
+        box-shadow: none;
         cursor: default;
       }
+      body.coach-readonly-mode .cal-cell.dim {
+        background: #faf7f4;
+      }
       body.coach-readonly-mode .cal-cell.today {
-        box-shadow: inset 0 0 0 2px #c2410c, 0 8px 22px rgba(154, 52, 18, 0.12);
+        box-shadow: inset 0 0 0 2px #c2410c;
       }
       body.coach-readonly-mode .cal-date {
-        font-size: 18px;
+        font-size: 12px;
+        line-height: 1;
       }
       body.coach-readonly-mode .cal-date::after {
-        content: " 日";
-        font-size: 13px;
-        color: #9a3412;
+        content: "";
+      }
+      body.coach-readonly-mode .today-badge {
+        display: none;
       }
       body.coach-readonly-mode .cal-item {
         white-space: normal;
-        overflow: visible;
+        overflow: hidden;
         text-overflow: clip;
-        font-size: 15px;
-        line-height: 1.45;
-        padding: 9px 11px;
-        border-radius: 12px;
+        font-size: 10px;
+        line-height: 1.2;
+        padding: 2px 3px;
+        border-radius: 7px;
+        text-align: center;
       }
     }
   </style>
@@ -551,7 +559,7 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260426-0002"></script>
-  <script src="leave-sandbox.js?v=20260426-0002"></script>
+  <script src="config.js?v=20260426-0003"></script>
+  <script src="leave-sandbox.js?v=20260426-0003"></script>
 </body>
 </html>
