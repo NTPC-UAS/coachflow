@@ -1590,6 +1590,16 @@
     saveState();
   }
 
+  function isNormalLeaveCalendarCreateBlocked(payload = {}) {
+    const reason = String(payload.reason || "").trim().toLowerCase();
+    const attendanceStatus = String(payload.attendanceStatus || "").trim().toLowerCase();
+    const leaveType = String(payload.leaveType || payload.type || "").trim().toLowerCase();
+    return reason === "student_normal_leave" ||
+      attendanceStatus === "leave-normal" ||
+      leaveType === "normal_leave" ||
+      leaveType === "student_normal_leave";
+  }
+
   function getCalendarPayloadForCoach(coachCodeInput) {
     const coachCode = normalizeParticipantCode(coachCodeInput || activeCoachCode);
     const coach = getCoachByCode(coachCode) || {};
@@ -2486,6 +2496,14 @@
   }
 
   async function tryCreateCalendarEventForLesson(lesson, reason, strictMode) {
+    if (isNormalLeaveCalendarCreateBlocked({
+      reason,
+      attendanceStatus: lesson?.attendanceStatus,
+      type: lesson?.type
+    })) {
+      addLog(`[Google日曆] 已阻擋正常請假建立事件：${lesson?.id || "-"}`);
+      return "";
+    }
     try {
       const result = await callAppsScriptApi("createEvent", buildLessonEventPayload(lesson, { reason }));
       const createdEventId = String(result?.eventId || result?.calendarEventId || lesson.calendarEventId || newId("GCAL")).trim();
@@ -4895,6 +4913,14 @@
           finalPayload.to = recipients.join(",");
         }
         task.payload = finalPayload;
+      } else if (task.type === "createEvent" && isNormalLeaveCalendarCreateBlocked(finalPayload)) {
+        task.status = "completed";
+        task.completedAt = new Date().toISOString();
+        task.lastError = "";
+        addLog(`[補償重送] 已略過正常請假的建立事件任務（${task.id}）。`);
+        saveState();
+        renderAll();
+        return;
       } else if (task.type === "deleteEvent" || task.type === "deleteSingleEvent") {
         Object.assign(finalPayload, addSingleEventDeleteGuards(finalPayload));
         task.payload = finalPayload;

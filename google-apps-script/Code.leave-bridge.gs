@@ -165,6 +165,15 @@ function listCalendarEvents_(payload) {
 }
 
 function createCalendarEvent_(payload) {
+  if (isNormalLeaveCalendarCreateBlocked_(payload)) {
+    return {
+      ok: false,
+      action: "createEvent",
+      blocked: true,
+      message: "Normal student leave must delete the original lesson event; creating a new leave event is blocked."
+    };
+  }
+
   const calendar = resolveCalendar_(payload);
   if (!calendar) {
     return {
@@ -441,6 +450,16 @@ function findEventById_(calendar, eventId) {
 function isSingleEventDeleteRequested_(payload) {
   const scope = safeString_(payload.deleteScope || payload.deleteMode, "").toLowerCase();
   return toBoolean_(payload.singleEventOnly) || toBoolean_(payload.strictSingleOccurrence) || scope === "single" || scope === "singleevent";
+}
+
+function isNormalLeaveCalendarCreateBlocked_(payload) {
+  const reason = safeString_(payload.reason, "").toLowerCase();
+  const attendanceStatus = safeString_(payload.attendanceStatus, "").toLowerCase();
+  const leaveType = safeString_(payload.leaveType || payload.type, "").toLowerCase();
+  return reason === "student_normal_leave" ||
+    attendanceStatus === "leave-normal" ||
+    leaveType === "normal_leave" ||
+    leaveType === "student_normal_leave";
 }
 
 function normalizeCalendarEventId_(eventId) {

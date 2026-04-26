@@ -863,6 +863,15 @@ function getParam_(e, key) {
 }
 
 function createCalendarEvent_(payload) {
+  if (isNormalLeaveCalendarCreateBlocked_(payload || {})) {
+    return {
+      ok: false,
+      action: "createEvent",
+      blocked: true,
+      message: "正常請假只能刪除原課程事件，不可新增請假事件。"
+    };
+  }
+
   const calendar = resolveCalendar_(payload || {});
   if (!calendar) {
     return { ok: false, message: "找不到可用日曆，請檢查 calendarId 或授權。" };
@@ -1030,6 +1039,16 @@ function resolveCalendar_(payload) {
 function isSingleEventDeleteRequested_(payload) {
   const scope = String(payload.deleteScope || payload.deleteMode || "").trim().toLowerCase();
   return truthy_(payload.singleEventOnly) || truthy_(payload.strictSingleOccurrence) || scope === "single" || scope === "singleevent";
+}
+
+function isNormalLeaveCalendarCreateBlocked_(payload) {
+  const reason = String(payload.reason || "").trim().toLowerCase();
+  const attendanceStatus = String(payload.attendanceStatus || "").trim().toLowerCase();
+  const leaveType = String(payload.leaveType || payload.type || "").trim().toLowerCase();
+  return reason === "student_normal_leave" ||
+    attendanceStatus === "leave-normal" ||
+    leaveType === "normal_leave" ||
+    leaveType === "student_normal_leave";
 }
 
 function normalizeCalendarEventId_(eventId) {
