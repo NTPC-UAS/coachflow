@@ -3926,9 +3926,12 @@
     let html = weekdays.map((day) => `<div class="cal-weekday">${day}</div>`).join("");
 
     for (let index = 0; index < 42; index += 1) {
+      const gridColumn = (index % 7) + 1;
+      const gridRow = Math.floor(index / 7) + 2;
+      const gridPlacement = `grid-column:${gridColumn};grid-row:${gridRow};`;
       const dayNumber = index - meta.firstWeekday + 1;
       if (dayNumber < 1 || dayNumber > meta.daysInMonth) {
-        html += `<div class="cal-cell dim"></div>`;
+        html += `<div class="cal-cell dim" style="${gridPlacement}"></div>`;
         continue;
       }
       const dateKey = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-${String(dayNumber).padStart(2, "0")}`;
@@ -3977,7 +3980,7 @@
         : "";
 
       html += `
-          <div class="${classNames}" data-coach-cal-date="${dateKey}">
+          <div class="${classNames}" data-coach-cal-date="${dateKey}" style="${gridPlacement}">
             <div class="cal-date-row"><div class="cal-date">${dayNumber}</div>${todayBadge}</div>
           ${lessonSnippets || (readOnly ? "" : renderCalendarItem("無課程"))}
           ${lessonMoreSnippet}
