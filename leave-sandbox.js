@@ -2632,6 +2632,28 @@
           ].join("\n")
         };
       }
+      case "billing_payment_confirmed": {
+        return {
+          subject: `[CoachFlow] 匯款確認｜${studentText}`,
+          body: [
+            "您好：",
+            "",
+            "教練已在 CoachFlow 確認本期匯款，資訊如下：",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `確認時間：${safeFormatNoticeDateTime(payload.confirmedAt)}`,
+            `確認人：${payload.confirmedBy || "-"}`,
+            `累積扣堂：${payload.totalChargedCount ?? "-"}`,
+            `起始堂數：${payload.baseChargedCount ?? "-"}`,
+            `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
+            `已結算到第 ${payload.paidThroughCount ?? "-"} 堂`,
+            `繳費狀態：${payload.paymentStatusLabel || "-"}`,
+            `繳費註記：${payload.paymentNote || "無"}`,
+            "",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
       case "leave_submitted": {
         return {
           subject: `[CoachFlow] 已收到請假申請｜${studentText}`,
@@ -3234,7 +3256,60 @@
     });
   }
 
-  function saveStudentPaymentStatus() {
+  async function sendStudentPaymentConfirmation(student, stats, billingCycle) {
+    const confirmationKey = `${student.code}:payment-confirmed`;
+    if (sendingChargeReminderKeys.has(confirmationKey)) {
+      return false;
+    }
+    sendingChargeReminderKeys.add(confirmationKey);
+    try {
+      const payload = {
+        studentCode: student.code,
+        coachCode: student.coachCode,
+        studentEmail: getStudentNoticeEmail(student.code),
+        coachEmail: getCoachNoticeEmail(student.coachCode),
+        confirmedAt: student.paymentConfirmedAt,
+        confirmedBy: student.paymentConfirmedBy,
+        totalChargedCount: stats.totalChargedCount,
+        baseChargedCount: stats.startCount,
+        systemChargedCount: stats.chargedLessons.length,
+        paidThroughCount: toNonNegativeInt(student.paidThroughCount, 0),
+        currentCycleChargedCount: billingCycle.currentCycleChargedCount,
+        nextPaymentDueCount: billingCycle.nextPaymentDueCount,
+        remainingToNextPayment: billingCycle.remainingToNextPayment,
+        paymentStatusLabel: getPaymentStatusLabel(student.paymentStatus),
+        paymentNote: String(student.paymentNote || ""),
+        triggerSource: "payment_confirmed_by_coach"
+      };
+      const recipientsText = resolveNoticeRecipients(payload).join(", ");
+      const sent = await trySendEmailNotice(
+        "billing_payment_confirmed",
+        payload,
+        `${student.code} 匯款確認`
+      );
+      const reminderLogs = Array.isArray(student.chargeReminderLogs) ? student.chargeReminderLogs : [];
+      const logEntry = {
+        id: newId("BILLMAIL"),
+        milestone: stats.totalChargedCount,
+        label: `匯款確認（已結算至第 ${toNonNegativeInt(student.paidThroughCount, 0)} 堂）`,
+        status: sent ? "success" : "failed",
+        sentAt: new Date().toISOString(),
+        to: recipientsText,
+        note: sent
+          ? "匯款確認信已寄送給教練與學生"
+          : (recipientsText ? "匯款確認信寄送失敗，已建立補償任務" : "缺少收件人，匯款確認信未寄送"),
+        triggerSource: "payment_confirmed_by_coach"
+      };
+      student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
+      addLog(`[計費] ${student.code} 匯款確認信${sent ? "已寄送" : "未寄送"}。`);
+      saveState();
+      return sent;
+    } finally {
+      sendingChargeReminderKeys.delete(confirmationKey);
+    }
+  }
+
+  async function saveStudentPaymentStatus() {
     if (!requireCoachWriteAccess()) {
       return;
     }
@@ -3259,6 +3334,23 @@
     );
     saveState();
     renderChargePanel();
+    if (nextStatus === "paid") {
+      if (el.chargePaymentSaveBtn) {
+        el.chargePaymentSaveBtn.disabled = true;
+        el.chargePaymentSaveBtn.textContent = "寄送確認信...";
+      }
+      try {
+        const refreshedStats = getStudentChargeStats(student.code);
+        const refreshedBillingCycle = getStudentBillingCycle(refreshedStats);
+        await sendStudentPaymentConfirmation(student, refreshedStats, refreshedBillingCycle);
+      } finally {
+        if (el.chargePaymentSaveBtn) {
+          el.chargePaymentSaveBtn.disabled = false;
+          el.chargePaymentSaveBtn.textContent = "儲存繳費註記";
+        }
+        renderChargePanel();
+      }
+    }
   }
 
   function normalizeEmailList(value) {
@@ -5749,7 +5841,9 @@
     if (el.chargePaymentSaveBtn) {
       el.chargePaymentSaveBtn.addEventListener("click", () => {
         if (requireCoachWriteAccess()) {
-          saveStudentPaymentStatus();
+          saveStudentPaymentStatus().catch((error) => {
+            console.error("payment confirmation failed:", error);
+          });
         }
       });
     }
