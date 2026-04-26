@@ -80,7 +80,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260426-0012";
+const PUBLIC_APP_VERSION = "20260426-0013";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -3531,8 +3531,7 @@ function syncStudentLeaveSystemEntry() {
   }
   const buttons = [
     els.openStudentLeaveSystemMain,
-    els.openStudentLeaveSystemInline,
-    els.openStudentLeaveSystemMobilePrimary
+    els.openStudentLeaveSystemInline
   ].filter(Boolean);
   buttons.forEach((button) => {
     const visible = hasStudent;
@@ -3558,6 +3557,13 @@ function syncStudentLeaveSystemEntry() {
     els.openStudentLeaveSystemMobileSecondary.classList.add("is-hidden");
     els.openStudentLeaveSystemMobileSecondary.setAttribute("disabled", "disabled");
     els.openStudentLeaveSystemMobileSecondary.dataset.leaveUrl = "";
+  }
+  if (els.openStudentLeaveSystemMobilePrimary) {
+    els.openStudentLeaveSystemMobilePrimary.hidden = true;
+    els.openStudentLeaveSystemMobilePrimary.setAttribute("hidden", "hidden");
+    els.openStudentLeaveSystemMobilePrimary.classList.add("is-hidden");
+    els.openStudentLeaveSystemMobilePrimary.setAttribute("disabled", "disabled");
+    els.openStudentLeaveSystemMobilePrimary.dataset.leaveUrl = "";
   }
 }
 
