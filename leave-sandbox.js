@@ -5189,15 +5189,56 @@
       : "<li>目前沒有這位學生的事件紀錄。</li>";
   }
 
+  function getHiddenStudentNameSet() {
+    return new Set(
+      (Array.isArray(window.APP_CONFIG?.hiddenStudentNames) ? window.APP_CONFIG.hiddenStudentNames : [])
+        .map((name) => normalizeLooseText(name))
+        .filter(Boolean)
+    );
+  }
+
+  function getAliasTargetCodeByStudentName(studentName) {
+    const aliases = window.APP_CONFIG?.calendarStudentAliases && typeof window.APP_CONFIG.calendarStudentAliases === "object"
+      ? window.APP_CONFIG.calendarStudentAliases
+      : {};
+    const looseName = normalizeLooseText(studentName);
+    if (!looseName) {
+      return "";
+    }
+    const matched = Object.entries(aliases).find(([alias]) => normalizeLooseText(alias) === looseName);
+    return normalizeParticipantCode(matched?.[1] || "");
+  }
+
+  function isHiddenChargeStudent(student) {
+    const code = normalizeParticipantCode(student?.code);
+    const looseName = normalizeLooseText(student?.name || "");
+    if (!code) {
+      return true;
+    }
+    if (["STU001", "STU002", "STU003"].includes(code)) {
+      return true;
+    }
+    if (getHiddenStudentNameSet().has(looseName)) {
+      return true;
+    }
+    const aliasTargetCode = getAliasTargetCodeByStudentName(student?.name || "");
+    return Boolean(aliasTargetCode && aliasTargetCode !== code);
+  }
+
+  function getVisibleChargeStudents() {
+    return (state.students || []).filter((student) => !isHiddenChargeStudent(student));
+  }
+
   function renderChargePanel() {
     if (!el.chargeStudentSelect || !el.chargeMetricsBox || !el.chargeLedgerTable) {
       return;
     }
-    if (!selectedChargeStudentCode || !state.students.some((student) => student.code === selectedChargeStudentCode)) {
-      selectedChargeStudentCode = state.students[0]?.code || "";
+    const visibleStudents = getVisibleChargeStudents();
+    if (!selectedChargeStudentCode || !visibleStudents.some((student) => student.code === selectedChargeStudentCode)) {
+      selectedChargeStudentCode = visibleStudents[0]?.code || "";
     }
 
-    el.chargeStudentSelect.innerHTML = state.students
+    el.chargeStudentSelect.innerHTML = visibleStudents
       .map((student) => `<option value="${student.code}" ${student.code === selectedChargeStudentCode ? "selected" : ""}>${student.name || student.code}</option>`)
       .join("");
 

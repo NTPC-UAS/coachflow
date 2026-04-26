@@ -20,6 +20,19 @@ window.APP_CONFIG = {
     "妹妹": "ST007",
     "阿尼": "ST007"
   },
+  hiddenStudentNames: [
+    "A學生",
+    "B學生",
+    "C學生",
+    "張喆",
+    "學姐",
+    "妹妹",
+    "建銘",
+    "宇涵",
+    "亭昀",
+    "大叔",
+    "宇含"
+  ],
   publicBaseUrl: "https://ntpc-uas.github.io/coachflow/",
   requestTimeoutMs: 12000,
   leaveSandbox: {
