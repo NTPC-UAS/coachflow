@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>CoachFlow 嚙請練嚙線嚙瑾嚙綞</title>
+  <title>CoachFlow 教練工作台</title>
 </head>
 <body>
   <script>
@@ -11,7 +11,7 @@
     const current = new URL(window.location.href);
     const params = new URLSearchParams(current.search);
     params.set("mode", "coach");
-  params.set("v", "20260426-0011");
+    params.set("v", "20260426-0012");
     const target = new URL("index.html", PUBLIC_BASE_URL);
     params.forEach((value, key) => target.searchParams.set(key, value));
     target.hash = current.hash || "";
@@ -19,4 +19,3 @@
   </script>
 </body>
 </html>
-
