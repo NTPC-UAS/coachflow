@@ -100,6 +100,26 @@
     table { width: 100%; border-collapse: collapse; min-width: 760px; font-size: 13px; }
     th, td { border-bottom: 1px solid #f0e6dc; padding: 8px; text-align: left; vertical-align: top; }
     th { background: #fffaf5; color: #7c2d12; font-weight: 700; }
+    #student-overview-table {
+      min-width: 0;
+      table-layout: auto;
+    }
+    #student-overview-table th:nth-child(1),
+    #student-overview-table td:nth-child(1) { width: 30%; }
+    #student-overview-table th:nth-child(2),
+    #student-overview-table td:nth-child(2) { width: 42%; }
+    #student-overview-table th:nth-child(3),
+    #student-overview-table td:nth-child(3) {
+      width: 78px;
+      text-align: center;
+      white-space: nowrap;
+    }
+    #student-overview-table th:nth-child(4),
+    #student-overview-table td:nth-child(4) {
+      width: 104px;
+      text-align: center;
+      white-space: nowrap;
+    }
     .status {
       display: inline-flex;
       padding: 2px 8px;
@@ -578,7 +598,7 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260426-0024"></script>
-  <script src="leave-sandbox.js?v=20260426-0024"></script>
+  <script src="config.js?v=20260426-0025"></script>
+  <script src="leave-sandbox.js?v=20260426-0025"></script>
 </body>
 </html>
