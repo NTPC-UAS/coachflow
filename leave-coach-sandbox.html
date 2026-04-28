@@ -520,16 +520,25 @@
       </article>
       <article class="card">
         <span class="role">監控面板</span>
-        <h2>補償任務面板</h2>
-        <div class="btn-row" style="margin-bottom:8px;">
-          <span class="hint pill warn" id="compensation-summary">待處理：0</span>
-          <button id="compensation-refresh-btn" type="button">重新整理</button>
-          <button id="compensation-retry-all-btn" type="button">重送待處理</button>
-        </div>
+        <h2>學生上課 / 繳費總覽</h2>
+        <p class="hint">顯示目前有效學生的最後上課日期、堂數與繳費狀態。</p>
         <div class="table-wrap">
-          <table id="compensation-table"></table>
+          <table id="student-overview-table"></table>
         </div>
       </article>
+    </section>
+
+    <section class="card">
+      <span class="role">監控面板</span>
+      <h2>補償任務面板</h2>
+      <div class="btn-row" style="margin-bottom:8px;">
+        <span class="hint pill warn" id="compensation-summary">待處理：0</span>
+        <button id="compensation-refresh-btn" type="button">重新整理</button>
+        <button id="compensation-retry-all-btn" type="button">重送待處理</button>
+      </div>
+      <div class="table-wrap">
+        <table id="compensation-table"></table>
+      </div>
     </section>
 
     <section class="card">
@@ -569,7 +578,7 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260426-0020"></script>
-  <script src="leave-sandbox.js?v=20260426-0020"></script>
+  <script src="config.js?v=20260426-0021"></script>
+  <script src="leave-sandbox.js?v=20260426-0021"></script>
 </body>
 </html>

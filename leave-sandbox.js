@@ -96,7 +96,8 @@
     chargeReminderSummary: document.getElementById("charge-reminder-summary"),
     chargeReminderTable: document.getElementById("charge-reminder-table"),
     chargeMetricsBox: document.getElementById("charge-metrics-box"),
-    chargeLedgerTable: document.getElementById("charge-ledger-table")
+    chargeLedgerTable: document.getElementById("charge-ledger-table"),
+    studentOverviewTable: document.getElementById("student-overview-table")
   };
 
   let state = loadState();
@@ -770,6 +771,7 @@
       el.calendarRemovedTable,
       el.coachPendingTable,
       el.chargeStudentSelect,
+      el.studentOverviewTable,
       el.compensationTable,
       el.eventLog
     ].forEach((target) => setSectionHiddenByElement(target, !hasCoachSession || readOnly));
@@ -5229,6 +5231,47 @@
     return (state.students || []).filter((student) => !isHiddenChargeStudent(student));
   }
 
+  function getLastCompletedLesson(lessons) {
+    const now = Date.now();
+    const completedLessons = (lessons || [])
+      .filter((lesson) => new Date(lesson.startAt).getTime() <= now)
+      .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
+    return completedLessons[0] || null;
+  }
+
+  function renderStudentOverviewPanel() {
+    if (!el.studentOverviewTable) {
+      return;
+    }
+    const students = getVisibleChargeStudents()
+      .filter((student) => !activeCoachCode || student.coachCode === activeCoachCode)
+      .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code), "zh-Hant"));
+    const rows = students.map((student) => {
+      const stats = getStudentChargeStats(student.code);
+      const billingCycle = getStudentBillingCycle(stats);
+      const lastLesson = getLastCompletedLesson(stats.lessons);
+      const paymentClass = billingCycle.effectivePaymentStatus === "unpaid"
+        ? "rejected"
+        : billingCycle.effectivePaymentStatus === "paid"
+          ? "approved"
+          : "pending";
+      return `
+        <tr>
+          <td>${student.name || student.code}</td>
+          <td>${lastLesson ? formatDateTime(lastLesson.startAt) : "尚未上課"}</td>
+          <td>${stats.lessons.length}</td>
+          <td>${stats.totalChargedCount}</td>
+          <td>${billingCycle.paidThroughCount}</td>
+          <td><span class="status ${paymentClass}">${getPaymentStatusLabel(billingCycle.effectivePaymentStatus)}</span></td>
+        </tr>
+      `;
+    }).join("");
+    el.studentOverviewTable.innerHTML = `
+      <thead><tr><th>學生</th><th>最後上課日期</th><th>課程堂數</th><th>累計扣堂</th><th>已繳到</th><th>繳費狀態</th></tr></thead>
+      <tbody>${rows || "<tr><td colspan=\"6\">目前沒有學生資料</td></tr>"}</tbody>
+    `;
+  }
+
   function renderChargePanel() {
     if (!el.chargeStudentSelect || !el.chargeMetricsBox || !el.chargeLedgerTable) {
       return;
@@ -5400,6 +5443,7 @@
     renderCalendarRemovedPanel();
     renderCompensationPanel();
     renderLogs();
+    renderStudentOverviewPanel();
     renderChargePanel();
     updateCoachReadOnlyUi();
   }
