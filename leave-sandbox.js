@@ -5259,7 +5259,6 @@
         <tr>
           <td>${student.name || student.code}</td>
           <td>${lastLesson ? formatDateTime(lastLesson.startAt) : "尚未上課"}</td>
-          <td>${stats.lessons.length}</td>
           <td>${stats.totalChargedCount}</td>
           <td>${billingCycle.paidThroughCount}</td>
           <td><span class="status ${paymentClass}">${getPaymentStatusLabel(billingCycle.effectivePaymentStatus)}</span></td>
@@ -5267,8 +5266,8 @@
       `;
     }).join("");
     el.studentOverviewTable.innerHTML = `
-      <thead><tr><th>學生</th><th>最後上課日期</th><th>課程堂數</th><th>累計扣堂</th><th>已繳到</th><th>繳費狀態</th></tr></thead>
-      <tbody>${rows || "<tr><td colspan=\"6\">目前沒有學生資料</td></tr>"}</tbody>
+      <thead><tr><th>學生</th><th>最後上課日期</th><th>累計扣堂</th><th>已繳到</th><th>繳費狀態</th></tr></thead>
+      <tbody>${rows || "<tr><td colspan=\"5\">目前沒有學生資料</td></tr>"}</tbody>
     `;
   }
 
