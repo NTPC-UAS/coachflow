@@ -3605,14 +3605,16 @@
     });
   }
 
-  function isSlotOccupied(slotStartAt, coachCode, excludeRequestId, excludeLessonId) {
-    const byLesson = state.lessons.some(
-      (lesson) =>
-        lesson.coachCode === coachCode &&
-        lesson.calendarOccupied &&
-        lesson.startAt === slotStartAt &&
-        lesson.id !== excludeLessonId
-    );
+  function isSlotOccupied(slotStartAt, coachCode, excludeRequestId, excludeLessonId, options = {}) {
+    const byLesson = options.allowLessonOverlap
+      ? false
+      : state.lessons.some(
+          (lesson) =>
+            lesson.coachCode === coachCode &&
+            lesson.calendarOccupied &&
+            lesson.startAt === slotStartAt &&
+            lesson.id !== excludeLessonId
+        );
     if (byLesson) {
       return true;
     }
@@ -4093,8 +4095,8 @@
       alert("新時段必須是未來時間。");
       return;
     }
-    if (isSlotOccupied(nextStartAt, lesson.coachCode, "", lesson.id)) {
-      alert("新時段已有課程或待審補課/教練請假，請改選其他時段。");
+    if (isSlotOccupied(nextStartAt, lesson.coachCode, "", lesson.id, { allowLessonOverlap: true })) {
+      alert("新時段與待審補課或教練請假重疊，請改選其他時段。");
       return;
     }
 
