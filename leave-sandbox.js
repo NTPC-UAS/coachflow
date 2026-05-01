@@ -587,6 +587,29 @@
     return getMonthStart(date).getTime();
   }
 
+  function getTodayKey() {
+    return getDateKeyInTaipei(new Date());
+  }
+
+  function getTodayNoon() {
+    return makeTaipeiDateTime(getTodayKey(), "12:00");
+  }
+
+  function focusStudentCalendarOnToday() {
+    const todayKey = getTodayKey();
+    studentCalendarMonthStart = getMonthStart(getTodayNoon());
+    selectedStudentDateKey = todayKey;
+    selectedStudentLessonId = "";
+  }
+
+  function focusCoachCalendarOnToday() {
+    const todayKey = getTodayKey();
+    coachCalendarMonthStart = getMonthStart(getTodayNoon());
+    selectedCoachDateKey = todayKey;
+    selectedCoachLessonId = "";
+    clampReadOnlyCoachMonth();
+  }
+
   function getReadOnlyMonthBounds() {
     const minMonth = getMonthStart(new Date());
     return {
@@ -877,18 +900,10 @@
     if (el.coachCode) {
       el.coachCode.value = resolvedCoachCode;
     }
-    selectedStudentLessonId = "";
+    focusStudentCalendarOnToday();
     closeStudentDayModal();
     closeCoachDayModal();
     closeCoachReviewModal();
-    const firstLesson = state.lessons
-      .filter((lesson) => lesson.studentCode === studentCode)
-      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0];
-    if (firstLesson) {
-      const focusDate = new Date(firstLesson.startAt);
-      studentCalendarMonthStart = getMonthStart(focusDate);
-      selectedStudentDateKey = getDateKeyInTaipei(focusDate);
-    }
     renderAll();
     setStudentLoginPromptVisibility(true);
     setUiStatus(`學生 ${student.name || studentCode} 已載入，可直接點月曆。`);
@@ -907,23 +922,7 @@
     }
     activeCoachCode = coachCode;
     activeCoachReadOnly = isReadOnlyLogin || isReadonlyParamEnabled() || isReadonlyCoachRole(coach);
-    const coachPending = state.makeupRequests
-      .filter((request) => request.coachCode === coachCode && request.status === "pending")
-      .sort((a, b) => new Date(a.pendingAt) - new Date(b.pendingAt))[0];
-    const coachLesson = state.lessons
-      .filter((lesson) => lesson.coachCode === coachCode)
-      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))[0];
-    const focusDate = activeCoachReadOnly
-      ? new Date()
-      : coachPending
-        ? new Date(coachPending.startAt)
-        : coachLesson
-          ? new Date(coachLesson.startAt)
-          : new Date();
-    coachCalendarMonthStart = getMonthStart(focusDate);
-    clampReadOnlyCoachMonth();
-    selectedCoachDateKey = getDateKeyInTaipei(focusDate);
-    selectedCoachLessonId = "";
+    focusCoachCalendarOnToday();
     closeStudentDayModal();
     closeCoachDayModal();
     closeCoachReviewModal();
@@ -2433,6 +2432,92 @@
       ensureStudentBillingProfiles();
       saveState();
       addLog(`[日曆同步] 學生端已自動同步 Google 課程：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆。`);
+    }
+    return syncedAny;
+  }
+
+  async function syncCoachCalendarEventsFromGoogle(options = {}) {
+    const coachCode = normalizeParticipantCode(options.coachCode || activeCoachCode);
+    if (!coachCode || !getAppsScriptUrl()) {
+      return false;
+    }
+    const calendarPayload = getCalendarPayloadForCoach(coachCode);
+    if (!calendarPayload.calendarId && !calendarPayload.coachCalendarId) {
+      return false;
+    }
+
+    const baseMonthStart = getMonthStart(options.monthStart || coachCalendarMonthStart || new Date());
+    const parsedLookaheadMonths = Number(options.lookaheadMonths ?? 1);
+    const lookaheadMonths = Math.max(
+      0,
+      Math.min(2, Number.isFinite(parsedLookaheadMonths) ? parsedLookaheadMonths : 1)
+    );
+    const monthStarts = [];
+    const seenMonths = new Set();
+    for (let offset = 0; offset <= lookaheadMonths; offset += 1) {
+      const monthStart = shiftMonth(baseMonthStart, offset);
+      const monthKey = getDateKeyInTaipei(monthStart).slice(0, 7);
+      if (!seenMonths.has(monthKey)) {
+        seenMonths.add(monthKey);
+        monthStarts.push(monthStart);
+      }
+    }
+
+    if (options.showStatus && el.coachCalendarSyncText) {
+      el.coachCalendarSyncText.textContent = "正在自動同步 Google 日曆...";
+    }
+
+    let totalEvents = 0;
+    let totalMatched = 0;
+    let totalCreated = 0;
+    let totalRemovedPlaceholders = 0;
+    let syncedAny = false;
+
+    for (const monthStart of monthStarts) {
+      const monthRange = getMonthSyncRange(monthStart);
+      try {
+        const listResult = await callAppsScriptApi("listEvents", {
+          ...monthRange,
+          ...calendarPayload,
+          coachCode
+        });
+        const events = Array.isArray(listResult?.events) ? listResult.events : [];
+        const stats = alignCoachLessonsWithGoogleEvents(coachCode, events);
+        const matchedLessonIds = new Set(Array.isArray(stats.matchedLessonIds) ? stats.matchedLessonIds : []);
+        const meta = getMonthMeta(monthStart);
+        const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
+        state.lessons
+          .filter((lesson) => (
+            lesson.coachCode === coachCode &&
+            lesson.calendarOccupied &&
+            getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
+            !matchedLessonIds.has(lesson.id) &&
+            isGeneratedLocalCalendarEventId(lesson.calendarEventId)
+          ))
+          .forEach((lesson) => {
+            markLessonRemovedByCalendar(lesson, "coach_google_auto_sync");
+            totalRemovedPlaceholders += 1;
+          });
+        totalEvents += stats.totalEvents;
+        totalMatched += stats.matchedEvents;
+        totalCreated += stats.createdLessons;
+        syncedAny = true;
+      } catch (error) {
+        const message = String(error?.message || "未知錯誤");
+        addLog(`[日曆同步] 教練端自動同步略過：${message}`);
+      }
+    }
+
+    if (syncedAny) {
+      ensureLessonCalendarEventIds();
+      ensureParticipantEmails();
+      ensureStudentBillingProfiles();
+      saveState();
+      const summary = `已自動同步 Google 日曆：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆。`;
+      addLog(`[日曆同步] 教練端${summary}`);
+      if (options.showStatus && el.coachCalendarSyncText) {
+        el.coachCalendarSyncText.textContent = summary;
+      }
     }
     return syncedAny;
   }
@@ -5479,13 +5564,22 @@
         syncCoachflowRosterFromLocalState();
         const loaded = activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
         if (loaded) {
+          let calendarChanged = false;
+          try {
+            calendarChanged = await syncStudentCalendarEventsFromGoogle();
+          } catch (error) {
+            console.warn("Student Google calendar sync failed for student login:", error);
+          }
           try {
             const changed = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode });
-            if (changed) {
+            if (changed || calendarChanged) {
               renderAll();
             }
           } catch (error) {
             console.warn("Cloud leave sync failed for student login:", error);
+            if (calendarChanged) {
+              renderAll();
+            }
           }
         }
       });
@@ -5500,6 +5594,9 @@
         if (loaded && isCoachReadOnlyMode()) {
           setCoachLoginPromptVisibility(true);
         }
+        if (!loaded) {
+          return;
+        }
         const syncFromCloud = async () => {
           const cloudChanged = await syncCoachflowRosterFromCloud();
           const localChanged = syncCoachflowRosterFromLocalState();
@@ -5512,6 +5609,7 @@
           if (cloudChanged || localChanged || leaveChanged) {
             renderAll();
           }
+          return Boolean(cloudChanged || localChanged || leaveChanged);
         };
         if (readOnlyLogin) {
           syncReadOnlyCoachCalendarFromGoogle(activeCoachCode)
@@ -5530,6 +5628,17 @@
           return;
         }
         await syncFromCloud();
+        try {
+          const calendarChanged = await syncCoachCalendarEventsFromGoogle({ showStatus: true });
+          if (calendarChanged) {
+            renderAll();
+          }
+        } catch (error) {
+          console.warn("Coach Google calendar sync failed for coach login:", error);
+          if (el.coachCalendarSyncText) {
+            el.coachCalendarSyncText.textContent = "自動同步 Google 日曆失敗，請稍後再試或手動同步。";
+          }
+        }
       });
     }
 
@@ -6264,6 +6373,10 @@
       if (autoCoachLoaded && activeCoachReadOnly && activeCoachCode) {
         readOnlyCalendarSynced = await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
       }
+      let coachCalendarSynced = false;
+      if (autoCoachLoaded && !activeCoachReadOnly && activeCoachCode) {
+        coachCalendarSynced = await syncCoachCalendarEventsFromGoogle({ showStatus: true });
+      }
       if (cloudSyncChanged) {
         if (studentLoginPromptHidden && el.studentCode && activeStudentCode && el.studentCode.value !== activeStudentCode) {
           el.studentCode.value = activeStudentCode;
@@ -6280,6 +6393,9 @@
         renderAll();
       }
       if (readOnlyCalendarSynced && !cloudSyncChanged) {
+        renderAll();
+      }
+      if (coachCalendarSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !readOnlyCalendarSynced) {
         renderAll();
       }
     } catch (error) {
