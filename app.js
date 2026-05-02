@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260503-0003";
+const PUBLIC_APP_VERSION = "20260503-0004";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -3748,11 +3748,12 @@ function renderStudentProgramOptions() {
 
   if (programs.length) {
     const published = getPublishedProgram(studentCoachId, studentId);
-    const fallbackProgram = published || programs[0];
+    const selectedProgram = programs.find((program) => program.id === currentValue);
+    const fallbackProgram = published || selectedProgram || programs[0];
     currentStudentProgramId =
-      programs.some((program) => program.id === currentValue)
-        ? currentValue
-        : fallbackProgram.id;
+      published?.id
+        || selectedProgram?.id
+        || fallbackProgram.id;
     els.studentProgramSelect.value = currentStudentProgramId;
   } else {
     currentStudentProgramId = "";
@@ -7341,12 +7342,12 @@ function getPublishedProgram(coachId = "", studentId = "") {
   const publishedPrograms = availablePrograms
     .filter((program) => program.published)
     .sort((a, b) => {
+      if (studentId && isProgramTargeted(a) !== isProgramTargeted(b)) {
+        return isProgramTargeted(a) ? -1 : 1;
+      }
       const dateCompare = (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || "");
       if (dateCompare !== 0) {
         return dateCompare;
-      }
-      if (studentId && isProgramTargeted(a) !== isProgramTargeted(b)) {
-        return isProgramTargeted(a) ? -1 : 1;
       }
       return (getComparableDateTimeKey(b.createdAt) || "").localeCompare(getComparableDateTimeKey(a.createdAt) || "");
     });
@@ -7362,8 +7363,8 @@ function getSelectedStudentProgram() {
     .filter((program) => !studentId || isProgramAvailableForStudent(program, studentId))
     .sort((a, b) => (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || ""));
   const selectedProgramId = currentStudentProgramId || els.studentProgramSelect?.value || "";
-  return scopedPrograms.find((program) => program.id === selectedProgramId)
-    || getPublishedProgram(studentCoachId, studentId)
+  return getPublishedProgram(studentCoachId, studentId)
+    || scopedPrograms.find((program) => program.id === selectedProgramId)
     || scopedPrograms[0]
     || null;
 }
