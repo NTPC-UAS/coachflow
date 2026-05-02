@@ -82,7 +82,9 @@ function doGet(e) {
   const action = getAction_(e);
 
   try {
-    ensureSheets_();
+    if (shouldEnsureSheetsForAction_(action)) {
+      ensureSheets_();
+    }
 
     switch (action) {
       case "resolveCoachAccess":
@@ -99,6 +101,18 @@ function doGet(e) {
 
       case "bootstrapStudent":
         return jsonResponse_(buildStudentBootstrap_(getParam_(e, "studentId")));
+
+      case "ping":
+        return jsonResponse_(buildPingResponse_(action));
+
+      case "checkEvent":
+        return jsonResponse_(checkCalendarEvent_(e && e.parameter ? e.parameter : {}));
+
+      case "listEvents":
+        return jsonResponse_(listCalendarEvents_(e && e.parameter ? e.parameter : {}));
+
+      case "listLeaveRecords":
+        return jsonResponse_(listLeaveRecords_(e && e.parameter ? e.parameter : {}));
 
       case "bootstrap":
       default:
@@ -117,9 +131,14 @@ function doPost(e) {
   const action = payload.action || getAction_(e) || "";
 
   try {
-    ensureSheets_();
+    if (shouldEnsureSheetsForAction_(action)) {
+      ensureSheets_();
+    }
 
     switch (action) {
+      case "ping":
+        return jsonResponse_(buildPingResponse_(action));
+
       case "resolveCoachAccess":
         return jsonResponse_(resolveCoachAccessResponse_(payload.access));
 
@@ -193,6 +212,12 @@ function doPost(e) {
       case "updateEvent":
         return jsonResponse_(updateCalendarEvent_(payload));
 
+      case "checkEvent":
+        return jsonResponse_(checkCalendarEvent_(payload));
+
+      case "listEvents":
+        return jsonResponse_(listCalendarEvents_(payload));
+
       case "deleteEvent":
         return jsonResponse_(deleteCalendarEvent_(payload));
 
@@ -206,10 +231,16 @@ function doPost(e) {
       case "sendEmail":
         return jsonResponse_(sendEmailNotice_(payload));
 
+      case "listLeaveRecords":
+        return jsonResponse_(listLeaveRecords_(payload));
+
+      case "saveLeaveRecord":
+        return jsonResponse_(saveLeaveRecord_(payload));
+
       default:
         return jsonResponse_({
           ok: false,
-          message: "Unsupported action."
+          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/sendEmail."
         });
     }
   } catch (error) {
@@ -218,6 +249,33 @@ function doPost(e) {
       message: error.message || String(error)
     });
   }
+}
+
+function shouldEnsureSheetsForAction_(action) {
+  const normalized = String(action || "bootstrap").trim() || "bootstrap";
+  const sheetActions = [
+    "resolveCoachAccess",
+    "resolveStudentAccess",
+    "bootstrapAdmin",
+    "bootstrapCoach",
+    "bootstrapStudent",
+    "bootstrap",
+    "upsertCoach",
+    "setCoachStatus",
+    "deleteCoach",
+    "upsertStudent",
+    "assignStudentCoach",
+    "setStudentStatus",
+    "deleteStudent",
+    "saveProgram",
+    "publishProgram",
+    "deleteProgram",
+    "submitWorkoutLogs",
+    "importWorkoutLogs",
+    "touchCoach",
+    "touchStudent"
+  ];
+  return sheetActions.indexOf(normalized) !== -1;
 }
 
 function buildFullBootstrap_() {
@@ -887,6 +945,90 @@ function getParam_(e, key) {
   return (e && e.parameter && e.parameter[key]) || "";
 }
 
+function buildPingResponse_(action) {
+  return {
+    ok: true,
+    action: action || "ping",
+    message: "ok",
+    timeZone: APP_TIME_ZONE,
+    now: nowIso_()
+  };
+}
+
+function checkCalendarEvent_(payload) {
+  const calendar = resolveCalendar_(payload || {});
+  if (!calendar) {
+    return {
+      ok: false,
+      action: "checkEvent",
+      message: "找不到可用日曆，請檢查 calendarId 或授權。"
+    };
+  }
+
+  const eventId = safeString_(payload.eventId || payload.calendarEventId, "");
+  if (!eventId) {
+    return {
+      ok: true,
+      action: "checkEvent",
+      exists: false,
+      eventId: "",
+      calendarId: calendar.getId(),
+      message: "缺少 eventId。"
+    };
+  }
+
+  const event = findCalendarEventById_(calendar, eventId);
+  return {
+    ok: true,
+    action: "checkEvent",
+    exists: Boolean(event),
+    eventId: eventId,
+    calendarId: calendar.getId(),
+    message: event ? "事件存在。" : "找不到指定事件。"
+  };
+}
+
+function listCalendarEvents_(payload) {
+  const calendar = resolveCalendar_(payload || {});
+  if (!calendar) {
+    return {
+      ok: false,
+      action: "listEvents",
+      message: "找不到可用日曆，請檢查 calendarId 或授權。"
+    };
+  }
+
+  const startAt = new Date(payload.startAt || "");
+  const endAt = new Date(payload.endAt || "");
+  if (String(startAt) === "Invalid Date" || String(endAt) === "Invalid Date") {
+    return { ok: false, action: "listEvents", message: "startAt / endAt 格式錯誤。" };
+  }
+  if (endAt <= startAt) {
+    return { ok: false, action: "listEvents", message: "endAt 必須晚於 startAt。" };
+  }
+
+  const events = calendar.getEvents(startAt, endAt).map(function(event) {
+    return {
+      eventId: String(event.getId() || ""),
+      title: String(event.getTitle() || ""),
+      startAt: event.getStartTime().toISOString(),
+      endAt: event.getEndTime().toISOString(),
+      description: String(event.getDescription() || ""),
+      location: String(event.getLocation() || "")
+    };
+  });
+
+  return {
+    ok: true,
+    action: "listEvents",
+    calendarId: calendar.getId(),
+    startAt: startAt.toISOString(),
+    endAt: endAt.toISOString(),
+    count: events.length,
+    events: events
+  };
+}
+
 function createCalendarEvent_(payload) {
   if (isNormalLeaveCalendarCreateBlocked_(payload || {})) {
     return {
@@ -943,11 +1085,7 @@ function updateCalendarEvent_(payload) {
     return { ok: false, action: "updateEvent", message: "缺少 eventId。" };
   }
 
-  const event = calendar.getEventById(eventId) || (
-    eventId.indexOf("@google.com") === -1
-      ? calendar.getEventById(eventId + "@google.com")
-      : calendar.getEventById(eventId.replace("@google.com", ""))
-  );
+  const event = findCalendarEventById_(calendar, eventId);
   if (!event) {
     return { ok: false, action: "updateEvent", message: "找不到指定事件。", eventId: eventId };
   }
@@ -989,7 +1127,7 @@ function deleteCalendarEvent_(payload) {
   const singleDelete = isSingleEventDeleteRequested_(payload || {});
   const event = singleDelete
     ? findSingleOccurrenceForDelete_(calendar, payload || {}, eventId)
-    : calendar.getEventById(eventId);
+    : findCalendarEventById_(calendar, eventId);
   if (!event) {
     if (singleDelete) {
       return {
@@ -1059,6 +1197,28 @@ function resolveCalendar_(payload) {
     }
   }
   return CalendarApp.getDefaultCalendar();
+}
+
+function findCalendarEventById_(calendar, eventId) {
+  const raw = String(eventId || "").trim();
+  if (!raw) {
+    return null;
+  }
+
+  const candidates = [raw];
+  if (raw.indexOf("@google.com") === -1) {
+    candidates.push(raw + "@google.com");
+  } else {
+    candidates.push(raw.replace("@google.com", ""));
+  }
+
+  for (var index = 0; index < candidates.length; index += 1) {
+    const found = calendar.getEventById(candidates[index]);
+    if (found) {
+      return found;
+    }
+  }
+  return null;
 }
 
 function isSingleEventDeleteRequested_(payload) {
@@ -1140,6 +1300,155 @@ function findSingleOccurrenceForDelete_(calendar, payload, rawEventId) {
   }
 
   return tied ? null : bestEvent;
+}
+
+function listLeaveRecords_(payload) {
+  const coachCode = normalizeCode_(payload.coachCode);
+  const studentCode = normalizeCode_(payload.studentCode);
+  const records = getLeaveRecords_()
+    .filter(function(record) {
+      const recordCoachCode = normalizeCode_(record.coachCode);
+      const recordStudentCode = normalizeCode_(record.studentCode);
+      return (!coachCode || recordCoachCode === coachCode) &&
+        (!studentCode || recordStudentCode === studentCode);
+    })
+    .sort(function(a, b) {
+      return new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0);
+    });
+  return {
+    ok: true,
+    action: "listLeaveRecords",
+    count: records.length,
+    records: records
+  };
+}
+
+function saveLeaveRecord_(payload) {
+  const record = normalizeLeaveRecord_(payload.record || payload);
+  if (!record.id && !record.lessonKey) {
+    return {
+      ok: false,
+      action: "saveLeaveRecord",
+      message: "缺少請假紀錄 id 或 lessonKey。"
+    };
+  }
+
+  const records = getLeaveRecords_();
+  const recordKey = getLeaveRecordKey_(record);
+  let replaced = false;
+  const nextRecords = records.map(function(item) {
+    if (getLeaveRecordKey_(item) === recordKey) {
+      replaced = true;
+      return Object.assign({}, item, record, {
+        updatedAt: nowIso_()
+      });
+    }
+    return item;
+  });
+
+  if (!replaced) {
+    nextRecords.unshift(Object.assign({}, record, {
+      createdAt: record.createdAt || nowIso_(),
+      updatedAt: nowIso_()
+    }));
+  }
+
+  setLeaveRecords_(nextRecords.slice(0, 500));
+  return {
+    ok: true,
+    action: "saveLeaveRecord",
+    record: record,
+    replaced: replaced
+  };
+}
+
+function normalizeLeaveRecord_(record) {
+  return {
+    id: safeString_(record.id, ""),
+    lessonId: safeString_(record.lessonId, ""),
+    lessonKey: safeString_(record.lessonKey, ""),
+    calendarEventId: safeString_(record.calendarEventId, ""),
+    studentCode: normalizeCode_(record.studentCode),
+    coachCode: normalizeCode_(record.coachCode),
+    lessonStartAt: safeString_(record.lessonStartAt, ""),
+    type: safeString_(record.type, "normal"),
+    submittedAt: safeString_(record.submittedAt, nowIso_()),
+    submittedBy: normalizeCode_(record.submittedBy),
+    submittedByRole: safeString_(record.submittedByRole, ""),
+    makeupEligible: record.makeupEligible === false || String(record.makeupEligible).toLowerCase() === "false" ? false : true,
+    emailNoticeStatus: safeString_(record.emailNoticeStatus, ""),
+    emailNoticeAt: safeString_(record.emailNoticeAt || record.emailNoticeSentAt || record.emailNoticeQueuedAt, ""),
+    revokedAt: safeString_(record.revokedAt, ""),
+    revokedBy: normalizeCode_(record.revokedBy),
+    createdAt: safeString_(record.createdAt, ""),
+    updatedAt: safeString_(record.updatedAt, "")
+  };
+}
+
+function getLeaveRecordKey_(record) {
+  return safeString_(record.id, "") || safeString_(record.lessonKey, "");
+}
+
+function getLeaveRecords_() {
+  const raw = readChunkedProperty_("LEAVE_RECORDS_V1");
+  if (!raw) {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeLeaveRecord_) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function setLeaveRecords_(records) {
+  writeChunkedProperty_("LEAVE_RECORDS_V1", JSON.stringify(records || []));
+}
+
+function readChunkedProperty_(baseKey) {
+  const props = PropertiesService.getScriptProperties();
+  const chunkCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
+  if (!chunkCount) {
+    return props.getProperty(baseKey) || "";
+  }
+
+  const chunks = [];
+  for (var index = 0; index < chunkCount; index += 1) {
+    chunks.push(props.getProperty(baseKey + "_" + index) || "");
+  }
+  return chunks.join("");
+}
+
+function writeChunkedProperty_(baseKey, value) {
+  const props = PropertiesService.getScriptProperties();
+  const text = String(value || "");
+  const previousCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
+  for (var oldIndex = 0; oldIndex < previousCount; oldIndex += 1) {
+    props.deleteProperty(baseKey + "_" + oldIndex);
+  }
+  props.deleteProperty(baseKey);
+
+  const chunkSize = 8000;
+  const chunkCount = Math.max(1, Math.ceil(text.length / chunkSize));
+  for (var index = 0; index < chunkCount; index += 1) {
+    props.setProperty(baseKey + "_" + index, text.slice(index * chunkSize, (index + 1) * chunkSize));
+  }
+  props.setProperty(baseKey + "_CHUNKS", String(chunkCount));
+}
+
+function normalizeCode_(value) {
+  return safeString_(value, "").toUpperCase();
+}
+
+function safeString_(value, fallback) {
+  const text = value === null || value === undefined ? "" : String(value).trim();
+  return text || (fallback || "");
+}
+
+function nowIso_() {
+  return new Date().toISOString();
 }
 
 function parsePostBody_(e) {

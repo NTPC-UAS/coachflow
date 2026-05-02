@@ -15,6 +15,7 @@
   const READ_ONLY_DEFAULT_COACH_CODE = "MO001";
   const READ_ONLY_DEFAULT_COACH_NAME = "Monster Chang";
   const READ_ONLY_MONTH_LOOKAHEAD = 1;
+  const DEFAULT_LEAVE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxJV_y__nD9nD-6AepZFENxrkQbJv_h3cq59pWaCk2pudGaY5ew5v5WJ_N9zDaj_B7WVg/exec";
   const PAYMENT_STATUS_LABELS = {
     unknown: "未註記",
     paid: "已繳費",
@@ -985,7 +986,17 @@
   }
 
   function getAppsScriptUrl() {
-    return String(window.APP_CONFIG?.leaveAppsScriptUrl || window.APP_CONFIG?.appsScriptUrl || "").trim();
+    return String(
+      window.APP_CONFIG?.leaveAppsScriptUrl ||
+      window.APP_CONFIG?.leaveBridgeAppsScriptUrl ||
+      window.APP_CONFIG?.leaveSandbox?.appsScriptUrl ||
+      DEFAULT_LEAVE_APPS_SCRIPT_URL ||
+      ""
+    ).trim();
+  }
+
+  function isLeaveBridgeEndpointError(message) {
+    return /SpreadsheetApp\.getActiveSpreadsheet|spreadsheets\.currently|spreadsheets/i.test(String(message || ""));
   }
 
   function getCoachflowAppsScriptUrl() {
@@ -2170,7 +2181,7 @@
       return { exists: true, error: true, message: "checkEvent 回傳格式缺少 exists，已停止自動刪除。" };
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
-      if (/unsupported|invalid action/i.test(message)) {
+      if (/unsupported|invalid action/i.test(message) || isLeaveBridgeEndpointError(message)) {
         return { exists: true, unsupported: true, message };
       }
       return { exists: true, error: true, message };
