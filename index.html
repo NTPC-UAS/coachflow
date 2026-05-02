@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="styles.css?v=20260502-0009">
+<link rel="stylesheet" href="styles.css?v=20260502-0010">
 </head>
 <body>
   <div class="app-shell">
@@ -109,6 +109,13 @@
                   課表備註
                   <textarea id="program-notes" rows="3" placeholder="可填寫本輪提醒或訓練重點"></textarea>
                 </label>
+                <div class="span-full program-target-field">
+                  <div class="program-target-heading">
+                    <span>指定學生</span>
+                    <span class="muted-copy">留空代表全班共用；勾選後可發布成學生專屬課表。</span>
+                  </div>
+                  <div class="program-target-list" id="program-target-students"></div>
+                </div>
               </div>
 
               <div class="editor-topbar">
@@ -139,6 +146,7 @@
 
               <div class="button-row">
                 <button class="ghost-button" id="save-program" type="button">儲存課表</button>
+                <button class="ghost-button" id="publish-targeted-program" type="button">發布給指定學生</button>
                 <button class="primary-button" id="publish-program" type="button">發布課表</button>
               </div>
             </article>
@@ -841,7 +849,7 @@
     </div>
   </div>
 
-  <script charset="UTF-8" src="config.js?v=20260502-0009"></script>
-  <script charset="UTF-8" src="app.js?v=20260502-0009"></script>
+  <script charset="UTF-8" src="config.js?v=20260502-0010"></script>
+  <script charset="UTF-8" src="app.js?v=20260502-0010"></script>
 </body>
 </html>

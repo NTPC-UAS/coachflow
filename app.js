@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260502-0009";
+const PUBLIC_APP_VERSION = "20260502-0010";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -321,6 +321,7 @@ function normalizeCloudProgram(row, index = 0) {
     coachName: row.coach_name || row.coachName || "",
     notes: row.notes || "",
     published: String(row.published || "").toLowerCase() === "true" || row.published === true,
+    targetStudentIds: normalizeProgramStudentIds(row.target_student_ids || row.targetStudentIds || row.student_ids || row.studentIds || ""),
     createdAt: normalizeDateTimeValue(row.created_at || row.createdAt || ""),
     updatedAt: normalizeDateTimeValue(row.updated_at || row.updatedAt || "")
   };
@@ -328,6 +329,42 @@ function normalizeCloudProgram(row, index = 0) {
 
 function isUsableProgram(record) {
   return !!String(record?.id || "").trim() && !!String(record?.code || "").trim();
+}
+
+function normalizeProgramStudentIds(value = []) {
+  const rawIds = Array.isArray(value)
+    ? value
+    : String(value || "")
+        .split(/[,，\n]/);
+  return [...new Set(
+    rawIds
+      .map((id) => String(id || "").trim())
+      .filter(Boolean)
+  )];
+}
+
+function getProgramStudentIds(program = {}) {
+  return normalizeProgramStudentIds(program.targetStudentIds || program.studentIds || "");
+}
+
+function getProgramTargetStudentNames(program = {}) {
+  const targetIds = getProgramStudentIds(program);
+  if (!targetIds.length) {
+    return [];
+  }
+  return targetIds.map((studentId) => {
+    const student = state.students.find((item) => item.id === studentId);
+    return student?.name || studentId;
+  });
+}
+
+function isProgramTargeted(program = {}) {
+  return getProgramStudentIds(program).length > 0;
+}
+
+function isProgramAvailableForStudent(program = {}, studentId = "") {
+  const targetIds = getProgramStudentIds(program);
+  return !targetIds.length || targetIds.includes(studentId);
 }
 
 function normalizeCloudProgramItem(row, index = 0) {
@@ -760,7 +797,8 @@ async function saveProgramToCloud(program, items) {
       coach_id: program.coachId || "",
       coach_name: program.coachName || "",
       notes: program.notes || "",
-      published: String(!!program.published)
+      published: String(!!program.published),
+      target_student_ids: getProgramStudentIds(program).join(",")
     },
     items: items.map((item) => ({
       item_id: item.id,
@@ -965,8 +1003,10 @@ function applyStaticCopy() {
   if (addProgramItemButton) addProgramItemButton.textContent = "新增一列";
   const saveProgramButton = document.querySelector("#save-program");
   if (saveProgramButton) saveProgramButton.textContent = "儲存課表";
+  const publishTargetedProgramButton = document.querySelector("#publish-targeted-program");
+  if (publishTargetedProgramButton) publishTargetedProgramButton.textContent = "發布給指定學生";
   const publishProgramButton = document.querySelector("#publish-program");
-  if (publishProgramButton) publishProgramButton.textContent = "發布課表";
+  if (publishProgramButton) publishProgramButton.textContent = "發布全班共用課表";
   const coachTodayTab = document.querySelector('.sub-tab[data-coach-tab="coach-today"]');
   if (coachTodayTab) coachTodayTab.textContent = "本週紀錄";
   setNodeText(document.querySelector("#coach-today .section-kicker"), "提交狀況");
@@ -1226,6 +1266,7 @@ const els = {
   programDate: document.querySelector("#program-date"),
   coachName: document.querySelector("#coach-name"),
   programNotes: document.querySelector("#program-notes"),
+  programTargetStudents: document.querySelector("#program-target-students"),
   programItemsBody: document.querySelector("#program-items-body"),
   programItemTemplate: document.querySelector("#program-item-template"),
   coachExerciseOptions: document.querySelector("#coach-exercise-options"),
@@ -1373,6 +1414,7 @@ function refreshAdminWorkspace() {
 
 function refreshCoachWorkspace(options = {}) {
   const preserveEditor = options.preserveEditor ?? (APP_MODE === "coach" && coachEditorDirty);
+  const preservedTargetStudentIds = preserveEditor ? getSelectedProgramTargetStudentIds() : [];
   const nextEditingProgramId =
     coachProgramEditorMode === "edit"
       ? (
@@ -1411,6 +1453,9 @@ function refreshCoachWorkspace(options = {}) {
   renderCoachStudentLinks();
   renderHistoryImportPreview();
   renderCoachStudentRoster();
+  if (canPreserveEditor) {
+    renderProgramTargetStudents(preservedTargetStudentIds);
+  }
   syncEditorPreviewState();
   renderCoachToday();
   renderCoachHistory();
@@ -1795,13 +1840,14 @@ function getCoachRoundProgram(viewDate = getCoachTodayDate()) {
     || null;
 }
 
-function getCoachNextRoundDate(program) {
+function getCoachNextRoundDate(program, studentId = "") {
   const programDateKey = getComparableDateKey(program?.date);
   if (!programDateKey) {
     return "";
   }
 
   return getCoachScopedPrograms()
+    .filter((item) => !studentId || isProgramAvailableForStudent(item, studentId))
     .map((item) => ({
       id: item.id,
       dateKey: getComparableDateKey(item.date)
@@ -1821,8 +1867,47 @@ function isLogInProgramRound(log, program) {
     return false;
   }
 
-  const nextRoundDate = getCoachNextRoundDate(program);
+  const nextRoundDate = getCoachNextRoundDate(program, log.studentId || "");
   return !nextRoundDate || logDate < nextRoundDate;
+}
+
+function getStudentRoundProgram(student, viewDate = getCoachTodayDate()) {
+  const viewDateKey = getComparableDateKey(viewDate) || getTodayDateInAppZone();
+  const studentId = student?.id || "";
+  const coachId = student?.primaryCoachId || getCurrentCoach()?.id || "";
+  const datedPrograms = getCoachScopedPrograms()
+    .filter((program) => !coachId || (program.coachId || "") === coachId)
+    .filter((program) => isProgramAvailableForStudent(program, studentId))
+    .map((program) => ({
+      program,
+      dateKey: getComparableDateKey(program.date),
+      createdKey: getComparableDateTimeKey(program.createdAt)
+    }))
+    .filter((item) => item.dateKey);
+
+  const currentOrPast = datedPrograms
+    .filter((item) => item.dateKey <= viewDateKey)
+    .sort((a, b) => {
+      const dateCompare = b.dateKey.localeCompare(a.dateKey);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      if (isProgramTargeted(a.program) !== isProgramTargeted(b.program)) {
+        return isProgramTargeted(a.program) ? -1 : 1;
+      }
+      if (a.program.published !== b.program.published) {
+        return a.program.published ? -1 : 1;
+      }
+      return b.createdKey.localeCompare(a.createdKey);
+    });
+
+  if (currentOrPast.length) {
+    return currentOrPast[0].program;
+  }
+
+  return getPublishedProgram(coachId, studentId)
+    || datedPrograms.sort((a, b) => a.dateKey.localeCompare(b.dateKey))[0]?.program
+    || null;
 }
 
 function getCoachRoundContext(viewDate = getCoachTodayDate()) {
@@ -1830,14 +1915,27 @@ function getCoachRoundContext(viewDate = getCoachTodayDate()) {
   const viewDateKey = getComparableDateKey(normalizedViewDate);
   const program = getCoachRoundProgram(normalizedViewDate);
   const coachLogs = getCoachScopedLogs();
-  const logs = program
-    ? coachLogs.filter((log) => isLogInProgramRound(log, program))
-    : coachLogs.filter((log) => getLogActivityDateKey(log) === viewDateKey);
+  const studentProgramMap = new Map();
+  getCoachActiveStudents().forEach((student) => {
+    const studentProgram = getStudentRoundProgram(student, normalizedViewDate);
+    if (studentProgram) {
+      studentProgramMap.set(student.id, studentProgram);
+    }
+  });
+  const logs = studentProgramMap.size
+    ? coachLogs.filter((log) => {
+        const studentProgram = studentProgramMap.get(log.studentId);
+        return studentProgram ? isLogInProgramRound(log, studentProgram) : false;
+      })
+    : program
+      ? coachLogs.filter((log) => isLogInProgramRound(log, program))
+      : coachLogs.filter((log) => getLogActivityDateKey(log) === viewDateKey);
 
   return {
     viewDate: normalizedViewDate,
     viewDateKey,
     program,
+    studentProgramMap,
     logs: [...logs].sort(compareLogsByDateTimeDesc)
   };
 }
@@ -1872,6 +1970,10 @@ function bindEvents() {
   });
   document.querySelector("#save-program").addEventListener("click", saveProgram);
   document.querySelector("#publish-program").addEventListener("click", publishProgram);
+  document.querySelector("#publish-targeted-program")?.addEventListener("click", publishTargetedProgram);
+  els.programTargetStudents?.addEventListener("change", () => {
+    setCoachEditorDirty(true);
+  });
   els.programLibraryList?.addEventListener("click", handleProgramLibraryAction);
   els.programLibrarySearch?.addEventListener("input", () => {
     programLibraryVisibleCount = 6;
@@ -2118,7 +2220,8 @@ function hydrateFromStorage() {
       createdAt: normalizeDateTimeValue(program.createdAt || ""),
       updatedAt: normalizeDateTimeValue(program.updatedAt || ""),
       coachId: program.coachId || state.currentCoachId,
-      coachName: program.coachName || getCurrentCoach()?.name || ""
+      coachName: program.coachName || getCurrentCoach()?.name || "",
+      targetStudentIds: normalizeProgramStudentIds(program.targetStudentIds || program.studentIds || "")
     }));
     state.programItems = parsed.programItems || structuredClone(defaultState.programItems);
     state.workoutLogs = (parsed.workoutLogs || structuredClone(defaultState.workoutLogs)).map((log) => {
@@ -2817,11 +2920,40 @@ function createBlankProgram() {
     coachName: currentCoach?.name || "",
     notes: "",
     published: false,
+    targetStudentIds: [],
     createdAt: timestampNow()
   };
   state.programs.unshift(program);
   persistState();
   return program;
+}
+
+function renderProgramTargetStudents(selectedIds = []) {
+  if (!els.programTargetStudents) {
+    return;
+  }
+
+  const selectedSet = new Set(normalizeProgramStudentIds(selectedIds));
+  const students = getCoachActiveStudents()
+    .sort((a, b) => String(a.name || "").localeCompare(String(b.name || ""), "zh-Hant", { numeric: true, sensitivity: "base" }));
+
+  els.programTargetStudents.innerHTML = students
+    .map((student) => `
+      <label class="program-target-option">
+        <input type="checkbox" value="${escapeHtml(student.id)}" ${selectedSet.has(student.id) ? "checked" : ""}>
+        <span>${escapeHtml(student.name)}</span>
+      </label>
+    `)
+    .join("");
+}
+
+function getSelectedProgramTargetStudentIds() {
+  if (!els.programTargetStudents) {
+    return [];
+  }
+  return [...els.programTargetStudents.querySelectorAll("input[type='checkbox']:checked")]
+    .map((input) => input.value)
+    .filter(Boolean);
 }
 
 function seedEditorFromProgram(programId) {
@@ -2834,6 +2966,7 @@ function seedEditorFromProgram(programId) {
     els.programDate.value = getTodayDateInAppZone();
     els.coachName.value = getCurrentCoach()?.name || "";
     els.programNotes.value = "";
+    renderProgramTargetStudents([]);
     els.programItemsBody.innerHTML = "";
     return;
   }
@@ -2845,6 +2978,7 @@ function seedEditorFromProgram(programId) {
   els.programDate.value = normalizeDateKey(program.date || getTodayDateInAppZone()) || getTodayDateInAppZone();
   els.coachName.value = program.coachName || "";
   els.programNotes.value = program.notes || "";
+  renderProgramTargetStudents(getProgramStudentIds(program));
 
   els.programItemsBody.innerHTML = "";
   if (items.length) {
@@ -2876,6 +3010,7 @@ function seedEditorFromProgramCopy(programId) {
   els.programDate.value = getTodayDateInAppZone();
   els.coachName.value = getCurrentCoach()?.name || program.coachName || "";
   els.programNotes.value = program.notes || "";
+  renderProgramTargetStudents(getProgramStudentIds(program));
   els.programItemsBody.innerHTML = "";
 
   if (items.length) {
@@ -3106,7 +3241,7 @@ function syncSortNumbers() {
   });
 }
 
-function collectProgramPayload() {
+function collectProgramPayload(options = {}) {
   const existingProgram =
     coachProgramEditorMode === "edit" && editingProgramId
       ? state.programs.find((item) => item.id === editingProgramId) || null
@@ -3115,6 +3250,9 @@ function collectProgramPayload() {
   const existingDate = normalizeDateKey(existingProgram?.date || "");
   const dateChangedFromExisting = Boolean(existingProgram && nextDate && existingDate && nextDate !== existingDate);
   const shouldCreateNewProgram = !existingProgram || dateChangedFromExisting;
+  const targetStudentIds = Object.prototype.hasOwnProperty.call(options, "targetStudentIds")
+    ? normalizeProgramStudentIds(options.targetStudentIds)
+    : getSelectedProgramTargetStudentIds();
   const program = {
     id: shouldCreateNewProgram ? createProgramId() : existingProgram.id,
     code: els.programCode.value.trim(),
@@ -3123,6 +3261,7 @@ function collectProgramPayload() {
     coachName: getCurrentCoach()?.name || els.coachName.value.trim(),
     notes: els.programNotes.value.trim(),
     published: shouldCreateNewProgram ? false : Boolean(existingProgram?.published),
+    targetStudentIds,
     createdAt: shouldCreateNewProgram ? timestampNow() : existingProgram.createdAt || timestampNow()
   };
 
@@ -3186,8 +3325,40 @@ async function saveProgram() {
   }
 }
 
+function applyProgramPublishState(program) {
+  const publishedTargetIds = getProgramStudentIds(program);
+  state.programs = state.programs.map((item) => {
+    if ((item.coachId || "") !== (program.coachId || "")) {
+      return item;
+    }
+    if (item.id === program.id) {
+      return { ...item, published: true, targetStudentIds: publishedTargetIds };
+    }
+
+    const itemTargetIds = getProgramStudentIds(item);
+    const shouldUnpublish = publishedTargetIds.length
+      ? itemTargetIds.some((id) => publishedTargetIds.includes(id))
+      : itemTargetIds.length === 0;
+    return shouldUnpublish ? { ...item, published: false } : item;
+  });
+}
+
 async function publishProgram() {
-  const { program, items, dateChangedFromExisting } = collectProgramPayload();
+  await publishProgramWithTargets([]);
+}
+
+async function publishTargetedProgram() {
+  const targetStudentIds = getSelectedProgramTargetStudentIds();
+  if (!targetStudentIds.length) {
+    window.alert("請先在「指定學生」勾選至少 1 位學生。");
+    return;
+  }
+  await publishProgramWithTargets(targetStudentIds);
+}
+
+async function publishProgramWithTargets(targetStudentIds = []) {
+  const { program, items, dateChangedFromExisting } = collectProgramPayload({ targetStudentIds });
+  const isTargeted = getProgramStudentIds(program).length > 0;
 
   if (!program.code || !program.date || !items.length) {
     window.alert("\u8acb\u5148\u5b8c\u6210\u8ab2\u8868\u4ee3\u78bc\u3001\u65e5\u671f\u8207\u81f3\u5c11\u4e00\u7b46\u8ab2\u8868\u9805\u76ee\u3002");
@@ -3199,20 +3370,13 @@ async function publishProgram() {
       await publishProgramToCloud(program, items);
     } catch (error) {
       console.warn("Cloud publishProgram failed, falling back to local state:", error);
-      state.programs = state.programs.map((item) => ({
-        ...item,
-        published: item.id === program.id ? true : false
-      }));
+      applyProgramPublishState(program);
       upsertProgram({ ...program, published: true });
       state.programItems = state.programItems.filter((item) => item.programId !== program.id).concat(items);
       persistState();
     }
   } else {
-    state.programs = state.programs.map((item) => ({
-      ...item,
-      published: item.id === program.id ? true : false
-    }));
-
+    applyProgramPublishState(program);
     upsertProgram({ ...program, published: true });
     state.programItems = state.programItems.filter((item) => item.programId !== program.id).concat(items);
     persistState();
@@ -3225,6 +3389,7 @@ async function publishProgram() {
     els.coachTodayDate.value = getTodayDateInAppZone();
   }
   renderCoachExerciseOptions();
+  renderProgramTargetStudents(getProgramStudentIds(program));
   syncEditorPreviewState();
   renderProgramLibrary();
   renderCoachRoster();
@@ -3236,7 +3401,9 @@ async function publishProgram() {
   renderStudentSummary();
   window.alert(dateChangedFromExisting
     ? "已另存並發布為新的目前課表，原本的歷史課表已保留。"
-    : "\u8ab2\u8868\u5df2\u767c\u5e03\u3002\u5b78\u751f\u7aef\u73fe\u5728\u53ef\u4ee5\u8f09\u5165\u9019\u4efd\u8ab2\u8868\u3002");
+    : isTargeted
+      ? "課表已發布給指定學生。學生端會優先載入自己的專屬課表。"
+      : "課表已發布為全班共用課表。沒有專屬課表的學生會載入這份課表。");
 }
 
 function upsertProgram(program) {
@@ -3279,6 +3446,8 @@ function renderProgramLibrary() {
         .map((program) => {
           const items = getProgramItems(program.id);
           const itemCount = items.length;
+          const targetNames = getProgramTargetStudentNames(program);
+          const scopeText = targetNames.length ? `指定：${targetNames.join("、")}` : "全班共用";
           const itemPreview = items.length
             ? items
                 .map((item) => `${item.category}｜${item.exercise}｜${formatTarget(item)}`)
@@ -3291,9 +3460,11 @@ function renderProgramLibrary() {
                 <div>
                   <h4>${program.code || "未命名課表"}</h4>
                   <p class="coach-student-meta">${formatDateDisplay(program.date)}｜${itemCount} 個項目</p>
+                  <p class="coach-student-meta">${escapeHtml(scopeText)}</p>
                 </div>
                 <div class="roster-pill-stack">
                   <span class="status-pill ${program.published ? "is-success" : "is-muted"}">${program.published ? "目前課表" : "未發布"}</span>
+                  <span class="status-pill ${isProgramTargeted(program) ? "is-success" : "is-muted"}">${isProgramTargeted(program) ? "指定學生" : "全班共用"}</span>
                 </div>
               </div>
               <div class="coach-program-preview ${isExpanded ? "is-expanded" : ""}">${itemPreview}</div>
@@ -3426,10 +3597,7 @@ async function handleProgramLibraryAction(event) {
     return;
   }
 
-  state.programs = state.programs.map((item) => ({
-    ...item,
-    published: item.id === publishProgramId
-  }));
+  applyProgramPublishState(program);
   if (IS_CLOUD_MODE) {
     try {
       await publishProgramToCloud(program, getProgramItems(program.id));
@@ -3455,7 +3623,9 @@ async function handleProgramLibraryAction(event) {
   renderStudentProgramOptions();
   renderStudentSummary();
   switchCoachPanel("coach-editor");
-  window.alert("已設為目前課表。");
+  window.alert(isProgramTargeted(program)
+    ? "已設為指定學生目前課表。"
+    : "已設為全班共用目前課表。");
 }
 
 function renderPreview() {
@@ -3498,23 +3668,26 @@ function renderStudentProgramOptions() {
   }
 
   const studentCoachId = student?.primaryCoachId || "";
+  const studentId = student?.id || "";
   const assignedCoach = state.coaches.find((coach) => coach.id === studentCoachId);
   const programs = [...state.programs]
     .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
+    .filter((program) => !studentId || isProgramAvailableForStudent(program, studentId))
     .sort((a, b) => (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || ""));
   const currentValue = currentStudentProgramId || els.studentProgramSelect.value;
 
   els.studentProgramSelect.innerHTML = programs.length
     ? programs
         .map((program) => {
-          const label = `${formatDateDisplay(program.date)} | ${program.code || "\u76ee\u524d\u8ab2\u8868"}${assignedCoach?.name ? ` | ${assignedCoach.name}` : ""}${program.published ? " | \u76ee\u524d\u8ab2\u8868" : ""}`;
+          const scopeLabel = isProgramTargeted(program) ? " | 專屬課表" : "";
+          const label = `${formatDateDisplay(program.date)} | ${program.code || "\u76ee\u524d\u8ab2\u8868"}${assignedCoach?.name ? ` | ${assignedCoach.name}` : ""}${scopeLabel}${program.published ? " | \u76ee\u524d\u8ab2\u8868" : ""}`;
           return `<option value="${program.id}">${label}</option>`;
         })
         .join("")
     : `<option value="">${assignedCoach?.name ? `${assignedCoach.name}\u76ee\u524d\u6c92\u6709\u8ab2\u8868` : "\u76ee\u524d\u6c92\u6709\u8ab2\u8868"}</option>`;
 
   if (programs.length) {
-    const published = getPublishedProgram(studentCoachId);
+    const published = getPublishedProgram(studentCoachId, studentId);
     const fallbackProgram = published || programs[0];
     currentStudentProgramId =
       programs.some((program) => program.id === currentValue)
@@ -3562,6 +3735,7 @@ function renderStudentSummary() {
     <p>\u6559\u7df4\uff1a${assignedCoachName}</p>
     <p>\u5c08\u5c6c\u4ee3\u78bc\uff1a${student.accessCode}</p>
     <p>\u8ab2\u8868\uff1a${program.code || "\u76ee\u524d\u8ab2\u8868"}</p>
+    <p>類型：${isProgramTargeted(program) ? "專屬課表" : "全班共用"}</p>
     <p>${formatDateDisplay(program.date)}${program.published ? "\uff5c\u5df2\u767c\u5e03" : "\uff5c\u672a\u767c\u5e03"}</p>
   `;
   els.studentActiveCopy.textContent = `${student.name}\uff5c${assignedCoachName}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}`;
@@ -5207,7 +5381,7 @@ async function finalizeSubmissionCore() {
 }
 
 function renderCoachToday() {
-  const { viewDate, program: roundProgram, logs: allRoundLogs } = getCoachRoundContext();
+  const { viewDate, program: roundProgram, studentProgramMap, logs: allRoundLogs } = getCoachRoundContext();
   const coachStudents = getCoachActiveStudents();
   const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
   const roundLogs = allRoundLogs.filter((log) => {
@@ -5223,7 +5397,12 @@ function renderCoachToday() {
   const submittedStudentIds = new Set(allRoundLogs.map((log) => log.studentId).filter(Boolean));
   const submittedStudents = coachStudents.filter((student) => submittedStudentIds.has(student.id));
   const pendingStudents = coachStudents.filter((student) => !submittedStudentIds.has(student.id));
-  const roundLabel = roundProgram
+  const roundPrograms = [...new Set([...studentProgramMap.values()].map((program) => program.id))]
+    .map((programId) => state.programs.find((program) => program.id === programId))
+    .filter(Boolean);
+  const roundLabel = roundPrograms.length > 1
+    ? `${roundPrograms.length} 份課表｜含指定學生`
+    : roundProgram
     ? `${roundProgram.code || "\u672a\u547d\u540d"}｜${formatDateDisplay(roundProgram.date, "-")}`
     : "\u5c1a\u672a\u5efa\u7acb";
 
@@ -5933,9 +6112,13 @@ function renderCoachStudentRoster() {
 
   const studentsPool = getCoachScopedStudents();
   const coachLogs = getCoachScopedLogs();
-  const program = getCoachRoundProgram(getCoachTodayDate()) || getPublishedProgram(getCurrentCoach()?.id);
+  const roundContext = getCoachRoundContext(getCoachTodayDate());
+  const program = roundContext.program || getPublishedProgram(getCurrentCoach()?.id);
+  const rosterRoundLogs = roundContext.studentProgramMap?.size
+    ? roundContext.logs
+    : (program ? coachLogs.filter((log) => isLogInProgramRound(log, program)) : []);
   const submittedIds = new Set(
-    (program ? coachLogs.filter((log) => isLogInProgramRound(log, program)) : []).map((log) => log.studentId)
+    rosterRoundLogs.map((log) => log.studentId)
   );
   const displayDate = program?.date
     ? formatRocDateDisplay(program.date, "\u4eca\u65e5")
@@ -7041,22 +7224,39 @@ function exportProgramImage() {
   link.click();
 }
 
-function getPublishedProgram(coachId = "") {
+function getPublishedProgram(coachId = "", studentId = "") {
   const scopedPrograms = coachId
     ? state.programs.filter((program) => (program.coachId || "") === coachId)
     : state.programs;
-  return scopedPrograms.find((program) => program.published) || null;
+  const availablePrograms = studentId
+    ? scopedPrograms.filter((program) => isProgramAvailableForStudent(program, studentId))
+    : scopedPrograms;
+  const publishedPrograms = availablePrograms
+    .filter((program) => program.published)
+    .sort((a, b) => {
+      const dateCompare = (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || "");
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      if (studentId && isProgramTargeted(a) !== isProgramTargeted(b)) {
+        return isProgramTargeted(a) ? -1 : 1;
+      }
+      return (getComparableDateTimeKey(b.createdAt) || "").localeCompare(getComparableDateTimeKey(a.createdAt) || "");
+    });
+  return publishedPrograms[0] || null;
 }
 
 function getSelectedStudentProgram() {
   const student = getSelectedStudent();
   const studentCoachId = student?.primaryCoachId || "";
+  const studentId = student?.id || "";
   const scopedPrograms = [...state.programs]
     .filter((program) => !studentCoachId || (program.coachId || "") === studentCoachId)
+    .filter((program) => !studentId || isProgramAvailableForStudent(program, studentId))
     .sort((a, b) => (getComparableDateKey(b.date) || "").localeCompare(getComparableDateKey(a.date) || ""));
   const selectedProgramId = currentStudentProgramId || els.studentProgramSelect?.value || "";
-  return state.programs.find((program) => program.id === selectedProgramId)
-    || getPublishedProgram(studentCoachId)
+  return scopedPrograms.find((program) => program.id === selectedProgramId)
+    || getPublishedProgram(studentCoachId, studentId)
     || scopedPrograms[0]
     || null;
 }

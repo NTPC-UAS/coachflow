@@ -41,7 +41,8 @@ const SCHEMA = {
     "notes",
     "published",
     "created_at",
-    "updated_at"
+    "updated_at",
+    "target_student_ids"
   ],
   ProgramItems: [
     "item_id",
@@ -352,9 +353,13 @@ function buildStudentBootstrap_(studentId) {
 
   const coachPrograms = student
     ? programs.filter(function(row) {
-        return row.coach_id === student.primary_coach_id;
+        return row.coach_id === student.primary_coach_id && isProgramAvailableForStudent_(row, studentId);
       })
     : [];
+  const coachProgramIds = {};
+  coachPrograms.forEach(function(row) {
+    coachProgramIds[String(row.program_id || "")] = true;
+  });
 
   const coach = student
     ? coaches.filter(function(row) {
@@ -369,7 +374,9 @@ function buildStudentBootstrap_(studentId) {
     coach: coach,
     coaches: coach ? [coach] : [],
     programs: coachPrograms,
-    programItems: programItems,
+    programItems: programItems.filter(function(row) {
+      return coachProgramIds[String(row.program_id || "")];
+    }),
     workoutLogs: workoutLogs.filter(function(row) {
       return row.student_id === studentId;
     })
@@ -589,6 +596,11 @@ function saveProgram_(program, items) {
   })[0];
 
   const coach = resolveCoach_(program.coach_id || program.coachId || existing && existing.coach_id || "");
+  const hasTargetStudentIds = Object.prototype.hasOwnProperty.call(program, "target_student_ids")
+    || Object.prototype.hasOwnProperty.call(program, "targetStudentIds");
+  const targetStudentIds = hasTargetStudentIds
+    ? normalizeProgramStudentIds_(program.target_student_ids || program.targetStudentIds || "")
+    : normalizeProgramStudentIds_(existing && existing.target_student_ids || "");
 
   const record = {
     program_id: id,
@@ -600,7 +612,8 @@ function saveProgram_(program, items) {
     notes: program.notes || "",
     published: String(Boolean(program.published || existing && truthy_(existing.published))),
     created_at: existing && existing.created_at || now,
-    updated_at: now
+    updated_at: now,
+    target_student_ids: targetStudentIds.join(",")
   };
 
   upsertRow_(SHEETS.programs, "program_id", record);
@@ -611,13 +624,50 @@ function publishProgram_(programId, coachId) {
   const coachPrograms = readTable_(SHEETS.programs).filter(function(row) {
     return row.coach_id === coachId;
   });
+  const targetProgram = coachPrograms.filter(function(row) {
+    return row.program_id === programId;
+  })[0] || null;
+  const targetStudentIds = normalizeProgramStudentIds_(targetProgram && targetProgram.target_student_ids || "");
 
   coachPrograms.forEach(function(row) {
+    const rowStudentIds = normalizeProgramStudentIds_(row.target_student_ids || "");
+    const shouldPublishTarget = row.program_id === programId;
+    const shouldUnpublish = targetStudentIds.length
+      ? rowStudentIds.some(function(studentId) {
+          return targetStudentIds.indexOf(studentId) !== -1;
+        })
+      : rowStudentIds.length === 0;
+    if (!shouldPublishTarget && !shouldUnpublish) {
+      return;
+    }
     updateRow_(SHEETS.programs, "program_id", row.program_id, {
-      published: String(row.program_id === programId),
+      published: String(shouldPublishTarget),
       updated_at: nowString_()
     });
   });
+}
+
+function normalizeProgramStudentIds_(value) {
+  const rawIds = Array.isArray(value)
+    ? value
+    : String(value || "").split(/[,，\n]/);
+  const seen = {};
+  return rawIds
+    .map(function(id) {
+      return String(id || "").trim();
+    })
+    .filter(function(id) {
+      if (!id || seen[id]) {
+        return false;
+      }
+      seen[id] = true;
+      return true;
+    });
+}
+
+function isProgramAvailableForStudent_(program, studentId) {
+  const targetIds = normalizeProgramStudentIds_(program && program.target_student_ids || "");
+  return !targetIds.length || targetIds.indexOf(studentId) !== -1;
 }
 
 function replaceProgramItems_(programId, items) {

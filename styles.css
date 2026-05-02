@@ -373,6 +373,52 @@ body[data-app-mode="admin"] .main-tabs {
   margin-bottom: 16px;
 }
 
+.program-target-field {
+  display: grid;
+  gap: 10px;
+}
+
+.program-target-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 12px;
+  font-weight: 800;
+}
+
+.program-target-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.program-target-list:empty::before {
+  content: "目前沒有可指定的學生";
+  color: var(--muted);
+  font-size: 0.9rem;
+}
+
+.program-target-option {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 38px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--ink);
+  cursor: pointer;
+}
+
+.program-target-option input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--brand);
+}
+
 .span-2 {
   grid-column: span 2;
 }
