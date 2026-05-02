@@ -15,7 +15,7 @@
   const READ_ONLY_DEFAULT_COACH_CODE = "MO001";
   const READ_ONLY_DEFAULT_COACH_NAME = "Monster Chang";
   const READ_ONLY_MONTH_LOOKAHEAD = 1;
-  const DEFAULT_LEAVE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxJV_y__nD9nD-6AepZFENxrkQbJv_h3cq59pWaCk2pudGaY5ew5v5WJ_N9zDaj_B7WVg/exec";
+  const DEFAULT_LEAVE_APPS_SCRIPT_URL = "https://script.google.com/macros/s/AKfycbxx3EPIOWJPl9ItPa9BgxytePr7dpOKtjJAfYuCHV-JwZZyAVjcnicHm3XxV2nMt6E5/exec";
   const PAYMENT_STATUS_LABELS = {
     unknown: "未註記",
     paid: "已繳費",
