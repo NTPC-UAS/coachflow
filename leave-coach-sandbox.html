@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0004">
+  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0005">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -42,6 +42,18 @@
     }
     h1 { margin: 0 0 8px; font-size: 28px; }
     .sub { margin: 0 0 16px; color: var(--muted); }
+    .operation-status {
+      border: 1px solid #fed7aa;
+      background: #ffffff;
+      color: #9a3412;
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin: 0 0 14px;
+      font-weight: 700;
+      box-shadow: 0 10px 24px rgba(154, 52, 18, 0.08);
+    }
+    .operation-status[data-tone="success"] { border-color: #86efac; background: #f0fdf4; color: #166534; }
+    .operation-status[data-tone="warning"] { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
     .grid {
       display: grid;
       grid-template-columns: repeat(auto-fit, minmax(360px, 1fr));
@@ -420,6 +432,7 @@
     <div class="banner">教練頁：輸入教練代碼可管理請假；輸入 read-only 只能查看教練月曆。</div>
     <h1>請假 / 補課系統（教練）</h1>
     <p class="sub">輸入 read-only 會載入 Monster Chang 的唯讀月曆，不會顯示任何修改功能。</p>
+    <div class="operation-status" id="ui-status-text" role="status" aria-live="polite">系統待命，登入後會自動同步 Google 日曆。</div>
 
     <section class="card">
       <span class="role">教練端</span>
@@ -605,12 +618,12 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260502-0004"></script>
-  <script src="leave-sandbox.js?v=20260502-0004"></script>
+  <script src="config.js?v=20260502-0005"></script>
+  <script src="leave-sandbox.js?v=20260502-0005"></script>
   <script>
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0004").catch((error) => {
+        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0005").catch((error) => {
           console.warn("CoachFlow coach PWA registration failed:", error);
         });
       });

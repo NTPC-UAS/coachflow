@@ -698,6 +698,17 @@
   function setUiStatus(message) {
     if (el.uiStatusText) {
       el.uiStatusText.textContent = String(message || "");
+      el.uiStatusText.hidden = !String(message || "").trim();
+    }
+  }
+
+  function notifyUser(message, tone = "info") {
+    if (!message) {
+      return;
+    }
+    setUiStatus(message);
+    if (el.uiStatusText) {
+      el.uiStatusText.dataset.tone = tone;
     }
   }
 
@@ -2409,6 +2420,7 @@
     let totalCreated = 0;
     let totalRemovedPlaceholders = 0;
     let syncedAny = false;
+    let completionStats = { changed: false, count: 0, studentCodes: [] };
     for (const monthStart of monthStarts) {
       const monthRange = getMonthSyncRange(monthStart);
       try {
@@ -2447,10 +2459,22 @@
       ensureLessonCalendarEventIds();
       ensureParticipantEmails();
       ensureStudentBillingProfiles();
+      completionStats = markAutoCompletedLessonsForBilling({
+        coachCode: activeCoachCode,
+        studentCode: activeStudentCode,
+        sourceLabel: "學生端日曆同步"
+      });
       saveState();
-      addLog(`[日曆同步] 學生端已自動同步 Google 課程：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆。`);
+      const completedText = completionStats.count ? `，已上課扣堂 ${completionStats.count} 堂` : "";
+      addLog(`[日曆同步] 學生端已自動同步 Google 課程：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆${completedText}。`);
+      notifyUser(`已同步 Google 日曆，並更新今日/已過時間的上課與扣堂狀態${completedText}。`, "success");
+      completionStats.studentCodes.forEach((code) => {
+        maybeSendChargeReminder(code, "auto_completed_lesson").catch((error) => {
+          console.error("billing reminder failed:", error);
+        });
+      });
     }
-    return syncedAny;
+    return syncedAny || completionStats.changed;
   }
 
   async function syncCoachCalendarEventsFromGoogle(options = {}) {
@@ -2529,12 +2553,23 @@
       ensureLessonCalendarEventIds();
       ensureParticipantEmails();
       ensureStudentBillingProfiles();
+      const completionStats = markAutoCompletedLessonsForBilling({
+        coachCode,
+        sourceLabel: "教練端日曆同步"
+      });
       saveState();
-      const summary = `已自動同步 Google 日曆：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆。`;
+      const completedText = completionStats.count ? `，已上課扣堂 ${completionStats.count} 堂` : "";
+      const summary = `已自動同步 Google 日曆：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆${completedText}。`;
       addLog(`[日曆同步] 教練端${summary}`);
+      notifyUser(summary, "success");
       if (options.showStatus && el.coachCalendarSyncText) {
         el.coachCalendarSyncText.textContent = summary;
       }
+      completionStats.studentCodes.forEach((code) => {
+        maybeSendChargeReminder(code, "auto_completed_lesson").catch((error) => {
+          console.error("billing reminder failed:", error);
+        });
+      });
     }
     return syncedAny;
   }
@@ -2982,17 +3017,20 @@
     }
     if (!String(finalPayload.to || "").trim()) {
       addLog(`[Email] ${label} 已略過：缺少收件人（請設定 defaultNotifyEmail 或學生/教練 email）。`);
+      notifyUser(`${label} 未寄出：缺少收件人 Email。`, "warning");
       return false;
     }
     try {
       const result = await callAppsScriptApi("sendEmail", { template, ...finalPayload });
       addLog(`[Email] ${label} 已送出${result.mock ? "（模擬）" : ""}`);
+      notifyUser(`${label} 已寄出。`, "success");
       saveState();
       return true;
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
       enqueueCompensationTask("sendEmail", { template, ...finalPayload }, message);
       addLog(`[Email] ${label} 發送失敗：${message}`);
+      notifyUser(`${label} 發送失敗，已排入補償任務。`, "warning");
       return false;
     }
   }
@@ -3161,7 +3199,7 @@
     const lessons = state.lessons
       .filter((lesson) => lesson.studentCode === studentCode && lesson.attendanceStatus !== "calendar-removed")
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
-    const chargedLessons = lessons.filter((lesson) => lesson.charged);
+    const chargedLessons = lessons.filter(isLessonChargedForBilling);
     const startCount = toNonNegativeInt(student?.chargeStartCount, 0);
     return {
       student,
@@ -3359,6 +3397,7 @@
     );
     saveState();
     renderChargePanel();
+    notifyUser(`學生 ${student.name || student.code} 的通知 Email 已儲存。`, "success");
   }
 
   function saveChargeStartCount() {
@@ -3375,6 +3414,7 @@
     addLog(`[計費] ${student.code} 起始堂數調整為 ${nextCount}。`);
     saveState();
     renderChargePanel();
+    notifyUser(`已儲存 ${student.name || student.code} 的起始堂數：${nextCount}。`, "success");
     maybeSendChargeReminder(student.code, "set_base_count").catch((error) => {
       console.error("billing reminder failed:", error);
     });
@@ -3458,6 +3498,7 @@
     );
     saveState();
     renderChargePanel();
+    notifyUser(`已更新 ${student.name || student.code} 的繳費狀態：${getPaymentStatusLabel(nextStatus)}。`, "success");
     if (nextStatus === "paid") {
       if (el.chargePaymentSaveBtn) {
         el.chargePaymentSaveBtn.disabled = true;
@@ -3569,10 +3610,12 @@
       return;
     }
 
+    notifyUser("正在送出請假：先確認並刪除 Google 日曆上的這一堂課...", "info");
     try {
       await tryDeleteCalendarEventForLesson(lesson, "student_normal_leave", true);
     } catch (error) {
       alert(String(error?.message || "Google 日曆操作失敗，請稍後再試。"));
+      notifyUser("請假失敗：Google 日曆刪除沒有完成。", "warning");
       return;
     }
 
@@ -3584,6 +3627,8 @@
       coachCode: lesson.coachCode,
       type: "normal",
       submittedAt: new Date().toISOString(),
+      submittedBy: activeStudentCode,
+      submittedByRole: "student",
       makeupEligible: true
     };
     state.leaveRequests.push(leaveRecord);
@@ -3592,6 +3637,7 @@
     addLog(`學生 ${lesson.studentCode} 送出請假（課程 ${lesson.id}）。`);
     saveState();
     renderAll();
+    notifyUser("Google 日曆已刪除，請假紀錄已建立，正在同步雲端與寄送確認信...", "info");
     try {
       await pushCloudLeaveRecord(leaveRecord, lesson);
       addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
@@ -3607,18 +3653,41 @@
       addLog(`[Email] ${lesson.studentCode} 未設定學生 Email，請於計費面板補上學生通知 Email。`);
       saveState();
     }
-    await trySendEmailNotice(
+    const emailPayload = {
+      studentCode: lesson.studentCode,
+      coachCode: lesson.coachCode,
+      studentEmail,
+      coachEmail,
+      lessonId: lesson.id,
+      lessonStartAt: lesson.startAt,
+      leaveId
+    };
+    leaveRecord.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
+    const emailSent = await trySendEmailNotice(
       "leave_submitted",
-      {
-        studentCode: lesson.studentCode,
-        coachCode: lesson.coachCode,
-        studentEmail,
-        coachEmail,
-        lessonId: lesson.id,
-        lessonStartAt: lesson.startAt,
-        leaveId
-      },
+      emailPayload,
       `學生 ${lesson.studentCode} 請假通知`
+    );
+    const emailAt = new Date().toISOString();
+    leaveRecord.emailNoticeStatus = emailSent ? "sent" : "queued-or-skipped";
+    if (emailSent) {
+      leaveRecord.emailNoticeSentAt = emailAt;
+    } else {
+      leaveRecord.emailNoticeQueuedAt = emailAt;
+    }
+    saveState();
+    try {
+      await pushCloudLeaveRecord(leaveRecord, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 上傳 Email 狀態失敗：${String(error?.message || "未知錯誤")}`);
+      saveState();
+    }
+    renderAll();
+    notifyUser(
+      emailSent
+        ? `請假完成：${getTimeText(lesson.startAt)} 課程已刪除，確認信已寄出。`
+        : `請假完成：${getTimeText(lesson.startAt)} 課程已刪除，但 Email 尚未成功寄出，請檢查收件人或補償任務。`,
+      emailSent ? "success" : "warning"
     );
   }
 
@@ -3647,10 +3716,12 @@
       return;
     }
 
+    notifyUser(`正在代 ${studentName} 請假：刪除 Google 日曆課程中...`, "info");
     try {
       await tryDeleteCalendarEventForLesson(lesson, "coach_student_normal_leave", true);
     } catch (error) {
       alert(String(error?.message || "Google 日曆刪除失敗，請稍後再試。"));
+      notifyUser("代學生請假失敗：Google 日曆刪除沒有完成。", "warning");
       return;
     }
 
@@ -3710,6 +3781,12 @@
     }
     saveState();
     renderAll();
+    notifyUser(
+      sent
+        ? `代學生請假完成：${studentName} 的確認信已寄出。`
+        : `代學生請假完成，但 Email 尚未成功寄出，請檢查補償任務。`,
+      sent ? "success" : "warning"
+    );
   }
 
   async function cancelNormalLeaveByStudent(lessonId) {
@@ -3757,6 +3834,7 @@
     lesson.attendanceStatus = "scheduled";
     lesson.calendarOccupied = true;
     lesson.charged = false;
+    notifyUser("正在取消請假並還原 Google 日曆課程...", "info");
     await tryCreateCalendarEventForLesson(lesson, "student_cancel_leave", false);
 
     addLog(`學生 ${activeStudentCode} 已取消課程 ${lesson.id} 的請假。`);
@@ -3778,6 +3856,7 @@
       },
       `學生 ${lesson.studentCode} 取消請假通知`
     );
+    notifyUser("取消請假流程已完成，課程已還原。", "success");
   }
 
   function getCycleSlots(leave) {
@@ -3956,6 +4035,7 @@
     addLog(`教練 ${activeCoachCode} 新增請假時段 ${formatDateTime(startAt)}-${getTimeText(endAt)}，影響課程 ${impactedLessons.length} 堂、退回待審 ${impactedPendingRequests.length} 筆。`);
     saveState();
     renderAll();
+    notifyUser(`教練請假時段已新增，影響課程 ${impactedLessons.length} 堂。`, "success");
   }
 
   async function removeCoachLeaveBlock(blockId) {
@@ -4000,6 +4080,7 @@
     addLog(`教練 ${activeCoachCode} 移除請假時段 ${formatDateTime(block.startAt)}-${getTimeText(block.endAt || block.startAt)}。`);
     saveState();
     renderAll();
+    notifyUser("教練請假時段已移除，原受影響課程已還原。", "success");
   }
 
   async function submitMakeupRequest() {
@@ -4044,6 +4125,7 @@
     addLog(`學生 ${leave.studentCode} 送出補課申請：${formatDateTime(startAt)}。`);
     saveState();
     renderAll();
+    notifyUser("補課申請已送出，正在寄送待審通知...", "info");
     const emailPayload = {
       requestId: request.id,
       requestCode: request.code,
@@ -4068,6 +4150,12 @@
     }
     saveState();
     renderAll();
+    notifyUser(
+      sent
+        ? `補課申請已送出，待審通知已寄出。`
+        : `補課申請已送出，但 Email 尚未成功寄出，請稍後重送補償任務。`,
+      sent ? "success" : "warning"
+    );
   }
 
   async function cancelPending(requestId) {
@@ -4081,6 +4169,7 @@
     addLog(`學生 ${request.studentCode} 取消補課申請 ${request.id}。`);
     saveState();
     renderAll();
+    notifyUser("補課申請已取消，正在寄送通知...", "info");
     await trySendEmailNotice(
       "makeup_cancelled",
       {
@@ -4092,6 +4181,7 @@
       },
       `補課申請取消通知 ${request.code || request.id}`
     );
+    notifyUser("補課申請取消流程已完成。", "success");
   }
 
   async function revokeNormalLeave(lessonId) {
@@ -4143,6 +4233,7 @@
     addLog(`教練 ${activeCoachCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
+    notifyUser("已取消請假，正在還原 Google 日曆並寄送通知...", "info");
     try {
       await pushCloudLeaveRecord(leave, lesson);
     } catch (error) {
@@ -4159,6 +4250,7 @@
       },
       `教練取消請假通知 ${lesson.id}`
     );
+    notifyUser("取消請假流程已完成。", "success");
   }
 
   async function approveRequest(requestId) {
@@ -4197,6 +4289,7 @@
     addLog(`教練 ${request.coachCode} 已核准補課申請 ${request.id}。`);
     saveState();
     renderAll();
+    notifyUser("補課申請已核准，正在寄送通知...", "info");
     await trySendEmailNotice(
       "makeup_approved",
       {
@@ -4210,6 +4303,7 @@
       },
       `補課核准通知 ${request.code || request.id}`
     );
+    notifyUser("補課核准流程已完成。", "success");
   }
 
   async function rejectRequest(requestId, reason) {
@@ -4227,6 +4321,7 @@
     addLog(`教練 ${request.coachCode} 已退回補課申請 ${request.id}。`);
     saveState();
     renderAll();
+    notifyUser("補課申請已退回，正在寄送通知...", "info");
     await trySendEmailNotice(
       "makeup_rejected",
       {
@@ -4239,6 +4334,7 @@
       },
       `補課退回通知 ${request.code || request.id}`
     );
+    notifyUser("補課退回流程已完成。", "success");
   }
 
   function markLessonStatus(lessonId, statusType) {
@@ -4266,6 +4362,7 @@
     addLog(`教練 ${lesson.coachCode} 將課程 ${lesson.id} 標記為 ${target.attendanceStatus}。`);
     saveState();
     renderAll();
+    notifyUser(`課程狀態已更新：${getStatusPill(target.attendanceStatus).replace(/<[^>]+>/g, "")}。`, "success");
     if (!wasCharged && target.charged) {
       maybeSendChargeReminder(lesson.studentCode, "coach_mark_status").catch((error) => {
         console.error("billing reminder failed:", error);
@@ -4328,6 +4425,7 @@
     addLog(`教練 ${lesson.coachCode} 將課程 ${lesson.id} 由 ${formatDateTime(oldStartAt)} 調整為 ${formatDateTime(nextStartAt)}。`);
     saveState();
     renderAll();
+    notifyUser(`課程時間已調整為 ${formatDateTime(nextStartAt)}。`, "success");
   }
 
   function isLessonPastForStudent(lesson) {
@@ -4337,9 +4435,58 @@
     return new Date(lesson.startAt).getTime() <= Date.now();
   }
 
+  function isLessonAutoCompleted(lesson) {
+    return Boolean(
+      lesson &&
+      lesson.attendanceStatus === "scheduled" &&
+      lesson.calendarOccupied &&
+      isGoogleSyncLesson(lesson) &&
+      isLessonPastForStudent(lesson)
+    );
+  }
+
+  function isLessonChargedForBilling(lesson) {
+    return Boolean(lesson?.charged || isLessonAutoCompleted(lesson));
+  }
+
+  function markAutoCompletedLessonsForBilling(options = {}) {
+    const coachCode = normalizeParticipantCode(options.coachCode || "");
+    const studentCode = normalizeParticipantCode(options.studentCode || "");
+    const sourceLabel = options.sourceLabel || "日曆同步";
+    const affectedStudents = new Set();
+    const affectedLessons = [];
+
+    state.lessons.forEach((lesson) => {
+      if (coachCode && lesson.coachCode !== coachCode) {
+        return;
+      }
+      if (studentCode && lesson.studentCode !== studentCode) {
+        return;
+      }
+      if (!isLessonAutoCompleted(lesson) || lesson.charged) {
+        return;
+      }
+      lesson.charged = true;
+      lesson.completedAt = lesson.completedAt || new Date().toISOString();
+      lesson.completedBy = lesson.completedBy || "google-calendar-auto";
+      affectedStudents.add(lesson.studentCode);
+      affectedLessons.push(lesson);
+    });
+
+    if (affectedLessons.length) {
+      addLog(`[扣堂] ${sourceLabel} 已自動計算已上課 ${affectedLessons.length} 堂並納入扣堂。`);
+    }
+
+    return {
+      changed: affectedLessons.length > 0,
+      count: affectedLessons.length,
+      studentCodes: Array.from(affectedStudents)
+    };
+  }
+
   function getStatusPill(status, lesson, viewMode) {
     let resolvedStatus = status;
-    if (status === "scheduled" && viewMode === "student" && isLessonPastForStudent(lesson)) {
+    if (status === "scheduled" && isLessonAutoCompleted(lesson)) {
       resolvedStatus = "completed";
     }
 
@@ -4400,7 +4547,7 @@
       return `<tr>
         <td>${formatDateTime(lesson.startAt)}</td>
         <td>${getStatusPill(lesson.attendanceStatus, lesson, "student")}${statusInfo}</td>
-        <td>${lesson.charged ? "是" : "否"}</td>
+        <td>${isLessonChargedForBilling(lesson) ? "是" : "否"}</td>
         <td>${cutoff}</td>
         <td>${actionHtml}</td>
       </tr>`;
@@ -4554,7 +4701,7 @@
           <td>${getTimeText(lesson.startAt)}</td>
           <td>${lesson.sourceType === "MAKEUP" ? "補課" : "原課"}</td>
           <td>${getStatusPill(lesson.attendanceStatus, lesson, "student")}${statusInfo}</td>
-          <td>${lesson.charged ? "是" : "否"}</td>
+          <td>${isLessonChargedForBilling(lesson) ? "是" : "否"}</td>
           <td>${cutoffText}</td>
           <td>${actionHtml}</td>
         </tr>
@@ -4591,7 +4738,7 @@
           </div>
           ${statusInfo}
           <div class="student-lesson-facts">
-            <div>扣堂：${lesson.charged ? "是" : "否"}</div>
+            <div>扣堂：${isLessonChargedForBilling(lesson) ? "是" : "否"}</div>
             <div>請假截止：${cutoffText}</div>
           </div>
           <div class="student-lesson-action">${actionHtml}</div>
@@ -5463,7 +5610,12 @@
   function getLastCompletedLesson(lessons) {
     const now = Date.now();
     const completedLessons = (lessons || [])
-      .filter((lesson) => new Date(lesson.startAt).getTime() <= now)
+      .filter((lesson) => (
+        new Date(lesson.startAt).getTime() <= now &&
+        lesson.attendanceStatus !== "leave-normal" &&
+        lesson.attendanceStatus !== "coach-leave" &&
+        lesson.attendanceStatus !== "calendar-removed"
+      ))
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
     return completedLessons[0] || null;
   }
@@ -5630,7 +5782,7 @@
     const ledgerRows = stats.chargedLessons.map((lesson) => `
       <tr>
         <td>${formatDateTime(lesson.startAt)}</td>
-        <td>${getStatusPill(lesson.attendanceStatus)}</td>
+        <td>${getStatusPill(lesson.attendanceStatus, lesson)}</td>
         <td>${lesson.sourceType === "MAKEUP" ? "補課" : "原課"}</td>
         <td>是</td>
       </tr>
@@ -5706,6 +5858,7 @@
         syncCoachflowRosterFromLocalState();
         const loaded = activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
         if (loaded) {
+          notifyUser("學生資料已載入，正在同步 Google 日曆與請假紀錄...", "info");
           let calendarChanged = false;
           try {
             calendarChanged = await syncStudentCalendarEventsFromGoogle();
@@ -5717,11 +5870,13 @@
             if (changed || calendarChanged) {
               renderAll();
             }
+            notifyUser("學生資料已更新完成，可以查看今日上課與請假狀態。", "success");
           } catch (error) {
             console.warn("Cloud leave sync failed for student login:", error);
             if (calendarChanged) {
               renderAll();
             }
+            notifyUser("學生資料已載入，但雲端請假紀錄同步失敗，請稍後再試。", "warning");
           }
         }
       });
@@ -5739,6 +5894,7 @@
         if (!loaded) {
           return;
         }
+        notifyUser("教練資料已載入，正在同步雲端資料與 Google 日曆...", "info");
         const syncFromCloud = async () => {
           const cloudChanged = await syncCoachflowRosterFromCloud();
           const localChanged = syncCoachflowRosterFromLocalState();
@@ -5775,11 +5931,13 @@
           if (calendarChanged) {
             renderAll();
           }
+          notifyUser("教練資料與 Google 日曆同步完成。", "success");
         } catch (error) {
           console.warn("Coach Google calendar sync failed for coach login:", error);
           if (el.coachCalendarSyncText) {
             el.coachCalendarSyncText.textContent = "自動同步 Google 日曆失敗，請稍後再試或手動同步。";
           }
+          notifyUser("教練資料已載入，但 Google 日曆同步失敗。", "warning");
         }
       });
     }

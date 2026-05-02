@@ -3,6 +3,7 @@ window.APP_CONFIG = {
   appsScriptUrl: "https://script.google.com/macros/s/AKfycbxuQXrFJ_pEBZ2Bh7miRjRHw1Bg6mNa-3RYnmoq-wbTdpLZaTpWjmCyGe4W5wsKfgQqKw/exec",
   leaveAppsScriptUrl: "https://script.google.com/macros/s/AKfycbxx3EPIOWJPl9ItPa9BgxytePr7dpOKtjJAfYuCHV-JwZZyAVjcnicHm3XxV2nMt6E5/exec",
   coachflowAppsScriptUrl: "https://script.google.com/macros/s/AKfycbxuQXrFJ_pEBZ2Bh7miRjRHw1Bg6mNa-3RYnmoq-wbTdpLZaTpWjmCyGe4W5wsKfgQqKw/exec",
+  defaultNotifyEmail: "hsnu115023@gmail.com",
   coachCalendarIds: {
     MO001: "tp15vijlf0p2se3o6j9c4qdvks@group.calendar.google.com"
   },

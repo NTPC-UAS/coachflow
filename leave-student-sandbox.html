@@ -35,6 +35,18 @@
     }
     h1 { margin: 0 0 8px; font-size: 28px; }
     .sub { margin: 0 0 16px; color: var(--muted); }
+    .operation-status {
+      border: 1px solid #bfdbfe;
+      background: #ffffff;
+      color: #1e3a8a;
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin: 0 0 14px;
+      font-weight: 700;
+      box-shadow: 0 10px 24px rgba(30, 64, 175, 0.08);
+    }
+    .operation-status[data-tone="success"] { border-color: #86efac; background: #f0fdf4; color: #166534; }
+    .operation-status[data-tone="warning"] { border-color: #fcd34d; background: #fffbeb; color: #92400e; }
     .card {
       border: 1px solid var(--line);
       border-radius: 14px;
@@ -379,6 +391,7 @@
     <div class="banner">學生測試頁：僅提供學生操作，資料與教練頁共用。</div>
     <h1>請假 / 補課測試頁（學生）</h1>
     <p class="sub">可登入學生帳號、在月曆選日期送出請假，並提出補課申請。</p>
+    <div class="operation-status" id="ui-status-text" role="status" aria-live="polite">系統待命，登入後會自動同步 Google 日曆。</div>
 
     <section class="card">
       <span class="role">學生端</span>
@@ -452,8 +465,8 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260502-0004"></script>
-  <script src="leave-sandbox.js?v=20260502-0004"></script>
+  <script src="config.js?v=20260502-0005"></script>
+  <script src="leave-sandbox.js?v=20260502-0005"></script>
 </body>
 </html>
 
