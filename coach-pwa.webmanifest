@@ -2,7 +2,7 @@
   "name": "CoachFlow 教練請假系統",
   "short_name": "CoachFlow教練",
   "description": "CoachFlow 教練端請假、補課與月曆管理",
-  "start_url": "./leave-coach-sandbox.html?v=20260502-0007&source=coach-pwa",
+  "start_url": "./leave-coach-sandbox.html?v=20260502-0008&source=coach-pwa",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -36,7 +36,7 @@
     {
       "name": "教練請假系統",
       "short_name": "請假",
-      "url": "./leave-coach-sandbox.html?v=20260502-0007&source=coach-pwa-shortcut",
+      "url": "./leave-coach-sandbox.html?v=20260502-0008&source=coach-pwa-shortcut",
       "icons": [
         {
           "src": "./coachflow-coach-icon-192.png",

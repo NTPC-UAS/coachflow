@@ -1,9 +1,9 @@
-const CACHE_NAME = "coachflow-coach-20260502-0007";
+const CACHE_NAME = "coachflow-coach-20260502-0008";
 const CORE_ASSETS = [
-  "./leave-coach-sandbox.html?v=20260502-0007",
-  "./config.js?v=20260502-0007",
-  "./leave-sandbox.js?v=20260502-0007",
-  "./coach-pwa.webmanifest?v=20260502-0007",
+  "./leave-coach-sandbox.html?v=20260502-0008",
+  "./config.js?v=20260502-0008",
+  "./leave-sandbox.js?v=20260502-0008",
+  "./coach-pwa.webmanifest?v=20260502-0008",
   "./coachflow-coach-icon-192.png",
   "./coachflow-coach-icon-512.png",
   "./coachflow-coach-icon.svg"
@@ -42,6 +42,6 @@ self.addEventListener("fetch", (event) => {
         caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
         return response;
       })
-      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./leave-coach-sandbox.html?v=20260502-0007")))
+      .catch(() => caches.match(event.request).then((cached) => cached || caches.match("./leave-coach-sandbox.html?v=20260502-0008")))
   );
 });

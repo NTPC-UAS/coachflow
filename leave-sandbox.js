@@ -2747,6 +2747,7 @@
             `已繳到堂數：${payload.paidThroughCount ?? "-"}`,
             `本期已扣：${payload.currentCycleChargedCount ?? "-"} / ${CHARGE_REMINDER_STEP}`,
             `下次應繳門檻：第 ${payload.nextPaymentDueCount ?? "-"} 堂`,
+            `距下次繳費：${payload.remainingToNextPayment ?? "-"} 堂`,
             "",
             "此信件由 CoachFlow 請假系統自動發送。"
           ].join("\n")
@@ -2767,6 +2768,7 @@
             `已繳到堂數：${payload.paidThroughCount ?? "-"}`,
             `本期已扣：${payload.currentCycleChargedCount ?? "-"} / ${CHARGE_REMINDER_STEP}`,
             `下次應繳門檻：第 ${payload.nextPaymentDueCount ?? "-"} 堂`,
+            `距下次繳費：${payload.remainingToNextPayment ?? "-"} 堂`,
             `繳費狀態：${payload.paymentStatusLabel || "-"}`,
             `繳費註記：${payload.paymentNote || "無"}`,
             "",
@@ -2789,6 +2791,8 @@
             `導入前已扣堂數：${payload.baseChargedCount ?? "-"}`,
             `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
             `已結算到第 ${payload.paidThroughCount ?? "-"} 堂`,
+            `本期已扣：${payload.currentCycleChargedCount ?? "-"} / ${CHARGE_REMINDER_STEP}`,
+            `距下次繳費：${payload.remainingToNextPayment ?? "-"} 堂`,
             `繳費狀態：${payload.paymentStatusLabel || "-"}`,
             `繳費註記：${payload.paymentNote || "無"}`,
             "",
@@ -3099,8 +3103,9 @@
           lesson.charged
         ))
         .length;
+      const existingSystemChargedCount = Math.max(0, existingChargedCount - existingStartCount);
       const fallbackPaidThrough = existingStatus === "paid"
-        ? existingStartCount + existingChargedCount
+        ? getPaidQuotaCeiling(existingSystemChargedCount)
         : 0;
       const normalized = {
         ...student,
@@ -3231,11 +3236,17 @@
     const lessons = state.lessons
       .filter((lesson) => lesson.studentCode === studentCode && lesson.attendanceStatus !== "calendar-removed")
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
-    const chargedLessons = lessons.filter(isLessonChargedForBilling);
     const startCount = toNonNegativeInt(student?.chargeStartCount, 0);
+    const rawChargedLessons = lessons
+      .filter(isLessonChargedForBilling)
+      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    const chargedLessons = rawChargedLessons
+      .slice(Math.min(startCount, rawChargedLessons.length))
+      .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
     return {
       student,
       lessons,
+      rawChargedLessons,
       chargedLessons,
       startCount,
       totalChargedCount: startCount + chargedLessons.length,
@@ -3246,21 +3257,53 @@
     };
   }
 
+  function getPaidQuotaCeiling(systemChargedCount) {
+    const chargedCount = toNonNegativeInt(systemChargedCount, 0);
+    if (chargedCount <= 0) {
+      return CHARGE_REMINDER_STEP;
+    }
+    return Math.ceil(chargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
+  }
+
+  function normalizePaidQuotaCount(student, startCount) {
+    const rawPaidThroughCount = toNonNegativeInt(student?.paidThroughCount, 0);
+    const importedCount = toNonNegativeInt(startCount, 0);
+    const legacyAdjustedCount = rawPaidThroughCount - importedCount;
+    if (
+      rawPaidThroughCount > 0 &&
+      importedCount > 0 &&
+      rawPaidThroughCount % CHARGE_REMINDER_STEP !== 0 &&
+      legacyAdjustedCount > 0
+    ) {
+      return getPaidQuotaCeiling(legacyAdjustedCount);
+    }
+    return rawPaidThroughCount;
+  }
+
+  function getNextPaidQuotaCount(systemChargedCount) {
+    const chargedCount = toNonNegativeInt(systemChargedCount, 0);
+    return (Math.floor(chargedCount / CHARGE_REMINDER_STEP) + 1) * CHARGE_REMINDER_STEP;
+  }
+
   function getStudentBillingCycle(stats) {
     const student = stats?.student;
-    const totalChargedCount = toNonNegativeInt(stats?.totalChargedCount, 0);
-    const paidThroughCount = Math.min(
-      toNonNegativeInt(student?.paidThroughCount, 0),
-      totalChargedCount
-    );
-    const currentCycleChargedCount = Math.max(0, totalChargedCount - paidThroughCount);
-    const nextPaymentDueCount = paidThroughCount + CHARGE_REMINDER_STEP;
-    const remainingToNextPayment = Math.max(0, nextPaymentDueCount - totalChargedCount);
-    const isPaymentDue = currentCycleChargedCount >= CHARGE_REMINDER_STEP;
+    const systemChargedCount = toNonNegativeInt(stats?.chargedLessons?.length, 0);
     const storedStatus = normalizePaymentStatus(student?.paymentStatus);
+    const storedPaidQuotaCount = normalizePaidQuotaCount(student, stats?.startCount);
+    const paidThroughCount = storedPaidQuotaCount || (storedStatus === "paid" ? CHARGE_REMINDER_STEP : 0);
+    const activeQuotaCount = paidThroughCount || CHARGE_REMINDER_STEP;
+    const cycleStartCount = Math.max(0, activeQuotaCount - CHARGE_REMINDER_STEP);
+    const currentCycleChargedCount = Math.min(
+      CHARGE_REMINDER_STEP,
+      Math.max(0, systemChargedCount - cycleStartCount)
+    );
+    const nextPaymentDueCount = activeQuotaCount;
+    const remainingToNextPayment = Math.max(0, activeQuotaCount - systemChargedCount);
+    const isPaymentDue = systemChargedCount >= activeQuotaCount && systemChargedCount > 0;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
     return {
       paidThroughCount,
+      systemChargedCount,
       currentCycleChargedCount,
       nextPaymentDueCount,
       remainingToNextPayment,
@@ -3469,7 +3512,7 @@
         totalChargedCount: stats.totalChargedCount,
         baseChargedCount: stats.startCount,
         systemChargedCount: stats.chargedLessons.length,
-        paidThroughCount: toNonNegativeInt(student.paidThroughCount, 0),
+        paidThroughCount: billingCycle.paidThroughCount,
         currentCycleChargedCount: billingCycle.currentCycleChargedCount,
         nextPaymentDueCount: billingCycle.nextPaymentDueCount,
         remainingToNextPayment: billingCycle.remainingToNextPayment,
@@ -3487,7 +3530,7 @@
       const logEntry = {
         id: newId("BILLMAIL"),
         milestone: stats.totalChargedCount,
-        label: `匯款確認（已結算至第 ${toNonNegativeInt(student.paidThroughCount, 0)} 堂）`,
+        label: `匯款確認（已繳到第 ${billingCycle.paidThroughCount} 堂）`,
         status: sent ? "success" : "failed",
         sentAt: new Date().toISOString(),
         to: recipientsText,
@@ -3517,16 +3560,19 @@
     const nextStatus = normalizePaymentStatus(el.chargePaymentStatusSelect?.value);
     const note = String(el.chargePaymentNoteInput?.value || "").trim();
     const stats = getStudentChargeStats(student.code);
-    const settledThrough = stats.totalChargedCount;
+    const billingCycle = getStudentBillingCycle(stats);
+    const nextPaidThrough = nextStatus === "paid"
+      ? getNextPaidQuotaCount(billingCycle.systemChargedCount)
+      : billingCycle.paidThroughCount;
     student.paymentStatus = nextStatus;
     student.paymentNote = note;
     student.paymentConfirmedAt = new Date().toISOString();
     student.paymentConfirmedBy = activeCoachCode || "SYSTEM";
     if (nextStatus === "paid") {
-      student.paidThroughCount = settledThrough;
+      student.paidThroughCount = nextPaidThrough;
     }
     addLog(
-      `[計費] ${student.code} 繳費狀態更新為 ${getPaymentStatusLabel(nextStatus)}（${student.paymentConfirmedBy}，已結算至第 ${toNonNegativeInt(student.paidThroughCount, 0)} 堂）。`
+      `[計費] ${student.code} 繳費狀態更新為 ${getPaymentStatusLabel(nextStatus)}（${student.paymentConfirmedBy}，已繳到第 ${nextStatus === "paid" ? nextPaidThrough : billingCycle.paidThroughCount} 堂）。`
     );
     saveState();
     renderChargePanel();
@@ -5787,7 +5833,7 @@
       <div class="metric"><div class="k">累計已扣堂</div><div class="v">${stats.totalChargedCount}</div></div>
       <div class="metric"><div class="k">已繳到堂數</div><div class="v">${billingCycle.paidThroughCount}</div></div>
       <div class="metric"><div class="k">本期已扣</div><div class="v">${billingCycle.currentCycleChargedCount}/${CHARGE_REMINDER_STEP}</div></div>
-      <div class="metric"><div class="k">下次應繳門檻</div><div class="v">${billingCycle.nextPaymentDueCount}</div></div>
+      <div class="metric"><div class="k">距下次繳費</div><div class="v">${billingCycle.remainingToNextPayment}</div></div>
       <div class="metric"><div class="k">繳費狀態</div><div class="v">${getPaymentStatusLabel(billingCycle.effectivePaymentStatus)}</div></div>
       <div class="metric"><div class="k">未到課次數</div><div class="v">${stats.noShowCount}</div></div>
       <div class="metric"><div class="k">臨時請假次數</div><div class="v">${stats.tempLeaveCount}</div></div>
