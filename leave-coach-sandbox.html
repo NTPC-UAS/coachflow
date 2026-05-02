@@ -3,6 +3,13 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="theme-color" content="#c2410c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
+  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0001">
+  <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
   <style>
     :root {
@@ -598,7 +605,16 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260501-0001"></script>
-  <script src="leave-sandbox.js?v=20260501-0001"></script>
+  <script src="config.js?v=20260502-0001"></script>
+  <script src="leave-sandbox.js?v=20260502-0001"></script>
+  <script>
+    if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
+      window.addEventListener("load", () => {
+        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0001").catch((error) => {
+          console.warn("CoachFlow coach PWA registration failed:", error);
+        });
+      });
+    }
+  </script>
 </body>
 </html>

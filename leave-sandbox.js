@@ -1140,7 +1140,11 @@
       lessonStartAt: targetLesson.startAt,
       type: leave.type || "normal",
       submittedAt: leave.submittedAt || new Date().toISOString(),
+      submittedBy: leave.submittedBy || "",
+      submittedByRole: leave.submittedByRole || "",
       makeupEligible: leave.makeupEligible !== false,
+      emailNoticeStatus: leave.emailNoticeStatus || "",
+      emailNoticeAt: leave.emailNoticeSentAt || leave.emailNoticeQueuedAt || "",
       revokedAt: leave.revokedAt || "",
       revokedBy: leave.revokedBy || ""
     };
@@ -1213,6 +1217,8 @@
         coachCode: record.coachCode,
         type: "normal",
         submittedAt: record.submittedAt || new Date().toISOString(),
+        submittedBy: record.submittedBy || "",
+        submittedByRole: record.submittedByRole || "",
         makeupEligible: record.makeupEligible !== false
       });
       changed = true;
@@ -2760,6 +2766,24 @@
           ].join("\n")
         };
       }
+      case "leave_submitted_by_coach": {
+        return {
+          subject: `[CoachFlow] 教練已代學生請假：${studentText}`,
+          body: [
+            "您好，",
+            "",
+            "教練已在 CoachFlow 代學生送出請假，系統已同步處理原課程。",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `原課時間：${lessonTimeText}`,
+            `請假編號：${leaveCode}`,
+            `代送者：${payload.submittedBy || payload.submittedByRole || "教練"}`,
+            "",
+            "如果資訊有誤，請直接聯絡教練確認。",
+            "本信件由 CoachFlow 請假系統自動寄出。"
+          ].join("\n")
+        };
+      }
       case "leave_cancelled_by_student": {
         return {
           subject: `[CoachFlow] 請假已取消｜${studentText}`,
@@ -3587,6 +3611,96 @@
     );
   }
 
+  async function applyNormalLeaveByCoach(lessonId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
+    const lesson = getLessonById(lessonId);
+    if (!lesson || lesson.coachCode !== activeCoachCode) {
+      alert("找不到課程。");
+      return;
+    }
+    if (!isGoogleSyncLesson(lesson) || !lesson.calendarOccupied || lesson.attendanceStatus !== "scheduled") {
+      alert("僅可代學生請假仍排在 Google 日曆上的原課。");
+      return;
+    }
+    if (getLeaveByLesson(lessonId)) {
+      alert("這堂課已經有請假紀錄。");
+      return;
+    }
+    const studentName = getStudentDisplayName(lesson.studentCode);
+    const confirmed = window.confirm(
+      `確定要幫 ${studentName} 申請 ${formatDateTime(lesson.startAt)} 的請假嗎？\n系統會刪除 Google 日曆這一堂課，並寄出確認信。`
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    try {
+      await tryDeleteCalendarEventForLesson(lesson, "coach_student_normal_leave", true);
+    } catch (error) {
+      alert(String(error?.message || "Google 日曆刪除失敗，請稍後再試。"));
+      return;
+    }
+
+    const leaveId = newId("LEAVE");
+    const submittedAt = new Date().toISOString();
+    const leaveRecord = {
+      id: leaveId,
+      lessonId,
+      studentCode: lesson.studentCode,
+      coachCode: lesson.coachCode,
+      type: "normal",
+      submittedAt,
+      submittedBy: activeCoachCode,
+      submittedByRole: "coach",
+      makeupEligible: true
+    };
+    state.leaveRequests.push(leaveRecord);
+    lesson.calendarOccupied = false;
+    lesson.attendanceStatus = "leave-normal";
+    addLog(`教練 ${activeCoachCode} 已代學生 ${lesson.studentCode} 請假：課程 ${lesson.id}。`);
+    saveState();
+    renderAll();
+
+    try {
+      await pushCloudLeaveRecord(leaveRecord, lesson);
+      addLog(`[雲端請假] 已同步教練代請假 ${leaveRecord.id}。`);
+      saveState();
+    } catch (error) {
+      const message = String(error?.message || "未知錯誤");
+      addLog(`[雲端請假] 教練代請假同步失敗：${message}`);
+      saveState();
+    }
+
+    const emailPayload = {
+      studentCode: lesson.studentCode,
+      coachCode: lesson.coachCode,
+      studentEmail: getStudentNoticeEmail(lesson.studentCode),
+      coachEmail: getCoachNoticeEmail(lesson.coachCode),
+      lessonId: lesson.id,
+      lessonStartAt: lesson.startAt,
+      leaveId,
+      submittedBy: activeCoachCode,
+      submittedByRole: "coach"
+    };
+    leaveRecord.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
+    const sent = await trySendEmailNotice(
+      "leave_submitted_by_coach",
+      emailPayload,
+      `教練代請假通知 ${lesson.studentCode} / ${lesson.id}`
+    );
+    const emailAt = new Date().toISOString();
+    leaveRecord.emailNoticeStatus = sent ? "sent" : "queued-or-skipped";
+    if (sent) {
+      leaveRecord.emailNoticeSentAt = emailAt;
+    } else {
+      leaveRecord.emailNoticeQueuedAt = emailAt;
+    }
+    saveState();
+    renderAll();
+  }
+
   async function cancelNormalLeaveByStudent(lessonId) {
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.studentCode !== activeStudentCode) {
@@ -3919,17 +4033,30 @@
     addLog(`學生 ${leave.studentCode} 送出補課申請：${formatDateTime(startAt)}。`);
     saveState();
     renderAll();
-    await trySendEmailNotice(
+    const emailPayload = {
+      requestId: request.id,
+      requestCode: request.code,
+      studentCode: request.studentCode,
+      coachCode: request.coachCode,
+      studentEmail: getStudentNoticeEmail(request.studentCode),
+      coachEmail: getCoachNoticeEmail(request.coachCode),
+      startAt: request.startAt
+    };
+    request.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
+    const sent = await trySendEmailNotice(
       "makeup_pending",
-      {
-        requestId: request.id,
-        requestCode: request.code,
-        studentCode: request.studentCode,
-        coachCode: request.coachCode,
-        startAt: request.startAt
-      },
+      emailPayload,
       `補課待審通知 ${request.code || request.id}`
     );
+    const emailAt = new Date().toISOString();
+    request.emailNoticeStatus = sent ? "sent" : "queued-or-skipped";
+    if (sent) {
+      request.emailNoticeSentAt = emailAt;
+    } else {
+      request.emailNoticeQueuedAt = emailAt;
+    }
+    saveState();
+    renderAll();
   }
 
   async function cancelPending(requestId) {
@@ -4725,9 +4852,13 @@
         </div>
       `;
     }
+    const coachStudentLeaveButton = lesson.attendanceStatus === "scheduled" && lesson.calendarOccupied && isGoogleSyncLesson(lesson)
+      ? `<button data-coach-lesson-id="${lesson.id}" data-coach-mark="student-leave" class="danger">代學生請假</button>`
+      : "";
     return `
       <div class="btn-row">
         <button data-coach-lesson-id="${lesson.id}" data-coach-mark="reschedule">調整時間</button>
+        ${coachStudentLeaveButton}
         <button data-coach-lesson-id="${lesson.id}" data-coach-mark="temporary">臨時請假</button>
         <button data-coach-lesson-id="${lesson.id}" data-coach-mark="noshow">未到課</button>
         <button data-coach-lesson-id="${lesson.id}" data-coach-mark="major">重大急事</button>
@@ -5846,6 +5977,10 @@
           }
           if (mark === "reschedule") {
             rescheduleLessonByCoach(lessonId);
+            return;
+          }
+          if (mark === "student-leave") {
+            applyNormalLeaveByCoach(lessonId);
             return;
           }
           markLessonStatus(lessonId, mark);

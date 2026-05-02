@@ -1,0 +1,49 @@
+{
+  "name": "CoachFlow 教練請假系統",
+  "short_name": "CoachFlow教練",
+  "description": "CoachFlow 教練端請假、補課與月曆管理",
+  "start_url": "./leave-coach-sandbox.html?v=20260502-0001&source=coach-pwa",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#fffaf5",
+  "theme_color": "#c2410c",
+  "categories": [
+    "productivity",
+    "education"
+  ],
+  "icons": [
+    {
+      "src": "./coachflow-coach-icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "./coachflow-coach-icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any maskable"
+    },
+    {
+      "src": "./coachflow-coach-icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any maskable"
+    }
+  ],
+  "shortcuts": [
+    {
+      "name": "教練請假系統",
+      "short_name": "請假",
+      "url": "./leave-coach-sandbox.html?v=20260502-0001&source=coach-pwa-shortcut",
+      "icons": [
+        {
+          "src": "./coachflow-coach-icon-192.png",
+          "sizes": "192x192",
+          "type": "image/png"
+        }
+      ]
+    }
+  ]
+}
