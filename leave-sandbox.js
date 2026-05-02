@@ -2741,7 +2741,7 @@
             `學生：${studentText}`,
             `教練：${coachText}`,
             `累積扣堂：${payload.totalChargedCount ?? "-"}`,
-            `起始堂數：${payload.baseChargedCount ?? "-"}`,
+            `導入前已扣堂數：${payload.baseChargedCount ?? "-"}`,
             `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
             `已繳到堂數：${payload.paidThroughCount ?? "-"}`,
             `本期已扣：${payload.currentCycleChargedCount ?? "-"} / ${CHARGE_REMINDER_STEP}`,
@@ -2761,7 +2761,7 @@
             `學生：${studentText}`,
             `教練：${coachText}`,
             `累積扣堂：${payload.totalChargedCount ?? "-"}`,
-            `起始堂數：${payload.baseChargedCount ?? "-"}`,
+            `導入前已扣堂數：${payload.baseChargedCount ?? "-"}`,
             `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
             `已繳到堂數：${payload.paidThroughCount ?? "-"}`,
             `本期已扣：${payload.currentCycleChargedCount ?? "-"} / ${CHARGE_REMINDER_STEP}`,
@@ -2785,7 +2785,7 @@
             `確認時間：${safeFormatNoticeDateTime(payload.confirmedAt)}`,
             `確認人：${payload.confirmedBy || "-"}`,
             `累積扣堂：${payload.totalChargedCount ?? "-"}`,
-            `起始堂數：${payload.baseChargedCount ?? "-"}`,
+            `導入前已扣堂數：${payload.baseChargedCount ?? "-"}`,
             `本次系統扣堂：${payload.systemChargedCount ?? "-"}`,
             `已結算到第 ${payload.paidThroughCount ?? "-"} 堂`,
             `繳費狀態：${payload.paymentStatusLabel || "-"}`,
@@ -3411,10 +3411,10 @@
     }
     const nextCount = toNonNegativeInt(el.chargeBaseCountInput?.value, 0);
     student.chargeStartCount = nextCount;
-    addLog(`[計費] ${student.code} 起始堂數調整為 ${nextCount}。`);
+    addLog(`[計費] ${student.code} 導入前已扣堂數調整為 ${nextCount}。`);
     saveState();
     renderChargePanel();
-    notifyUser(`已儲存 ${student.name || student.code} 的起始堂數：${nextCount}。`, "success");
+    notifyUser(`已儲存 ${student.name || student.code} 的導入前已扣堂數：${nextCount}。`, "success");
     maybeSendChargeReminder(student.code, "set_base_count").catch((error) => {
       console.error("billing reminder failed:", error);
     });
@@ -5750,7 +5750,7 @@
 
     el.chargeMetricsBox.innerHTML = `
       <div class="metric"><div class="k">系統課程數</div><div class="v">${stats.lessons.length}</div></div>
-      <div class="metric"><div class="k">起始堂數</div><div class="v">${stats.startCount}</div></div>
+      <div class="metric"><div class="k">導入前已扣堂</div><div class="v">${stats.startCount}</div></div>
       <div class="metric"><div class="k">已扣堂數（系統）</div><div class="v">${stats.chargedLessons.length}</div></div>
       <div class="metric"><div class="k">累計已扣堂</div><div class="v">${stats.totalChargedCount}</div></div>
       <div class="metric"><div class="k">已繳到堂數</div><div class="v">${billingCycle.paidThroughCount}</div></div>

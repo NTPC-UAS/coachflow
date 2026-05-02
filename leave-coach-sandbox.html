@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0005">
+  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0006">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -527,11 +527,11 @@
             <button id="charge-student-email-save-btn" type="button">儲存學生 Email</button>
             <button id="charge-email-send-btn" type="button">寄送計費 Email</button>
           </div>
-          <label>起始堂數（導入時）
+          <label>導入前已扣堂數
             <input id="charge-base-count-input" type="number" min="0" step="1" value="0">
           </label>
           <div style="display:flex; align-items:flex-end;">
-            <button id="charge-base-count-save-btn" type="button">儲存起始堂數</button>
+            <button id="charge-base-count-save-btn" type="button">儲存已扣堂數</button>
           </div>
           <label>繳費狀態
             <select id="charge-payment-status-select">
@@ -618,12 +618,12 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260502-0005"></script>
-  <script src="leave-sandbox.js?v=20260502-0005"></script>
+  <script src="config.js?v=20260502-0006"></script>
+  <script src="leave-sandbox.js?v=20260502-0006"></script>
   <script>
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0005").catch((error) => {
+        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0006").catch((error) => {
           console.warn("CoachFlow coach PWA registration failed:", error);
         });
       });
