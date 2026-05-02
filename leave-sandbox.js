@@ -9,6 +9,7 @@
   const CHARGE_REMINDER_STEP = 4;
   const MAX_CHARGE_REMINDER_LOGS = 24;
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
+  const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
   const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
   const LEAVE_PREFILL_MAX_AGE_MS = 10 * 60 * 1000;
   const READ_ONLY_ACCOUNT_CODE = "READONLY";
@@ -3125,6 +3126,37 @@
     if (changed) {
       saveState();
     }
+  }
+
+  function resetImportedChargedCountsOnce() {
+    state.migrations = state.migrations && typeof state.migrations === "object" ? state.migrations : {};
+    if (state.migrations[RESET_IMPORTED_CHARGED_COUNT_MIGRATION]) {
+      return false;
+    }
+
+    let resetCount = 0;
+    state.students = (state.students || []).map((student) => {
+      if (!student || typeof student !== "object") {
+        return student;
+      }
+      const currentCount = toNonNegativeInt(student.chargeStartCount, 0);
+      if (currentCount > 0) {
+        resetCount += 1;
+      }
+      return {
+        ...student,
+        chargeStartCount: 0
+      };
+    });
+    state.migrations[RESET_IMPORTED_CHARGED_COUNT_MIGRATION] = {
+      at: new Date().toISOString(),
+      resetCount
+    };
+    if (resetCount > 0) {
+      addLog(`[計費] 已將 ${resetCount} 位學生的導入前已扣堂數歸零，請手動重新輸入。`);
+    }
+    saveState();
+    return resetCount > 0;
   }
 
   function ensureParticipantEmails() {
@@ -6572,6 +6604,7 @@
     ensureLessonCalendarEventIds();
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
+    resetImportedChargedCountsOnce();
     syncCoachflowRosterFromLocalState();
 
     const cloudSyncPromise = (async () => {
