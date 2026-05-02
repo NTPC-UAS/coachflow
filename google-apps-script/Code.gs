@@ -191,6 +191,10 @@ function doPost(e) {
         publishProgram_(payload.programId, payload.coachId);
         return jsonResponse_(buildFullBootstrap_());
 
+      case "deleteProgram":
+        deleteProgram_(payload.programId);
+        return jsonResponse_(buildFullBootstrap_());
+
       case "submitWorkoutLogs":
         submitWorkoutLogs_(payload.logs || []);
         return jsonResponse_(buildFullBootstrap_());
@@ -645,6 +649,11 @@ function publishProgram_(programId, coachId) {
       updated_at: nowString_()
     });
   });
+}
+
+function deleteProgram_(programId) {
+  deleteRow_(SHEETS.programs, "program_id", programId);
+  deleteRowsByValue_(SHEETS.programItems, "program_id", programId);
 }
 
 function normalizeProgramStudentIds_(value) {

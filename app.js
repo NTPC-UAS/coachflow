@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260502-0010";
+const PUBLIC_APP_VERSION = "20260502-0011";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -821,6 +821,11 @@ async function publishProgramToCloud(program, items) {
     programId: program.id,
     coachId: program.coachId
   });
+  applyCloudPayloadToState(payload);
+}
+
+async function deleteProgramFromCloud(programId) {
+  const payload = await callCloudApi("deleteProgram", { programId });
   applyCloudPayloadToState(payload);
 }
 
@@ -1971,7 +1976,9 @@ function bindEvents() {
   document.querySelector("#save-program").addEventListener("click", saveProgram);
   document.querySelector("#publish-program").addEventListener("click", publishProgram);
   document.querySelector("#publish-targeted-program")?.addEventListener("click", publishTargetedProgram);
-  els.programTargetStudents?.addEventListener("change", () => {
+  els.programTargetStudents?.addEventListener("change", (event) => {
+    const input = event.target.closest("input[type='checkbox']");
+    input?.closest(".program-target-option")?.classList.toggle("is-selected", input.checked);
     setCoachEditorDirty(true);
   });
   els.programLibraryList?.addEventListener("click", handleProgramLibraryAction);
@@ -2939,8 +2946,9 @@ function renderProgramTargetStudents(selectedIds = []) {
 
   els.programTargetStudents.innerHTML = students
     .map((student) => `
-      <label class="program-target-option">
+      <label class="program-target-option ${selectedSet.has(student.id) ? "is-selected" : ""}">
         <input type="checkbox" value="${escapeHtml(student.id)}" ${selectedSet.has(student.id) ? "checked" : ""}>
+        <span class="program-target-check" aria-hidden="true"></span>
         <span>${escapeHtml(student.name)}</span>
       </label>
     `)
@@ -3473,6 +3481,7 @@ function renderProgramLibrary() {
                 <button class="ghost-button" type="button" data-copy-program="${program.id}">沿用成新課表</button>
                 <button class="ghost-button" type="button" data-edit-existing-program="${program.id}">編輯原課表</button>
                 <button class="ghost-button" type="button" data-publish-existing-program="${program.id}">設為目前課表</button>
+                <button class="ghost-button danger-button" type="button" data-delete-existing-program="${program.id}">刪除課表</button>
               </div>
             </article>
           `;
@@ -3551,7 +3560,7 @@ function comparePrograms(a, b, sortBy) {
 }
 
 async function handleProgramLibraryAction(event) {
-  const button = event.target.closest("[data-toggle-program-preview], [data-copy-program], [data-load-program], [data-edit-existing-program], [data-publish-existing-program]");
+  const button = event.target.closest("[data-toggle-program-preview], [data-copy-program], [data-load-program], [data-edit-existing-program], [data-publish-existing-program], [data-delete-existing-program]");
   if (!button) {
     return;
   }
@@ -3588,6 +3597,55 @@ async function handleProgramLibraryAction(event) {
     syncEditorPreviewState();
     switchCoachPanel("coach-editor");
     document.querySelector("#coach-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    return;
+  }
+
+  if (button.dataset.deleteExistingProgram) {
+    const programId = button.dataset.deleteExistingProgram;
+    const program = state.programs.find((item) => item.id === programId);
+    if (!program) {
+      return;
+    }
+
+    const confirmed = window.confirm(`確定要刪除「${program.code || "未命名課表"}」嗎？這會移除課表與課表項目，但不會刪除學生已送出的訓練紀錄。`);
+    if (!confirmed) {
+      return;
+    }
+
+    if (IS_CLOUD_MODE) {
+      try {
+        await deleteProgramFromCloud(programId);
+      } catch (error) {
+        console.warn("Cloud deleteProgram failed, falling back to local state:", error);
+        state.programs = state.programs.filter((item) => item.id !== programId);
+        state.programItems = state.programItems.filter((item) => item.programId !== programId);
+        persistState();
+      }
+    } else {
+      state.programs = state.programs.filter((item) => item.id !== programId);
+      state.programItems = state.programItems.filter((item) => item.programId !== programId);
+      persistState();
+    }
+
+    if (editingProgramId === programId) {
+      coachProgramEditorMode = "create";
+      editingProgramId = null;
+      seedEditorFromProgram(null);
+      setCoachEditorDirty(false);
+    }
+    if (expandedProgramLibraryId === programId) {
+      expandedProgramLibraryId = null;
+    }
+
+    renderCoachExerciseOptions();
+    renderProgramLibrary();
+    renderCoachToday();
+    renderCoachStudentLinks();
+    renderCoachStudentRoster();
+    renderStudentProgramOptions();
+    renderStudentHistoryFilters();
+    renderStudentSummary();
+    window.alert("課表已刪除，學生訓練紀錄已保留。");
     return;
   }
 
