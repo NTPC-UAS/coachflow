@@ -408,6 +408,41 @@ textarea:focus {
   font-weight: 800;
 }
 
+.ghost-button:disabled,
+.primary-button:disabled,
+.icon-button:disabled,
+.view-toggle-button:disabled {
+  cursor: not-allowed;
+  opacity: 0.62;
+  transform: none;
+}
+
+.ghost-button.is-busy,
+.primary-button.is-busy {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+}
+
+.ghost-button.is-busy::before,
+.primary-button.is-busy::before {
+  content: "";
+  width: 14px;
+  height: 14px;
+  flex: 0 0 auto;
+  border: 2px solid currentColor;
+  border-right-color: transparent;
+  border-radius: 999px;
+  animation: coachflow-spin 780ms linear infinite;
+}
+
+@keyframes coachflow-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .ghost-button,
 .icon-button {
   background: rgba(176, 97, 44, 0.08);

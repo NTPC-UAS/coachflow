@@ -680,6 +680,7 @@ function replaceMatchingWorkoutLog_(record) {
   const matched = existingRows.filter(function(row) {
     return row.student_id === record.student_id
       && row.program_id === record.program_id
+      && getWorkoutLogActivityDate_(row) === getWorkoutLogActivityDate_(record)
       && row.exercise === record.exercise;
   })[0];
 
@@ -848,6 +849,30 @@ function createId_(prefix) {
 
 function nowString_() {
   return Utilities.formatDate(new Date(), APP_TIME_ZONE, "yyyy-MM-dd HH:mm:ss");
+}
+
+function getWorkoutLogActivityDate_(row) {
+  const submittedAt = String(row.submitted_at || row.submittedAt || "").trim();
+  const submittedMatch = submittedAt.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (submittedMatch) {
+    return [
+      submittedMatch[1],
+      submittedMatch[2].padStart(2, "0"),
+      submittedMatch[3].padStart(2, "0")
+    ].join("-");
+  }
+
+  const programDate = String(row.program_date || row.programDate || "").trim();
+  const programMatch = programDate.match(/^(\d{4})[-/](\d{1,2})[-/](\d{1,2})/);
+  if (programMatch) {
+    return [
+      programMatch[1],
+      programMatch[2].padStart(2, "0"),
+      programMatch[3].padStart(2, "0")
+    ].join("-");
+  }
+
+  return programDate;
 }
 
 function truthy_(value) {

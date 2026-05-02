@@ -46,6 +46,10 @@ let studentAutoLoginPending = false;
 let studentEditNoticeTimer = null;
 let sessionStudentDraft = null;
 let sessionStudentProgramEditDraft = null;
+let coachLoginBusy = false;
+let studentLoginBusy = false;
+let studentLoadBusy = false;
+let studentSubmitBusy = false;
 
 function getAppMode() {
   const params = new URLSearchParams(window.location.search);
@@ -257,6 +261,10 @@ function getLogDateTimeSortKey(log) {
   }
   const date = getComparableDateKey(log?.programDate);
   return date ? `${date} 00:00:00` : "";
+}
+
+function getLogActivityDateKey(log) {
+  return getComparableDateKey(log?.submittedAt) || getComparableDateKey(log?.programDate);
 }
 
 function compareLogsByDateTimeDesc(a, b) {
@@ -885,7 +893,7 @@ function applyStaticCopy() {
   if (studentEntryNote) {
     studentEntryNote.textContent = "也可以直接使用專屬連結進入，系統會自動帶入你的身份。";
   }
-  if (els.confirmStudentAccess) setNodeText(els.confirmStudentAccess, "確認身份並載入今日課表");
+  if (els.confirmStudentAccess) setNodeText(els.confirmStudentAccess, "確認身份並載入本輪課表");
 
   setNodeText(document.querySelector("#coach-coaches .section-kicker"), "教練設定");
   setNodeText(document.querySelector("#coach-coaches h3"), "教練管理");
@@ -936,7 +944,7 @@ function applyStaticCopy() {
     els.confirmHistoryImportButton.textContent = "確認匯入";
   }
   setNodeText(document.querySelector("#coach-editor .section-kicker"), "課表編輯");
-  setNodeText(document.querySelector("#coach-editor h3"), "建立今日課表");
+  setNodeText(document.querySelector("#coach-editor h3"), "建立本輪課表");
   if (els.coachActiveCopy) {
     els.coachActiveCopy.textContent = "";
   }
@@ -951,7 +959,7 @@ function applyStaticCopy() {
   }
   if (els.programNotes) {
     setLabelText(els.programNotes.closest("label"), "課表備註");
-    els.programNotes.placeholder = "可填寫當日提醒或訓練重點";
+    els.programNotes.placeholder = "可填寫本輪提醒或訓練重點";
   }
   const addProgramItemButton = document.querySelector("#add-program-item");
   if (addProgramItemButton) addProgramItemButton.textContent = "新增一列";
@@ -959,11 +967,13 @@ function applyStaticCopy() {
   if (saveProgramButton) saveProgramButton.textContent = "儲存課表";
   const publishProgramButton = document.querySelector("#publish-program");
   if (publishProgramButton) publishProgramButton.textContent = "發布課表";
+  const coachTodayTab = document.querySelector('.sub-tab[data-coach-tab="coach-today"]');
+  if (coachTodayTab) coachTodayTab.textContent = "本週紀錄";
   setNodeText(document.querySelector("#coach-today .section-kicker"), "提交狀況");
-  setNodeText(document.querySelector("#coach-today h3"), "今日全班紀錄");
-  if (els.coachTodayDate) setLabelText(els.coachTodayDate.closest("label"), "查看日期");
+  setNodeText(document.querySelector("#coach-today h3"), "本輪全班紀錄");
+  if (els.coachTodayDate) setLabelText(els.coachTodayDate.closest("label"), "查看本輪日期");
   if (els.todayLogsSearch) {
-    setLabelText(els.todayLogsSearch.closest("label"), "搜尋今日紀錄");
+    setLabelText(els.todayLogsSearch.closest("label"), "搜尋本輪紀錄");
     els.todayLogsSearch.placeholder = "可搜尋學生姓名或動作";
   }
   setNodeText(document.querySelector("#coach-history .section-kicker"), "歷史查詢");
@@ -989,8 +999,8 @@ function applyStaticCopy() {
   setTableHeaders("#success-modal table", ["分類", "動作", "目標", "實際結果", "備註"]);
   setTableHeaders("#history-import-card table", ["學生姓名", "日期", "動作", "分類", "目標格式", "匯入狀態"]);
 
-  if (els.loadStudentProgramInline) els.loadStudentProgramInline.textContent = "載入今日課表";
-  if (els.loadStudentProgramMobile) els.loadStudentProgramMobile.textContent = "載入今日課表";
+  if (els.loadStudentProgramInline) els.loadStudentProgramInline.textContent = "載入本輪課表";
+  if (els.loadStudentProgramMobile) els.loadStudentProgramMobile.textContent = "載入本輪課表";
   if (els.editStudentProgramMobileTop) els.editStudentProgramMobileTop.textContent = "編輯課表項目";
   if (els.editStudentProgramMobile) els.editStudentProgramMobile.textContent = "編輯課表項目";
   if (els.openStudentHistoryMobile) els.openStudentHistoryMobile.textContent = "查看我的歷史紀錄";
@@ -1316,6 +1326,7 @@ const els = {
   openStudentLeaveSystemMobileSecondary: document.querySelector("#open-student-leave-system-mobile-secondary"),
   openStudentHistoryMobile: document.querySelector("#open-student-history-mobile"),
   changeStudentAccess: document.querySelector("#change-student-access"),
+  submitStudentLog: document.querySelector("#submit-student-log"),
   submitStudentLogMobile: document.querySelector("#submit-student-log-mobile"),
   studentMobileSubmitBar: document.querySelector("#student-mobile-submit-bar"),
   confirmModal: document.querySelector("#confirm-modal"),
@@ -1323,6 +1334,9 @@ const els = {
   confirmSummary: document.querySelector("#confirm-summary"),
   confirmCardList: document.querySelector("#confirm-card-list"),
   confirmBody: document.querySelector("#confirm-body"),
+  closeConfirmModal: document.querySelector("#close-confirm-modal"),
+  cancelSubmit: document.querySelector("#cancel-submit"),
+  confirmSubmit: document.querySelector("#confirm-submit"),
   studentProgramEditModal: document.querySelector("#student-program-edit-modal"),
   studentProgramEditModalCard: document.querySelector("#student-program-edit-modal-card"),
   studentProgramEditBody: document.querySelector("#student-program-edit-body"),
@@ -1414,6 +1428,59 @@ function refreshStudentWorkspace() {
 
 function delay(ms) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
+}
+
+function setControlDisabled(control, disabled) {
+  if (!control) {
+    return;
+  }
+
+  if (disabled) {
+    if (!control.dataset.busyDisabledState) {
+      control.dataset.busyDisabledState = control.disabled ? "disabled" : "enabled";
+    }
+    control.disabled = true;
+    return;
+  }
+
+  const previousState = control.dataset.busyDisabledState;
+  if (previousState) {
+    control.disabled = previousState === "disabled";
+    delete control.dataset.busyDisabledState;
+  } else {
+    control.disabled = false;
+  }
+}
+
+function setButtonBusy(button, busy, busyLabel = "") {
+  if (!button) {
+    return;
+  }
+
+  if (busy) {
+    if (!button.dataset.defaultLabel) {
+      button.dataset.defaultLabel = button.textContent || "";
+    }
+    if (busyLabel) {
+      button.textContent = busyLabel;
+    }
+    button.classList.add("is-busy");
+    button.setAttribute("aria-busy", "true");
+    setControlDisabled(button, true);
+    return;
+  }
+
+  if (button.dataset.defaultLabel) {
+    button.textContent = button.dataset.defaultLabel;
+    delete button.dataset.defaultLabel;
+  }
+  button.classList.remove("is-busy");
+  button.removeAttribute("aria-busy");
+  setControlDisabled(button, false);
+}
+
+function setButtonsBusy(buttons, busy, busyLabel = "") {
+  buttons.filter(Boolean).forEach((button) => setButtonBusy(button, busy, busyLabel));
 }
 
 function setStudentAutoLoginPending(pending, message = "正在自動登入並載入課表，請稍候...") {
@@ -1688,11 +1755,61 @@ function getCoachActiveStudents() {
 }
 
 function getCoachTodayDate() {
-  const fallback = normalizeDateKey(getPublishedProgram(getCurrentCoach()?.id)?.date || getTodayDateInAppZone()) || getTodayDateInAppZone();
+  const fallback = getTodayDateInAppZone();
   if (els.coachTodayDate && !els.coachTodayDate.value) {
     els.coachTodayDate.value = fallback;
   }
   return normalizeDateKey(els.coachTodayDate?.value || fallback) || fallback;
+}
+
+function getCoachRoundProgram(viewDate = getCoachTodayDate()) {
+  const viewDateKey = getComparableDateKey(viewDate) || getTodayDateInAppZone();
+  const scopedPrograms = getCoachScopedPrograms();
+  const datedPrograms = scopedPrograms
+    .map((program) => ({
+      program,
+      dateKey: getComparableDateKey(program.date),
+      createdKey: getComparableDateTimeKey(program.createdAt)
+    }))
+    .filter((item) => item.dateKey);
+
+  const currentOrPast = datedPrograms
+    .filter((item) => item.dateKey <= viewDateKey)
+    .sort((a, b) => {
+      const dateCompare = b.dateKey.localeCompare(a.dateKey);
+      if (dateCompare !== 0) {
+        return dateCompare;
+      }
+      if (a.program.published !== b.program.published) {
+        return a.program.published ? -1 : 1;
+      }
+      return b.createdKey.localeCompare(a.createdKey);
+    });
+
+  if (currentOrPast.length) {
+    return currentOrPast[0].program;
+  }
+
+  return getPublishedProgram(getCurrentCoach()?.id)
+    || datedPrograms.sort((a, b) => a.dateKey.localeCompare(b.dateKey))[0]?.program
+    || null;
+}
+
+function getCoachRoundContext(viewDate = getCoachTodayDate()) {
+  const normalizedViewDate = normalizeDateKey(viewDate) || getTodayDateInAppZone();
+  const viewDateKey = getComparableDateKey(normalizedViewDate);
+  const program = getCoachRoundProgram(normalizedViewDate);
+  const coachLogs = getCoachScopedLogs();
+  const logs = program
+    ? coachLogs.filter((log) => log.programId === program.id)
+    : coachLogs.filter((log) => getLogActivityDateKey(log) === viewDateKey);
+
+  return {
+    viewDate: normalizedViewDate,
+    viewDateKey,
+    program,
+    logs: [...logs].sort(compareLogsByDateTimeDesc)
+  };
 }
 
 function bindEvents() {
@@ -1739,13 +1856,13 @@ function bindEvents() {
   document.querySelector("#modal-close-preview").addEventListener("click", closeProgramPreviewModal);
   document.querySelector("#modal-export-program-image").addEventListener("click", exportProgramImage);
   els.toggleCoachHistoryResults?.addEventListener("click", toggleCoachHistoryResults);
-  document.querySelector("#confirm-student-access").addEventListener("click", confirmStudentAccessAndLoadProgram);
-  els.loadStudentProgramInline.addEventListener("click", () => loadStudentProgram({ preserveIfDirty: true }));
-  els.loadStudentProgramMobile.addEventListener("click", () => loadStudentProgram({ preserveIfDirty: true }));
+  els.confirmStudentAccess?.addEventListener("click", confirmStudentAccessAndLoadProgram);
+  els.loadStudentProgramInline.addEventListener("click", () => loadStudentProgramWithFeedback({ preserveIfDirty: true }));
+  els.loadStudentProgramMobile.addEventListener("click", () => loadStudentProgramWithFeedback({ preserveIfDirty: true }));
   els.editStudentProgramMobileTop?.addEventListener("click", handleStudentDetailAction);
   els.editStudentProgram.addEventListener("click", handleStudentDetailAction);
   els.editStudentProgramMobile.addEventListener("click", handleStudentDetailAction);
-  document.querySelector("#submit-student-log").addEventListener("click", openSubmissionConfirm);
+  els.submitStudentLog.addEventListener("click", openSubmissionConfirm);
   els.submitStudentLogMobile.addEventListener("click", openSubmissionConfirm);
   els.openStudentHistoryMobile.addEventListener("click", () => {
     studentHistoryOpened = true;
@@ -1765,9 +1882,9 @@ function bindEvents() {
     renderStudentHistory();
     document.querySelector("#student-history-exercise").focus();
   });
-  document.querySelector("#close-confirm-modal").addEventListener("click", closeConfirmModal);
-  document.querySelector("#cancel-submit").addEventListener("click", closeConfirmModal);
-  document.querySelector("#confirm-submit").addEventListener("click", finalizeSubmission);
+  els.closeConfirmModal.addEventListener("click", closeConfirmModal);
+  els.cancelSubmit.addEventListener("click", closeConfirmModal);
+  els.confirmSubmit.addEventListener("click", finalizeSubmission);
   document.querySelector("#close-success-modal").addEventListener("click", closeSuccessModal);
   els.downloadSuccessImage?.addEventListener("click", downloadSuccessImage);
   els.successOpenHistory?.addEventListener("click", openSuccessHistory);
@@ -2300,7 +2417,7 @@ function buildSubmittedSnapshot(logs, program = getSelectedStudentProgram(), stu
     studentName: student?.name || firstLog.studentName || "",
     programId: program?.id || firstLog.programId || "",
     programCode: program?.code || firstLog.programCode || "",
-    programDate: normalizeDateKey(program?.date || firstLog.programDate || ""),
+    programDate: normalizeDateKey(getLogActivityDateKey(firstLog) || program?.date || ""),
     submittedAt: normalizeDateTimeValue(firstLog.submittedAt || ""),
     logs: logs.map((log) => ({ ...log }))
   };
@@ -2654,11 +2771,15 @@ function handleCurrentCoachChange() {
   renderStudentSummary();
 }
 
+function createProgramId() {
+  return `program-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+}
+
 function createBlankProgram() {
   const today = getTodayDateInAppZone();
   const currentCoach = getCurrentCoach();
   const program = {
-    id: `program-${Date.now()}`,
+    id: createProgramId(),
     code: "",
     date: today,
     title: "",
@@ -2706,6 +2827,36 @@ function seedEditorFromProgram(programId) {
   }
 
   setCoachEditorDirty(false);
+}
+
+function seedEditorFromProgramCopy(programId) {
+  if (!els.programItemsBody || !els.programCode || !els.programDate || !els.coachName || !els.programNotes) {
+    return false;
+  }
+
+  const program = state.programs.find((item) => item.id === programId);
+  if (!program) {
+    return false;
+  }
+
+  const items = getProgramItems(program.id);
+  coachProgramEditorMode = "create";
+  editingProgramId = null;
+  els.programCode.value = program.code || "";
+  els.programDate.value = getTodayDateInAppZone();
+  els.coachName.value = getCurrentCoach()?.name || program.coachName || "";
+  els.programNotes.value = program.notes || "";
+  els.programItemsBody.innerHTML = "";
+
+  if (items.length) {
+    items.forEach((item) => addProgramItemRow({ ...item, id: "", programId: "" }));
+  } else {
+    addProgramItemRow();
+  }
+
+  setCoachEditorDirty(true);
+  syncEditorPreviewState();
+  return true;
 }
 
 function addProgramItemRow(item = {}) {
@@ -2930,15 +3081,19 @@ function collectProgramPayload() {
     coachProgramEditorMode === "edit" && editingProgramId
       ? state.programs.find((item) => item.id === editingProgramId) || null
       : null;
+  const nextDate = normalizeDateKey(els.programDate.value);
+  const existingDate = normalizeDateKey(existingProgram?.date || "");
+  const dateChangedFromExisting = Boolean(existingProgram && nextDate && existingDate && nextDate !== existingDate);
+  const shouldCreateNewProgram = !existingProgram || dateChangedFromExisting;
   const program = {
-    id: existingProgram?.id || `program-${Date.now()}`,
+    id: shouldCreateNewProgram ? createProgramId() : existingProgram.id,
     code: els.programCode.value.trim(),
-    date: normalizeDateKey(els.programDate.value),
+    date: nextDate,
     coachId: getCurrentCoach()?.id || "",
     coachName: getCurrentCoach()?.name || els.coachName.value.trim(),
     notes: els.programNotes.value.trim(),
-    published: Boolean(existingProgram?.published),
-    createdAt: existingProgram?.createdAt || timestampNow()
+    published: shouldCreateNewProgram ? false : Boolean(existingProgram?.published),
+    createdAt: shouldCreateNewProgram ? timestampNow() : existingProgram.createdAt || timestampNow()
   };
 
   const items = [...els.programItemsBody.querySelectorAll("tr")]
@@ -2958,11 +3113,11 @@ function collectProgramPayload() {
     .filter((item) => item.exercise && item.targetSets > 0 && (item.targetType === "rm" || item.targetValue > 0))
     .sort((a, b) => a.sortOrder - b.sortOrder);
 
-  return { program, items };
+  return { program, items, existingProgram, dateChangedFromExisting };
 }
 
 async function saveProgram() {
-  const { program, items } = collectProgramPayload();
+  const { program, items, dateChangedFromExisting } = collectProgramPayload();
 
   if (!program.code || !program.date || !items.length) {
     window.alert("\u8acb\u5148\u5b8c\u6210\u8ab2\u8868\u4ee3\u78bc\u3001\u65e5\u671f\u8207\u81f3\u5c11\u4e00\u7b46\u8ab2\u8868\u9805\u76ee\u3002");
@@ -2996,10 +3151,13 @@ async function saveProgram() {
   renderStudentProgramOptions();
   renderStudentHistoryFilters();
   openProgramPreviewModal();
+  if (dateChangedFromExisting) {
+    window.alert("已另存為新的課表，原本的歷史課表已保留。");
+  }
 }
 
 async function publishProgram() {
-  const { program, items } = collectProgramPayload();
+  const { program, items, dateChangedFromExisting } = collectProgramPayload();
 
   if (!program.code || !program.date || !items.length) {
     window.alert("\u8acb\u5148\u5b8c\u6210\u8ab2\u8868\u4ee3\u78bc\u3001\u65e5\u671f\u8207\u81f3\u5c11\u4e00\u7b46\u8ab2\u8868\u9805\u76ee\u3002");
@@ -3033,8 +3191,8 @@ async function publishProgram() {
   coachProgramEditorMode = "edit";
   editingProgramId = program.id;
   setCoachEditorDirty(false);
-  if (els.coachTodayDate) {
-    els.coachTodayDate.value = normalizeDateKey(program.date) || getTodayDateInAppZone();
+  if (els.coachTodayDate && !els.coachTodayDate.value) {
+    els.coachTodayDate.value = getTodayDateInAppZone();
   }
   renderCoachExerciseOptions();
   syncEditorPreviewState();
@@ -3046,7 +3204,9 @@ async function publishProgram() {
   renderStudentProgramOptions();
   renderStudentHistoryFilters();
   renderStudentSummary();
-  window.alert("\u8ab2\u8868\u5df2\u767c\u5e03\u3002\u5b78\u751f\u7aef\u73fe\u5728\u53ef\u4ee5\u8f09\u5165\u9019\u4efd\u8ab2\u8868\u3002");
+  window.alert(dateChangedFromExisting
+    ? "已另存並發布為新的目前課表，原本的歷史課表已保留。"
+    : "\u8ab2\u8868\u5df2\u767c\u5e03\u3002\u5b78\u751f\u7aef\u73fe\u5728\u53ef\u4ee5\u8f09\u5165\u9019\u4efd\u8ab2\u8868\u3002");
 }
 
 function upsertProgram(program) {
@@ -3109,7 +3269,8 @@ function renderProgramLibrary() {
               <div class="coach-program-preview ${isExpanded ? "is-expanded" : ""}">${itemPreview}</div>
               <div class="coach-link-actions">
                 <button class="ghost-button" type="button" data-toggle-program-preview="${program.id}">${isExpanded ? "收起項目" : "查看項目"}</button>
-                <button class="ghost-button" type="button" data-load-program="${program.id}">載入編輯</button>
+                <button class="ghost-button" type="button" data-copy-program="${program.id}">沿用成新課表</button>
+                <button class="ghost-button" type="button" data-edit-existing-program="${program.id}">編輯原課表</button>
                 <button class="ghost-button" type="button" data-publish-existing-program="${program.id}">設為目前課表</button>
               </div>
             </article>
@@ -3188,8 +3349,8 @@ function comparePrograms(a, b, sortBy) {
   return createdB.localeCompare(createdA);
 }
 
-function handleProgramLibraryAction(event) {
-  const button = event.target.closest("[data-toggle-program-preview], [data-load-program], [data-publish-existing-program]");
+async function handleProgramLibraryAction(event) {
+  const button = event.target.closest("[data-toggle-program-preview], [data-copy-program], [data-load-program], [data-edit-existing-program], [data-publish-existing-program]");
   if (!button) {
     return;
   }
@@ -3201,8 +3362,24 @@ function handleProgramLibraryAction(event) {
     return;
   }
 
-  if (button.dataset.loadProgram) {
-    const programId = button.dataset.loadProgram;
+  if (button.dataset.copyProgram || button.dataset.loadProgram) {
+    const programId = button.dataset.copyProgram || button.dataset.loadProgram;
+    const copied = seedEditorFromProgramCopy(programId);
+    if (!copied) {
+      return;
+    }
+    switchCoachPanel("coach-editor");
+    document.querySelector("#coach-editor")?.scrollIntoView({ behavior: "smooth", block: "start" });
+    window.alert("已沿用為新的課表草稿，日期已帶入今天；儲存或發布後會新增一份課表，不會覆蓋原本歷史課表。");
+    return;
+  }
+
+  if (button.dataset.editExistingProgram) {
+    const programId = button.dataset.editExistingProgram;
+    const ok = window.confirm("這會直接修改原本的歷史課表。若要做本週新課表，請使用「沿用成新課表」。確定要編輯原課表嗎？");
+    if (!ok) {
+      return;
+    }
     coachProgramEditorMode = "edit";
     editingProgramId = programId;
     seedEditorFromProgram(programId);
@@ -3223,11 +3400,20 @@ function handleProgramLibraryAction(event) {
     ...item,
     published: item.id === publishProgramId
   }));
+  if (IS_CLOUD_MODE) {
+    try {
+      await publishProgramToCloud(program, getProgramItems(program.id));
+    } catch (error) {
+      console.warn("Cloud publish existing program failed, falling back to local state:", error);
+      persistState();
+    }
+  } else {
+    persistState();
+  }
   coachProgramEditorMode = "edit";
   editingProgramId = publishProgramId;
-  persistState();
-  if (els.coachTodayDate) {
-    els.coachTodayDate.value = program.date;
+  if (els.coachTodayDate && !els.coachTodayDate.value) {
+    els.coachTodayDate.value = getTodayDateInAppZone();
   }
   seedEditorFromProgram(publishProgramId);
   setCoachEditorDirty(false);
@@ -3684,6 +3870,32 @@ function syncCoachAccessUI() {
 }
 
 async function confirmCoachAccess(options = {}) {
+  const { silentError = false } = options;
+  const showBusy = !silentError;
+  if (showBusy) {
+    if (coachLoginBusy) {
+      return false;
+    }
+    coachLoginBusy = true;
+    setButtonBusy(els.confirmCoachAccess, true, "登入中...");
+    setControlDisabled(els.coachAccessCode, true);
+    if (els.coachSummary) {
+      els.coachSummary.innerHTML = `<p class="muted-copy">正在確認教練身份，請稍候...</p>`;
+    }
+  }
+
+  try {
+    return await confirmCoachAccessCore(options);
+  } finally {
+    if (showBusy) {
+      coachLoginBusy = false;
+      setButtonBusy(els.confirmCoachAccess, false);
+      setControlDisabled(els.coachAccessCode, false);
+    }
+  }
+}
+
+async function confirmCoachAccessCore(options = {}) {
   const { silentError = false, skipTouch = false } = options;
   const accessValue = normalizeAccessInput(els.coachAccessCode?.value || "");
   if (els.coachAccessCode) {
@@ -3744,6 +3956,35 @@ async function confirmCoachAccess(options = {}) {
 }
 
 async function confirmStudentAccess(options = {}) {
+  const { silentError = false } = options;
+  const showBusy = !silentError;
+  if (showBusy) {
+    if (studentLoginBusy) {
+      return false;
+    }
+    studentLoginBusy = true;
+    setButtonBusy(els.confirmStudentAccess, true, "載入中...");
+    setControlDisabled(els.studentAccessCode, true);
+    if (els.studentProgramStatus) {
+      els.studentProgramStatus.textContent = "正在確認身份並載入資料...";
+    }
+    if (els.studentSummary) {
+      els.studentSummary.innerHTML = `<p class="muted-copy">正在確認身份，請稍候...</p>`;
+    }
+  }
+
+  try {
+    return await confirmStudentAccessCore(options);
+  } finally {
+    if (showBusy) {
+      studentLoginBusy = false;
+      setButtonBusy(els.confirmStudentAccess, false);
+      setControlDisabled(els.studentAccessCode, false);
+    }
+  }
+}
+
+async function confirmStudentAccessCore(options = {}) {
   const { silentError = false, skipTouch = false } = options;
   const accessValue = normalizeAccessInput(els.studentAccessCode.value);
   const normalizedAccessValue = accessValue;
@@ -3820,7 +4061,27 @@ async function confirmStudentAccessAndLoadProgram() {
   if (!isConfirmed) {
     return;
   }
-  loadStudentProgram();
+  await loadStudentProgramWithFeedback();
+}
+
+async function loadStudentProgramWithFeedback(options = {}) {
+  if (studentLoadBusy) {
+    return;
+  }
+
+  studentLoadBusy = true;
+  setButtonsBusy([els.loadStudentProgramInline, els.loadStudentProgramMobile], true, "載入中...");
+  if (els.studentProgramStatus) {
+    els.studentProgramStatus.textContent = "正在載入本輪課表...";
+  }
+
+  try {
+    await delay(0);
+    loadStudentProgram(options);
+  } finally {
+    studentLoadBusy = false;
+    setButtonsBusy([els.loadStudentProgramInline, els.loadStudentProgramMobile], false);
+  }
 }
 
 function loadStudentProgram(options = {}) {
@@ -4117,8 +4378,11 @@ function openSubmissionConfirm() {
     return;
   }
 
+  const submissionDate = getTodayDateInAppZone();
   const alreadySubmitted = state.workoutLogs.some(
-    (log) => log.studentId === student.id && log.programId === program.id
+    (log) => log.studentId === student.id
+      && log.programId === program.id
+      && getLogActivityDateKey(log) === submissionDate
   );
   if (alreadySubmitted) {
     els.studentProgramStatus.textContent = "\u672c\u6b21\u9001\u51fa\u5c07\u8986\u84cb\u820a\u7d00\u9304";
@@ -4126,8 +4390,8 @@ function openSubmissionConfirm() {
 
   pendingSubmission = loadedStudentEntries.map((entry, index) => buildLogPayload(student, program, entry, index));
   els.confirmSummary.textContent = alreadySubmitted
-    ? `${student.name}\uff5c${formatDateDisplay(program.date)}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u78ba\u8a8d\u5f8c\u6703\u8986\u84cb\u4f60\u539f\u672c\u7684\u540c\u4efd\u8ab2\u8868\u7d00\u9304\u3002`
-    : `${student.name}\uff5c${formatDateDisplay(program.date)}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u8acb\u78ba\u8a8d\u9019\u6b21\u586b\u5beb\u5167\u5bb9\u3002`;
+    ? `${student.name}\uff5c${formatDateDisplay(submissionDate)}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u78ba\u8a8d\u5f8c\u6703\u8986\u84cb\u4f60\u4eca\u5929\u7684\u540c\u4efd\u8ab2\u8868\u7d00\u9304\u3002`
+    : `${student.name}\uff5c${formatDateDisplay(submissionDate)}\uff5c${program.code || "\u76ee\u524d\u8ab2\u8868"}\uff0c\u8acb\u78ba\u8a8d\u9019\u6b21\u586b\u5beb\u5167\u5bb9\u3002`;
   els.confirmCardList.innerHTML = pendingSubmission.map((log) => formatLogForSummary(log)).join("");
   els.confirmBody.innerHTML = pendingSubmission
     .map(
@@ -4159,12 +4423,14 @@ function buildLogPayload(student, program, entry, index) {
   const assignedCoach = state.coaches.find((coach) => coach.id === (student?.primaryCoachId || ""));
   const effectiveCoachId = program?.coachId || assignedCoach?.id || "";
   const effectiveCoachName = program?.coachName || assignedCoach?.name || "";
+  const submittedAt = timestampNow();
+  const submittedDate = getComparableDateKey(submittedAt) || getTodayDateInAppZone();
 
   return {
     id: `log-${Date.now()}-${index}`,
     programId: program.id,
     programCode: program.code,
-    programDate: normalizeDateKey(program.date),
+    programDate: submittedDate,
     coachId: effectiveCoachId,
     coachName: effectiveCoachName,
     studentId: student.id,
@@ -4178,7 +4444,7 @@ function buildLogPayload(student, program, entry, index) {
     actualSets: Number(read("actualSets")?.value || 0),
     actualReps: Number(read("actualReps")?.value || 0),
     studentNote: read("studentNote")?.value.trim() || "",
-    submittedAt: timestampNow()
+    submittedAt
   };
 }
 
@@ -4696,9 +4962,7 @@ function toggleCoachHistoryResults() {
 }
 
 function toggleTodayLogsVisibleCount() {
-  const viewDate = getCoachTodayDate();
-  const viewDateKey = getComparableDateKey(viewDate);
-  const allTodayLogs = state.workoutLogs.filter((log) => getComparableDateKey(log.programDate) === viewDateKey);
+  const { logs: allTodayLogs } = getCoachRoundContext();
   const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
   const filteredLogs = allTodayLogs.filter((log) => {
     if (!keyword) {
@@ -4719,15 +4983,13 @@ function toggleCoachHistoryVisibleCount() {
 }
 
 function toggleTodayStudentDetailVisibleCount() {
-  const viewDate = getCoachTodayDate();
-  const viewDateKey = getComparableDateKey(viewDate);
-  const studentLogs = state.workoutLogs
-    .filter((log) => getComparableDateKey(log.programDate) === viewDateKey)
+  const { logs: roundLogs } = getCoachRoundContext();
+  const studentLogs = roundLogs
     .filter((log) => log.studentId === selectedTodayStudentId)
     .sort(compareLogsByDateTimeAsc);
 
   todayStudentDetailVisibleCount = todayStudentDetailVisibleCount < studentLogs.length ? todayStudentDetailVisibleCount + 6 : 6;
-  renderTodayStudentDetail(state.workoutLogs.filter((log) => getComparableDateKey(log.programDate) === viewDateKey));
+  renderTodayStudentDetail(roundLogs);
 }
 
 function applyStudentViewMode() {
@@ -4833,6 +5095,29 @@ function showStudentAccessPanel() {
 }
 
 async function finalizeSubmission() {
+  if (studentSubmitBusy) {
+    return;
+  }
+
+  studentSubmitBusy = true;
+  setButtonBusy(els.confirmSubmit, true, "送出中...");
+  setControlDisabled(els.cancelSubmit, true);
+  setControlDisabled(els.closeConfirmModal, true);
+  if (els.studentProgramStatus) {
+    els.studentProgramStatus.textContent = "正在送出訓練紀錄，請稍候...";
+  }
+
+  try {
+    await finalizeSubmissionCore();
+  } finally {
+    studentSubmitBusy = false;
+    setButtonBusy(els.confirmSubmit, false);
+    setControlDisabled(els.cancelSubmit, false);
+    setControlDisabled(els.closeConfirmModal, false);
+  }
+}
+
+async function finalizeSubmissionCore() {
   if (!pendingSubmission?.length) {
     closeConfirmModal();
     return;
@@ -4859,10 +5144,10 @@ async function finalizeSubmission() {
     }
   } else {
     const submissionKeys = new Set(
-      pendingSubmission.map((log) => `${log.programId}::${log.studentId}::${log.exercise}`)
+      pendingSubmission.map((log) => `${log.programId}::${log.studentId}::${log.programDate}::${log.exercise}`)
     );
     state.workoutLogs = state.workoutLogs.filter(
-      (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${log.exercise}`)
+      (log) => !submissionKeys.has(`${log.programId}::${log.studentId}::${getLogActivityDateKey(log)}::${log.exercise}`)
     );
     state.workoutLogs = submittedLogs.concat(state.workoutLogs);
     persistState();
@@ -4892,17 +5177,10 @@ async function finalizeSubmission() {
 }
 
 function renderCoachToday() {
-  const viewDate = getCoachTodayDate();
-  const viewDateKey = getComparableDateKey(viewDate);
-  const coachPrograms = getCoachScopedPrograms();
-  const coachLogs = getCoachScopedLogs();
+  const { viewDate, program: roundProgram, logs: allRoundLogs } = getCoachRoundContext();
   const coachStudents = getCoachActiveStudents();
-  const dayProgram = coachPrograms.find((program) => getComparableDateKey(program.date) === viewDateKey && program.published)
-    || coachPrograms.find((program) => getComparableDateKey(program.date) === viewDateKey)
-    || null;
-  const allTodayLogs = coachLogs.filter((log) => getComparableDateKey(log.programDate) === viewDateKey);
   const keyword = (els.todayLogsSearch?.value || "").trim().toLowerCase();
-  const todayLogs = allTodayLogs.filter((log) => {
+  const roundLogs = allRoundLogs.filter((log) => {
     if (!keyword) {
       return true;
     }
@@ -4911,17 +5189,20 @@ function renderCoachToday() {
       String(log.exercise || "").toLowerCase().includes(keyword)
     );
   });
-  const visibleTodayLogs = todayLogs.slice(0, coachTodayVisibleCount);
-  const submittedStudents = [...new Set(todayLogs.map((log) => log.studentName))];
-  const allStudents = coachStudents.map((student) => student.name);
-  const pendingStudents = allStudents.filter((name) => !allTodayLogs.map((log) => log.studentName).includes(name));
+  const visibleRoundLogs = roundLogs.slice(0, coachTodayVisibleCount);
+  const submittedStudentIds = new Set(allRoundLogs.map((log) => log.studentId).filter(Boolean));
+  const submittedStudents = coachStudents.filter((student) => submittedStudentIds.has(student.id));
+  const pendingStudents = coachStudents.filter((student) => !submittedStudentIds.has(student.id));
+  const roundLabel = roundProgram
+    ? `${roundProgram.code || "\u672a\u547d\u540d"}｜${formatDateDisplay(roundProgram.date, "-")}`
+    : "\u5c1a\u672a\u5efa\u7acb";
 
   const statItems = [
-    { label: "\u67e5\u770b\u65e5\u671f", value: formatDateDisplay(viewDate || "-", "-") },
-    { label: "\u7576\u65e5\u8ab2\u8868", value: dayProgram ? `${dayProgram.code || "\u672a\u547d\u540d"}` : "\u5c1a\u672a\u5efa\u7acb" },
-    { label: "\u5df2\u9001\u51fa", value: `${new Set(allTodayLogs.map((log) => log.studentName)).size} \u4eba` },
+    { label: "\u67e5\u770b\u672c\u8f2a\u65e5\u671f", value: formatDateDisplay(viewDate || "-", "-") },
+    { label: "\u672c\u8f2a\u8ab2\u8868", value: roundLabel },
+    { label: "\u5df2\u9001\u51fa", value: `${submittedStudents.length} \u4eba` },
     { label: "\u672a\u9001\u51fa", value: `${pendingStudents.length} \u4eba` },
-    { label: "\u7576\u65e5\u7d00\u9304", value: `${allTodayLogs.length} \u7b46` }
+    { label: "\u672c\u8f2a\u7d00\u9304", value: `${allRoundLogs.length} \u7b46` }
   ];
 
   els.coachStats.innerHTML = statItems
@@ -4937,28 +5218,22 @@ function renderCoachToday() {
 
   els.submittedList.innerHTML = submittedStudents.length
     ? submittedStudents
-        .map((name) => {
-          const student = coachStudents.find((item) => item.name === name);
-          return `<li><button class="ghost-button today-student-list-button" type="button" data-open-submitted-student="${student?.id || ""}">${name}</button></li>`;
-        })
+        .map((student) => `<li><button class="ghost-button today-student-list-button" type="button" data-open-submitted-student="${student.id || ""}">${student.name}</button></li>`)
         .join("")
-    : `<li class="muted-copy">\u76ee\u524d\u9084\u6c92\u6709\u4eba\u9001\u51fa\u3002</li>`;
+    : `<li class="muted-copy">\u672c\u8f2a\u76ee\u524d\u9084\u6c92\u6709\u4eba\u9001\u51fa\u3002</li>`;
 
   els.pendingList.innerHTML = pendingStudents.length
     ? pendingStudents
-        .map((name) => {
-          const student = coachStudents.find((item) => item.name === name);
-          return `<li><button class="ghost-button today-student-list-button" type="button" data-open-pending-student="${student?.id || ""}">${name}</button></li>`;
-        })
+        .map((student) => `<li><button class="ghost-button today-student-list-button" type="button" data-open-pending-student="${student.id || ""}">${student.name}</button></li>`)
         .join("")
-    : `<li class="muted-copy">\u6240\u6709\u5b78\u751f\u90fd\u5df2\u9001\u51fa\u3002</li>`;
+    : `<li class="muted-copy">\u672c\u8f2a\u6240\u6709\u5b78\u751f\u90fd\u5df2\u9001\u51fa\u3002</li>`;
 
   if (els.todayLogsCount) {
-    els.todayLogsCount.textContent = `共 ${visibleTodayLogs.length} / ${todayLogs.length} 筆`;
+    els.todayLogsCount.textContent = `\u5171 ${visibleRoundLogs.length} / ${roundLogs.length} \u7b46`;
   }
 
-  els.todayLogsBody.innerHTML = visibleTodayLogs.length
-    ? visibleTodayLogs
+  els.todayLogsBody.innerHTML = visibleRoundLogs.length
+    ? visibleRoundLogs
         .map(
           (log) => `
             <tr class="${selectedTodayStudentId === log.studentId ? "is-selected-log" : ""}">
@@ -4973,21 +5248,21 @@ function renderCoachToday() {
           `
         )
         .join("")
-    : `<tr><td colspan="7" class="empty-state">\u76ee\u524d\u9084\u6c92\u6709\u4eca\u65e5\u7d00\u9304\u3002</td></tr>`;
+    : `<tr><td colspan="7" class="empty-state">\u76ee\u524d\u9084\u6c92\u6709\u672c\u8f2a\u7d00\u9304\u3002</td></tr>`;
 
   if (els.todayLogsMore) {
-    const remaining = todayLogs.length - visibleTodayLogs.length;
-    const shouldHide = todayLogs.length <= 6;
+    const remaining = roundLogs.length - visibleRoundLogs.length;
+    const shouldHide = roundLogs.length <= 6;
     els.todayLogsMore.classList.toggle("is-hidden", shouldHide);
     if (!shouldHide) {
       els.todayLogsMore.textContent = remaining > 0 ? `查看更多（剩餘 ${remaining} 筆）` : "收合";
     }
   }
 
-  if (!selectedTodayStudentId || !allTodayLogs.some((log) => log.studentId === selectedTodayStudentId)) {
-    selectedTodayStudentId = allTodayLogs[0]?.studentId || "";
+  if (!selectedTodayStudentId || !allRoundLogs.some((log) => log.studentId === selectedTodayStudentId)) {
+    selectedTodayStudentId = allRoundLogs[0]?.studentId || "";
   }
-  renderTodayStudentDetail(allTodayLogs);
+  renderTodayStudentDetail(allRoundLogs);
 }
 
 function handleTodayLogAction(event) {
@@ -4998,9 +5273,8 @@ function handleTodayLogAction(event) {
 
   selectedTodayStudentId = button.dataset.openTodayStudent || "";
   todayStudentDetailVisibleCount = 6;
-  const program = getPublishedProgram(getCurrentCoach()?.id);
-  const allTodayLogs = program ? getCoachScopedLogs().filter((log) => log.programId === program.id) : [];
-  renderTodayStudentDetail(allTodayLogs);
+  const { logs: roundLogs } = getCoachRoundContext();
+  renderTodayStudentDetail(roundLogs);
   document.querySelector("#today-student-detail-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
 }
 
@@ -5009,10 +5283,9 @@ function handleTodayStudentListAction(event) {
   if (submittedButton) {
     selectedTodayStudentId = submittedButton.dataset.openSubmittedStudent || "";
     todayStudentDetailVisibleCount = 6;
-    const program = getPublishedProgram(getCurrentCoach()?.id);
-    const allTodayLogs = program ? getCoachScopedLogs().filter((log) => log.programId === program.id) : [];
+    const { logs: roundLogs } = getCoachRoundContext();
     renderCoachToday();
-    renderTodayStudentDetail(allTodayLogs);
+    renderTodayStudentDetail(roundLogs);
     document.querySelector("#today-student-detail-card")?.scrollIntoView({ behavior: "smooth", block: "start" });
     return;
   }
@@ -5044,8 +5317,8 @@ function renderTodayStudentDetail(todayLogs = []) {
   }
 
   if (!todayLogs.length) {
-    els.todayStudentDetailStatus.textContent = "\u4eca\u65e5\u5c1a\u7121\u7d00\u9304";
-    els.todayStudentDetailBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5148\u7b49\u5b78\u751f\u9001\u51fa\u4eca\u65e5\u7d00\u9304\u3002</td></tr>`;
+    els.todayStudentDetailStatus.textContent = "\u672c\u8f2a\u5c1a\u7121\u7d00\u9304";
+    els.todayStudentDetailBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5148\u7b49\u5b78\u751f\u9001\u51fa\u672c\u8f2a\u7d00\u9304\u3002</td></tr>`;
     els.todayStudentDetailMore?.classList.add("is-hidden");
     return;
   }
@@ -5057,13 +5330,13 @@ function renderTodayStudentDetail(todayLogs = []) {
 
   if (!studentLogs.length) {
     els.todayStudentDetailStatus.textContent = "\u8acb\u5148\u9078\u64c7\u5b78\u751f";
-    els.todayStudentDetailBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5f9e\u4e0a\u65b9\u4eca\u65e5\u7d00\u9304\u8868\u683c\u9ede\u9078\u4e00\u4f4d\u5b78\u751f\u3002</td></tr>`;
+    els.todayStudentDetailBody.innerHTML = `<tr><td colspan="6" class="empty-state">\u8acb\u5f9e\u4e0a\u65b9\u672c\u8f2a\u7d00\u9304\u8868\u683c\u9ede\u9078\u4e00\u4f4d\u5b78\u751f\u3002</td></tr>`;
     els.todayStudentDetailMore?.classList.add("is-hidden");
     return;
   }
 
   const visibleLogs = studentLogs.slice(0, todayStudentDetailVisibleCount);
-  els.todayStudentDetailStatus.textContent = `${studentName}\u4eca\u65e5\u5171 ${visibleLogs.length} / ${studentLogs.length} \u7b46`;
+  els.todayStudentDetailStatus.textContent = `${studentName}\u672c\u8f2a\u5171 ${visibleLogs.length} / ${studentLogs.length} \u7b46`;
   els.todayStudentDetailBody.innerHTML = visibleLogs
     .map(
       (log) => `
@@ -6503,8 +6776,8 @@ function getCoachHistoryLogs() {
   return getCoachScopedLogs()
     .filter((log) => !studentId || log.studentId === studentId)
     .filter((log) => !exercise || log.exercise === exercise)
-    .filter((log) => !dateFrom || getComparableDateKey(log.programDate) >= dateFrom)
-    .filter((log) => !dateTo || getComparableDateKey(log.programDate) <= dateTo)
+    .filter((log) => !dateFrom || getLogActivityDateKey(log) >= dateFrom)
+    .filter((log) => !dateTo || getLogActivityDateKey(log) <= dateTo)
     .sort(compareLogsByDateTimeDesc);
 }
 
@@ -6521,7 +6794,7 @@ function renderCoachHistory() {
         .map(
           (log) => `
             <tr>
-              <td>${formatDateDisplay(log.programDate)}</td>
+              <td>${formatDateDisplay(getLogActivityDateKey(log))}</td>
               <td>${log.studentName}</td>
               <td>${log.category}</td>
               <td>${log.exercise}</td>
@@ -6630,7 +6903,7 @@ function renderStudentHistory() {
         .map(
           (log) => `
             <tr>
-              <td>${formatDateDisplay(log.programDate)}</td>
+              <td>${formatDateDisplay(getLogActivityDateKey(log))}</td>
               <td>${log.category}</td>
               <td>${log.exercise}</td>
               <td>${formatTarget(log)}</td>
@@ -6649,7 +6922,7 @@ function renderStudentHistory() {
             <article class="confirm-entry-card">
               <div class="confirm-entry-top">
                 <span class="confirm-entry-category">${log.category}</span>
-                <span class="confirm-entry-target">${formatDateDisplay(log.programDate)}</span>
+                <span class="confirm-entry-target">${formatDateDisplay(getLogActivityDateKey(log))}</span>
               </div>
               <h4>${log.exercise}</h4>
               <p class="confirm-entry-result">${formatActual(log)}</p>
@@ -6923,7 +7196,7 @@ function exportCoachHistoryCsv() {
   const rows = [
     ["日期", "學生", "分類", "動作", "目標", "實際結果", "備註"],
     ...logs.map((log) => [
-      formatDateDisplay(log.programDate),
+      formatDateDisplay(getLogActivityDateKey(log)),
       log.studentName,
       log.category,
       log.exercise,

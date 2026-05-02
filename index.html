@@ -77,7 +77,7 @@
           <button class="sub-tab is-active" data-coach-tab="coach-editor">建立課表</button>
           <button class="sub-tab" data-coach-tab="coach-coaches">教練管理</button>
           <button class="sub-tab" data-coach-tab="coach-students">學生管理</button>
-          <button class="sub-tab" data-coach-tab="coach-today">今日紀錄</button>
+          <button class="sub-tab" data-coach-tab="coach-today">本週紀錄</button>
           <button class="sub-tab" data-coach-tab="coach-history">歷史查詢</button>
           <button class="sub-tab" id="open-coach-leave-system-tab" type="button">請假系統</button>
         </nav>
@@ -88,7 +88,7 @@
               <div class="card-heading">
                 <div>
                   <p class="section-kicker">課表編輯</p>
-                  <h3>建立今日共用課表</h3>
+                  <h3>建立本輪共用課表</h3>
                 </div>
               </div>
 
@@ -107,7 +107,7 @@
                 </label>
                 <label class="span-full">
                   課表備註
-                  <textarea id="program-notes" rows="3" placeholder="可填寫當日提醒或訓練重點"></textarea>
+                  <textarea id="program-notes" rows="3" placeholder="可填寫本輪提醒或訓練重點"></textarea>
                 </label>
               </div>
 
@@ -349,7 +349,7 @@
                 </div>
               </div>
               <label>
-                查看日期
+                查看本輪日期
                 <input type="date" id="coach-today-date">
               </label>
               <div class="status-block">
@@ -365,14 +365,14 @@
             <article class="card wide-card">
               <div class="card-heading">
                 <div>
-                  <p class="section-kicker">今日紀錄</p>
-                  <h3>今日全班紀錄</h3>
+                  <p class="section-kicker">本週紀錄</p>
+                  <h3>本輪全班紀錄</h3>
                 </div>
                 <span class="status-pill" id="today-logs-count">共 0 筆</span>
               </div>
               <div class="coach-link-search single-field">
                 <label>
-                  搜尋今日紀錄
+                  搜尋本輪紀錄
                   <input type="text" id="today-logs-search" placeholder="可搜尋學生姓名或動作">
                 </label>
               </div>
@@ -404,8 +404,8 @@
           <article class="card" id="today-student-detail-card">
             <div class="card-heading">
               <div>
-                <p class="section-kicker">學生當日紀錄</p>
-                <h3>學生當日完整紀錄</h3>
+                <p class="section-kicker">學生本輪紀錄</p>
+                <h3>學生本輪完整紀錄</h3>
               </div>
               <span class="status-pill" id="today-student-detail-status">請先選擇學生</span>
             </div>
@@ -499,8 +499,8 @@
         <div class="panel-header">
           <div>
             <p class="section-kicker">學生填寫入口</p>
-            <h2>學生今日課表與訓練紀錄</h2>
-            <p class="muted-copy">可載入今日課表、填寫訓練內容，並查詢個人歷史紀錄。</p>
+            <h2>學生本輪課表與訓練紀錄</h2>
+            <p class="muted-copy">可載入本輪課表、填寫訓練內容，並查詢個人歷史紀錄。</p>
           </div>
           <div class="view-toggle" aria-label="Student layout mode">
             <button class="view-toggle-button is-active" id="student-global-view-card" type="button">手機版介面</button>
@@ -524,7 +524,7 @@
             <p class="muted-copy">也可以直接使用專屬連結進入，網站會自動帶入你的身份。</p>
             <select id="student-program-select" hidden aria-hidden="true"></select>
             <div class="student-entry-submit">
-              <button class="ghost-button" id="confirm-student-access" type="button">確認身份並載入今日課表</button>
+              <button class="ghost-button" id="confirm-student-access" type="button">確認身份並載入本輪課表</button>
             </div>
             <div class="student-summary" id="student-summary"></div>
           </article>
@@ -534,8 +534,8 @@
           <article class="card wide-card" id="student-program-card">
             <div class="card-heading">
               <div>
-                  <p class="section-kicker">今日課表</p>
-                  <h3>今日訓練課表</h3>
+                  <p class="section-kicker">本輪課表</p>
+                  <h3>本輪訓練課表</h3>
               </div>
               <div class="student-view-tools">
                 <span class="status-pill" id="student-program-status">等待載入</span>
@@ -552,7 +552,7 @@
             <div class="student-active-bar is-hidden" id="student-active-bar">
               <div class="student-active-copy" id="student-active-copy"></div>
               <div class="student-active-actions">
-                <button class="primary-button" id="load-student-program-inline" type="button">載入今日課表</button>
+                <button class="primary-button" id="load-student-program-inline" type="button">載入本輪課表</button>
                 <button class="ghost-button" id="open-student-leave-system-inline" type="button" hidden>前往請假系統</button>
                 <button class="ghost-button" id="edit-student-program" type="button">編輯課表項目</button>
                 <button class="ghost-button" id="change-student-access" type="button">切換身份 / 課表</button>
@@ -563,7 +563,7 @@
 
             <div class="student-phone-frame" id="student-phone-frame">
               <div class="student-mobile-tools" id="student-mobile-tools">
-                <button class="primary-button full-width" id="load-student-program-mobile" type="button">載入今日課表</button>
+                <button class="primary-button full-width" id="load-student-program-mobile" type="button">載入本輪課表</button>
                 <button class="ghost-button full-width" id="edit-student-program-mobile-top" type="button">編輯課表項目</button>
               </div>
               <div class="student-card-list" id="student-card-list"></div>
