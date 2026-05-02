@@ -192,7 +192,7 @@ function doPost(e) {
         return jsonResponse_(buildFullBootstrap_());
 
       case "deleteProgram":
-        deleteProgram_(payload.programId);
+        deleteProgram_(payload.programId || payload.program_id);
         return jsonResponse_(buildFullBootstrap_());
 
       case "submitWorkoutLogs":

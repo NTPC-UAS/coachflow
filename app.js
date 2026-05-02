@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260502-0011";
+const PUBLIC_APP_VERSION = "20260503-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -825,7 +825,10 @@ async function publishProgramToCloud(program, items) {
 }
 
 async function deleteProgramFromCloud(programId) {
-  const payload = await callCloudApi("deleteProgram", { programId });
+  const payload = await callCloudApi("deleteProgram", { programId, program_id: programId });
+  if (Array.isArray(payload.programs) && payload.programs.some((program) => (program.program_id || program.id) === programId)) {
+    throw new Error("雲端尚未刪除這份課表，請確認 Apps Script 已重新部署。");
+  }
   applyCloudPayloadToState(payload);
 }
 
@@ -3616,10 +3619,9 @@ async function handleProgramLibraryAction(event) {
       try {
         await deleteProgramFromCloud(programId);
       } catch (error) {
-        console.warn("Cloud deleteProgram failed, falling back to local state:", error);
-        state.programs = state.programs.filter((item) => item.id !== programId);
-        state.programItems = state.programItems.filter((item) => item.programId !== programId);
-        persistState();
+        console.warn("Cloud deleteProgram failed:", error);
+        window.alert(error?.message || "雲端刪除課表失敗，請確認 Apps Script 已重新部署後再試。");
+        return;
       }
     } else {
       state.programs = state.programs.filter((item) => item.id !== programId);
