@@ -1159,7 +1159,7 @@
       id: leave.id,
       lessonId: leave.lessonId,
       lessonKey: getLessonCloudMatchKey(targetLesson),
-      calendarEventId: targetLesson.calendarEventId || "",
+      calendarEventId: leave.calendarEventId || targetLesson.calendarEventId || "",
       studentCode: normalizeParticipantCode(leave.studentCode || targetLesson.studentCode),
       coachCode: normalizeParticipantCode(leave.coachCode || targetLesson.coachCode),
       lessonStartAt: targetLesson.startAt,
@@ -1218,6 +1218,7 @@
     }
     const existing = state.leaveRequests.find((leave) => leave.id === record.id) ||
       state.leaveRequests.find((leave) => leave.lessonId === lesson.id && leave.studentCode === record.studentCode && !leave.revokedAt);
+    const recordCalendarEventId = String(record.calendarEventId || "").trim();
     let changed = false;
     const revokedAt = String(record.revokedAt || "").trim();
     if (revokedAt) {
@@ -1240,12 +1241,20 @@
         lessonId: lesson.id,
         studentCode: record.studentCode,
         coachCode: record.coachCode,
+        calendarEventId: recordCalendarEventId,
         type: "normal",
         submittedAt: record.submittedAt || new Date().toISOString(),
         submittedBy: record.submittedBy || "",
         submittedByRole: record.submittedByRole || "",
         makeupEligible: record.makeupEligible !== false
       });
+      changed = true;
+    } else if (recordCalendarEventId && normalizeCalendarEventId(existing.calendarEventId) !== normalizeCalendarEventId(recordCalendarEventId)) {
+      existing.calendarEventId = recordCalendarEventId;
+      changed = true;
+    }
+    if (recordCalendarEventId && normalizeCalendarEventId(lesson.calendarEventId) !== normalizeCalendarEventId(recordCalendarEventId)) {
+      lesson.calendarEventId = recordCalendarEventId;
       changed = true;
     }
     if (lesson.attendanceStatus !== "leave-normal" || lesson.calendarOccupied !== false) {
@@ -2120,8 +2129,27 @@
     };
   }
 
-  async function tryDeleteCalendarEventForLesson(lesson, reason, strictMode) {
-    const eventId = String(lesson.calendarEventId || "").trim();
+  async function tryDeleteCalendarEventForLesson(lesson, reason, strictMode, options = {}) {
+    let eventId = String(lesson.calendarEventId || "").trim();
+    const shouldResolveMissingEvent = Boolean(options.resolveMissingEventId);
+    if (shouldResolveMissingEvent && (!eventId || isGeneratedLocalCalendarEventId(eventId))) {
+      try {
+        const resolvedEvent = await resolveSingleCalendarEventForLesson(lesson, "");
+        if (resolvedEvent?.eventId) {
+          eventId = String(resolvedEvent.eventId || "").trim();
+          lesson.calendarEventId = eventId;
+        } else {
+          if (eventId && isGeneratedLocalCalendarEventId(eventId)) {
+            lesson.calendarEventId = "";
+            saveState();
+          }
+          return false;
+        }
+      } catch (error) {
+        addLog(`[Google日曆] 請假課程 ${lesson.id} 無法確認待刪除事件：${String(error?.message || "未知錯誤")}`);
+        return false;
+      }
+    }
     if (!eventId) {
       return true;
     }
@@ -2202,6 +2230,40 @@
     }
   }
 
+  async function syncActiveLeaveCalendarDeletes(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const coachCode = normalizeParticipantCode(scope.coachCode || activeCoachCode || "");
+    const studentCode = normalizeParticipantCode(scope.studentCode || "");
+    let syncedAny = false;
+    const leaves = state.leaveRequests
+      .filter((leave) => (
+        String(leave.type || "normal") === "normal" &&
+        !leave.revokedAt &&
+        (!coachCode || leave.coachCode === coachCode) &&
+        (!studentCode || leave.studentCode === studentCode)
+      ))
+      .sort((a, b) => new Date(a.submittedAt || 0) - new Date(b.submittedAt || 0));
+
+    for (const leave of leaves) {
+      const lesson = getLessonById(leave.lessonId);
+      if (!lesson || lesson.attendanceStatus !== "leave-normal") {
+        continue;
+      }
+      if (leave.calendarEventId && normalizeCalendarEventId(lesson.calendarEventId) !== normalizeCalendarEventId(leave.calendarEventId)) {
+        lesson.calendarEventId = leave.calendarEventId;
+      }
+      const deleted = await tryDeleteCalendarEventForLesson(lesson, "synced_normal_leave", false, {
+        resolveMissingEventId: true
+      });
+      if (deleted) {
+        syncedAny = true;
+      }
+    }
+    return syncedAny;
+  }
+
   async function syncCoachCalendarEvents() {
     if (!requireCoachWriteAccess()) {
       return;
@@ -2227,7 +2289,7 @@
     const calendarPayload = getCalendarPayloadForCoach(activeCoachCode);
 
     const confirmed = window.confirm(
-      `本次將以 Google 日曆同步 ${syncScopeText}。\n會先讀取 Google 當月事件並更新請假系統課程；若本地課程在 Google 當月找不到對應事件，會列入同步移除確認。\n是否繼續？`
+      `本次將以 Google 日曆同步 ${syncScopeText}。\n會先處理已請假的課程，再讀取 Google 當月事件並更新剩下課程；若本地課程在 Google 當月找不到對應事件，會列入同步移除確認。\n是否繼續？`
     );
     if (!confirmed) {
       if (el.coachCalendarSyncText) {
@@ -2242,6 +2304,8 @@
     if (el.coachCalendarSyncText) {
       el.coachCalendarSyncText.textContent = `同步中... 讀取 Google ${syncScopeText}`;
     }
+    await syncActiveLeaveCalendarDeletes({ coachCode: activeCoachCode });
+    lessons = collectMonthLessons();
 
     let checkedCount = 0;
     let removedCount = 0;
@@ -2418,6 +2482,7 @@
       shiftMonth(studentCalendarMonthStart || new Date(), 1),
       shiftMonth(studentCalendarMonthStart || new Date(), 2)
     ];
+    await syncActiveLeaveCalendarDeletes({ coachCode: activeCoachCode, studentCode: activeStudentCode });
     let totalEvents = 0;
     let totalMatched = 0;
     let totalCreated = 0;
@@ -2510,6 +2575,8 @@
     if (options.showStatus && el.coachCalendarSyncText) {
       el.coachCalendarSyncText.textContent = "正在自動同步 Google 日曆...";
     }
+
+    await syncActiveLeaveCalendarDeletes({ coachCode });
 
     let totalEvents = 0;
     let totalMatched = 0;
@@ -3690,21 +3757,13 @@
       return;
     }
 
-    notifyUser("正在送出請假：先確認並刪除 Google 日曆上的這一堂課...", "info");
-    try {
-      await tryDeleteCalendarEventForLesson(lesson, "student_normal_leave", true);
-    } catch (error) {
-      alert(String(error?.message || "Google 日曆操作失敗，請稍後再試。"));
-      notifyUser("請假失敗：Google 日曆刪除沒有完成。", "warning");
-      return;
-    }
-
     const leaveId = newId("LEAVE");
     const leaveRecord = {
       id: leaveId,
       lessonId,
       studentCode: lesson.studentCode,
       coachCode: lesson.coachCode,
+      calendarEventId: lesson.calendarEventId || "",
       type: "normal",
       submittedAt: new Date().toISOString(),
       submittedBy: activeStudentCode,
@@ -3717,7 +3776,7 @@
     addLog(`學生 ${lesson.studentCode} 送出請假（課程 ${lesson.id}）。`);
     saveState();
     renderAll();
-    notifyUser("Google 日曆已刪除，請假紀錄已建立，正在同步雲端與寄送確認信...", "info");
+    notifyUser("請假紀錄已建立，正在同步教練端與 Google 日曆...", "info");
     try {
       await pushCloudLeaveRecord(leaveRecord, lesson);
       addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
@@ -3725,6 +3784,13 @@
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
       addLog(`[雲端請假] 上傳請假紀錄失敗：${message}`);
+      saveState();
+    }
+    const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "student_normal_leave", false, {
+      resolveMissingEventId: true
+    });
+    if (!calendarSynced) {
+      addLog(`[Google日曆] 請假 ${leaveRecord.id} 已建立，但 Google 日曆事件尚未確認刪除，將由教練端同步時再處理。`);
       saveState();
     }
     const studentEmail = getStudentNoticeEmail(lesson.studentCode);
@@ -3765,8 +3831,8 @@
     renderAll();
     notifyUser(
       emailSent
-        ? `請假完成：${getTimeText(lesson.startAt)} 課程已刪除，確認信已寄出。`
-        : `請假完成：${getTimeText(lesson.startAt)} 課程已刪除，但 Email 尚未成功寄出，請檢查收件人或補償任務。`,
+        ? `請假完成：${getTimeText(lesson.startAt)} 課程已標記請假，確認信已寄出。`
+        : `請假完成：${getTimeText(lesson.startAt)} 課程已標記請假，但 Email 尚未成功寄出，請檢查收件人或補償任務。`,
       emailSent ? "success" : "warning"
     );
   }
@@ -3790,18 +3856,9 @@
     }
     const studentName = getStudentDisplayName(lesson.studentCode);
     const confirmed = window.confirm(
-      `確定要幫 ${studentName} 申請 ${formatDateTime(lesson.startAt)} 的請假嗎？\n系統會刪除 Google 日曆這一堂課，並寄出確認信。`
+      `確定要幫 ${studentName} 申請 ${formatDateTime(lesson.startAt)} 的請假嗎？\n系統會先建立請假紀錄，再同步 Google 日曆並寄出確認信。`
     );
     if (!confirmed) {
-      return;
-    }
-
-    notifyUser(`正在代 ${studentName} 請假：刪除 Google 日曆課程中...`, "info");
-    try {
-      await tryDeleteCalendarEventForLesson(lesson, "coach_student_normal_leave", true);
-    } catch (error) {
-      alert(String(error?.message || "Google 日曆刪除失敗，請稍後再試。"));
-      notifyUser("代學生請假失敗：Google 日曆刪除沒有完成。", "warning");
       return;
     }
 
@@ -3812,6 +3869,7 @@
       lessonId,
       studentCode: lesson.studentCode,
       coachCode: lesson.coachCode,
+      calendarEventId: lesson.calendarEventId || "",
       type: "normal",
       submittedAt,
       submittedBy: activeCoachCode,
@@ -3824,6 +3882,7 @@
     addLog(`教練 ${activeCoachCode} 已代學生 ${lesson.studentCode} 請假：課程 ${lesson.id}。`);
     saveState();
     renderAll();
+    notifyUser(`已代 ${studentName} 建立請假紀錄，正在同步 Google 日曆...`, "info");
 
     try {
       await pushCloudLeaveRecord(leaveRecord, lesson);
@@ -3832,6 +3891,13 @@
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
       addLog(`[雲端請假] 教練代請假同步失敗：${message}`);
+      saveState();
+    }
+    const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "coach_student_normal_leave", false, {
+      resolveMissingEventId: true
+    });
+    if (!calendarSynced) {
+      addLog(`[Google日曆] 教練代請假 ${leaveRecord.id} 已建立，但 Google 日曆事件尚未確認刪除，將由下一次同步再處理。`);
       saveState();
     }
 
@@ -5168,7 +5234,7 @@
     }
 
     const leaves = state.leaveRequests
-      .filter((leave) => leave.coachCode === activeCoachCode)
+      .filter((leave) => leave.coachCode === activeCoachCode && !leave.revokedAt)
       .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
 
     const rows = leaves.map((leave) => {
@@ -6003,24 +6069,27 @@
         const loaded = activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
         if (loaded) {
           notifyUser("學生資料已載入，正在同步 Google 日曆與請假紀錄...", "info");
+          let leaveChanged = false;
+          let cloudLeaveFailed = false;
+          try {
+            leaveChanged = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode });
+          } catch (error) {
+            console.warn("Cloud leave sync failed for student login:", error);
+            cloudLeaveFailed = true;
+          }
           let calendarChanged = false;
           try {
             calendarChanged = await syncStudentCalendarEventsFromGoogle();
           } catch (error) {
             console.warn("Student Google calendar sync failed for student login:", error);
           }
-          try {
-            const changed = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode });
-            if (changed || calendarChanged) {
-              renderAll();
-            }
-            notifyUser("學生資料已更新完成，可以查看今日上課與請假狀態。", "success");
-          } catch (error) {
-            console.warn("Cloud leave sync failed for student login:", error);
-            if (calendarChanged) {
-              renderAll();
-            }
+          if (leaveChanged || calendarChanged) {
+            renderAll();
+          }
+          if (cloudLeaveFailed) {
             notifyUser("學生資料已載入，但雲端請假紀錄同步失敗，請稍後再試。", "warning");
+          } else {
+            notifyUser("學生資料已更新完成，可以查看今日上課與請假狀態。", "success");
           }
         }
       });
@@ -6803,10 +6872,6 @@
 
     try {
       const cloudSyncChanged = await cloudSyncPromise;
-      let studentCalendarSynced = false;
-      if (autoStudentLoaded && activeStudentCode) {
-        studentCalendarSynced = await syncStudentCalendarEventsFromGoogle();
-      }
       let cloudLeaveSynced = false;
       if ((autoStudentLoaded || autoCoachLoaded) && (activeStudentCode || activeCoachCode)) {
         try {
@@ -6817,6 +6882,10 @@
         } catch (error) {
           console.warn("Cloud leave sync failed during bootstrap:", error);
         }
+      }
+      let studentCalendarSynced = false;
+      if (autoStudentLoaded && activeStudentCode) {
+        studentCalendarSynced = await syncStudentCalendarEventsFromGoogle();
       }
       let readOnlyCalendarSynced = false;
       if (autoCoachLoaded && activeCoachReadOnly && activeCoachCode) {

@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0009">
+  <link rel="manifest" href="coach-pwa.webmanifest?v=20260503-0005">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>安裝 CoachFlow 教練端</title>
@@ -35,7 +35,7 @@
       <p>安裝後手機主畫面會出現 CoachFlow 教練端，打開會直接進入教練請假 / 補課月曆。</p>
       <div class="actions">
         <button class="primary" id="install-btn" type="button" hidden>安裝到手機</button>
-        <a class="button" href="leave-coach-sandbox.html?v=20260502-0009&source=coach-install">開啟教練請假系統</a>
+        <a class="button" href="leave-coach-sandbox.html?v=20260503-0005&source=coach-install">開啟教練請假系統</a>
       </div>
       <div class="tips">
         <strong>如果沒有出現安裝按鈕</strong>
@@ -47,7 +47,7 @@
     </section>
   </main>
   <script>
-    const version = "20260502-0009";
+    const version = "20260503-0005";
     let deferredPrompt = null;
     const installBtn = document.getElementById("install-btn");
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
