@@ -516,11 +516,11 @@ function upsertCoach_(coach) {
     updated_at: now
   };
 
-  if (!record.access_code) {
-    record.access_code = buildCoachAccessCode_(record.coach_name, rows.length + 1);
+  if (!record.access_code || isFieldValueUsedByOtherRow_(rows, "access_code", record.access_code, "coach_id", id)) {
+    record.access_code = buildUniqueCoachAccessCode_(record.coach_name, rows, id);
   }
-  if (!record.token) {
-    record.token = buildToken_(record.coach_name, "coach");
+  if (!record.token || isFieldValueUsedByOtherRow_(rows, "token", record.token, "coach_id", id)) {
+    record.token = buildUniqueToken_(record.coach_name, "coach", rows, "coach_id", id);
   }
 
   upsertRow_(SHEETS.coaches, "coach_id", record);
@@ -572,11 +572,11 @@ function upsertStudent_(student) {
     updated_at: now
   };
 
-  if (!record.access_code) {
-    record.access_code = buildStudentAccessCode_(record.student_name, rows.length + 1);
+  if (!record.access_code || isFieldValueUsedByOtherRow_(rows, "access_code", record.access_code, "student_id", id)) {
+    record.access_code = buildUniqueStudentAccessCode_(record.student_name, rows, id);
   }
-  if (!record.token) {
-    record.token = buildToken_(record.student_name, "student");
+  if (!record.token || isFieldValueUsedByOtherRow_(rows, "token", record.token, "student_id", id)) {
+    record.token = buildUniqueToken_(record.student_name, "student", rows, "student_id", id);
   }
 
   upsertRow_(SHEETS.students, "student_id", record);
@@ -968,12 +968,90 @@ function buildStudentAccessCode_(name, index) {
   return letters + Utilities.formatString("%03d", index);
 }
 
+function buildUniqueCoachAccessCode_(name, rows, coachId) {
+  return buildUniqueAccessCode_(name, rows, "coach_id", coachId, "CL");
+}
+
+function buildUniqueStudentAccessCode_(name, rows, studentId) {
+  return buildUniqueAccessCode_(name, rows, "student_id", studentId, "ST");
+}
+
+function buildUniqueAccessCode_(name, rows, idField, recordId, fallbackPrefix) {
+  const prefix = String(name || fallbackPrefix)
+    .replace(/[^A-Za-z]/g, "")
+    .toUpperCase()
+    .slice(0, 2) || fallbackPrefix;
+  const used = {};
+  let maxIndex = 0;
+
+  rows.forEach(function(row) {
+    if (String(row[idField] || "") === String(recordId || "")) {
+      return;
+    }
+    const code = String(row.access_code || "").trim().toUpperCase();
+    if (!code) {
+      return;
+    }
+    used[code] = true;
+    const match = code.match(/^([A-Z]+)(\d+)$/);
+    if (match && match[1] === prefix) {
+      maxIndex = Math.max(maxIndex, Number(match[2]) || 0);
+    }
+  });
+
+  let nextIndex = maxIndex + 1;
+  let candidate = prefix + Utilities.formatString("%03d", nextIndex);
+  while (used[candidate]) {
+    nextIndex += 1;
+    candidate = prefix + Utilities.formatString("%03d", nextIndex);
+  }
+  return candidate;
+}
+
 function buildToken_(name, fallbackPrefix) {
   const token = String(name || fallbackPrefix)
     .toLowerCase()
     .replace(/\s+/g, "")
     .replace(/[^a-z0-9]/g, "");
   return token || (fallbackPrefix + "-" + new Date().getTime());
+}
+
+function buildUniqueToken_(name, fallbackPrefix, rows, idField, recordId) {
+  const used = {};
+  rows.forEach(function(row) {
+    if (String(row[idField] || "") === String(recordId || "")) {
+      return;
+    }
+    const token = String(row.token || "").trim().toLowerCase();
+    if (token) {
+      used[token] = true;
+    }
+  });
+
+  const baseToken = buildToken_(name, fallbackPrefix);
+  if (baseToken && !used[String(baseToken).toLowerCase()]) {
+    return baseToken;
+  }
+
+  let nextIndex = 1;
+  let candidate = fallbackPrefix + Utilities.formatString("%03d", nextIndex);
+  while (used[String(candidate).toLowerCase()]) {
+    nextIndex += 1;
+    candidate = fallbackPrefix + Utilities.formatString("%03d", nextIndex);
+  }
+  return candidate;
+}
+
+function isFieldValueUsedByOtherRow_(rows, fieldName, value, idField, recordId) {
+  const normalizedValue = String(value || "").trim().toLowerCase();
+  if (!normalizedValue) {
+    return false;
+  }
+
+  return rows.some(function(row) {
+    return String(row[idField] || "") !== String(recordId || "")
+      && String(row[fieldName] || "").trim().toLowerCase() === normalizedValue;
+  });
 }
 
 function createId_(prefix) {

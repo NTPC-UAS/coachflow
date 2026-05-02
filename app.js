@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260503-0002";
+const PUBLIC_APP_VERSION = "20260503-0003";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -6341,9 +6341,8 @@ async function createStudentFromCoachForm() {
     return;
   }
 
-  const nextIndex = state.students.length + 1;
-  const tokenBase = `student${String(nextIndex).padStart(3, "0")}`;
-  const accessCode = buildAccessCode(name, nextIndex);
+  const tokenBase = getNextAvailableStudentToken();
+  const accessCode = getNextAvailableStudentAccessCode(name);
   const nextStudentId = `stu-${Date.now()}`;
   const defaultCoachId = APP_MODE === "admin" ? "" : (getCurrentCoach()?.id || "");
 
@@ -6409,13 +6408,61 @@ async function createStudentFromCoachForm() {
 }
 
 function buildAccessCode(name, index) {
+  const prefix = getAccessCodePrefix(name, "ST");
+  return `${prefix}${String(index).padStart(3, "0")}`;
+}
+
+function getAccessCodePrefix(name, fallback = "ST") {
   const latin = String(name || "")
     .replace(/[^A-Za-z]/g, "")
     .toUpperCase()
     .slice(0, 2);
 
-  const prefix = latin || "ST";
-  return `${prefix}${String(index).padStart(3, "0")}`;
+  return latin || fallback;
+}
+
+function getNextAvailableStudentAccessCode(name) {
+  const prefix = getAccessCodePrefix(name, "ST");
+  const usedCodes = new Set(
+    state.students
+      .map((student) => String(student.accessCode || "").trim().toUpperCase())
+      .filter(Boolean)
+  );
+  const maxExistingNumber = state.students.reduce((max, student) => {
+    const match = String(student.accessCode || "").trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
+    if (!match || match[1] !== prefix) {
+      return max;
+    }
+    return Math.max(max, Number(match[2]) || 0);
+  }, 0);
+
+  let nextIndex = maxExistingNumber + 1;
+  let candidate = `${prefix}${String(nextIndex).padStart(3, "0")}`;
+  while (usedCodes.has(candidate.toUpperCase())) {
+    nextIndex += 1;
+    candidate = `${prefix}${String(nextIndex).padStart(3, "0")}`;
+  }
+  return candidate;
+}
+
+function getNextAvailableStudentToken() {
+  const usedTokens = new Set(
+    state.students
+      .map((student) => String(student.token || "").trim().toLowerCase())
+      .filter(Boolean)
+  );
+  const maxExistingNumber = state.students.reduce((max, student) => {
+    const match = String(student.token || "").trim().toLowerCase().match(/^student(\d+)$/);
+    return match ? Math.max(max, Number(match[1]) || 0) : max;
+  }, 0);
+
+  let nextIndex = maxExistingNumber + 1;
+  let candidate = `student${String(nextIndex).padStart(3, "0")}`;
+  while (usedTokens.has(candidate.toLowerCase())) {
+    nextIndex += 1;
+    candidate = `student${String(nextIndex).padStart(3, "0")}`;
+  }
+  return candidate;
 }
 
 async function handleCoachRosterAction(event) {
