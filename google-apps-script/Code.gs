@@ -430,10 +430,26 @@ function resolveStudentAccessResponse_(accessValue) {
 }
 
 function ensureSheets_() {
-  const spreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  const spreadsheet = getCoachflowSpreadsheet_();
   Object.keys(SCHEMA).forEach(function(sheetName) {
     ensureSheet_(spreadsheet, sheetName, SCHEMA[sheetName]);
   });
+}
+
+function getCoachflowSpreadsheet_() {
+  const activeSpreadsheet = SpreadsheetApp.getActiveSpreadsheet();
+  if (activeSpreadsheet) {
+    return activeSpreadsheet;
+  }
+
+  const spreadsheetId = String(
+    PropertiesService.getScriptProperties().getProperty("COACHFLOW_SPREADSHEET_ID") || ""
+  ).trim();
+  if (spreadsheetId) {
+    return SpreadsheetApp.openById(spreadsheetId);
+  }
+
+  throw new Error("找不到 CoachFlow 試算表。請將試算表 ID 設到 Script Properties 的 COACHFLOW_SPREADSHEET_ID。");
 }
 
 function ensureSheet_(spreadsheet, sheetName, headers) {
@@ -458,7 +474,7 @@ function ensureSheet_(spreadsheet, sheetName, headers) {
 }
 
 function readTable_(sheetName) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(sheetName);
   const values = sheet.getDataRange().getValues();
   if (values.length <= 1) {
     return [];
@@ -857,7 +873,7 @@ function resolveStudentByAccess_(accessValue) {
 }
 
 function upsertRow_(sheetName, keyField, record) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(sheetName);
   const headers = SCHEMA[sheetName];
   const values = sheet.getDataRange().getValues();
   const keyIndex = headers.indexOf(keyField);
@@ -893,7 +909,7 @@ function updateRow_(sheetName, keyField, keyValue, patch) {
 }
 
 function deleteRow_(sheetName, keyField, keyValue) {
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(sheetName);
   const headers = SCHEMA[sheetName];
   const values = sheet.getDataRange().getValues();
   const keyIndex = headers.indexOf(keyField);
@@ -914,7 +930,7 @@ function appendRows_(sheetName, rows) {
     return;
   }
 
-  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(sheetName);
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(sheetName);
   const headers = SCHEMA[sheetName];
   const values = rows.map(function(record) {
     return headers.map(function(header) {
