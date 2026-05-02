@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0008">
+  <link rel="manifest" href="coach-pwa.webmanifest?v=20260502-0009">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -510,6 +510,15 @@
         </div>
       </article>
 
+      <article class="card">
+        <span class="role">教練端</span>
+        <h2>學生請假紀錄</h2>
+        <p class="hint">依請假送出時間由新到舊排列，快速查看誰在什麼時候請假、原本是哪一堂課。</p>
+        <div class="table-wrap">
+          <table id="coach-student-leave-table"></table>
+        </div>
+      </article>
+
     </section>
 
     <section class="grid">
@@ -618,12 +627,12 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260502-0008"></script>
-  <script src="leave-sandbox.js?v=20260502-0008"></script>
+  <script src="config.js?v=20260502-0009"></script>
+  <script src="leave-sandbox.js?v=20260502-0009"></script>
   <script>
     if ("serviceWorker" in navigator && location.protocol.startsWith("http")) {
       window.addEventListener("load", () => {
-        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0008").catch((error) => {
+        navigator.serviceWorker.register("./coach-pwa-sw.js?v=20260502-0009").catch((error) => {
           console.warn("CoachFlow coach PWA registration failed:", error);
         });
       });

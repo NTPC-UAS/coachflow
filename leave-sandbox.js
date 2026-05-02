@@ -71,6 +71,7 @@
     coachReviewUrgent: document.getElementById("coach-review-urgent"),
     coachReviewStudentFilter: document.getElementById("coach-review-student-filter"),
     coachReviewRefreshBtn: document.getElementById("coach-review-refresh-btn"),
+    coachStudentLeaveTable: document.getElementById("coach-student-leave-table"),
     coachReviewModal: document.getElementById("coach-review-modal"),
     coachReviewModalTitle: document.getElementById("coach-review-modal-title"),
     coachReviewModalMessage: document.getElementById("coach-review-modal-message"),
@@ -804,6 +805,7 @@
     [
       el.coachLeaveAddBtn,
       el.coachLeaveTable,
+      el.coachStudentLeaveTable,
       el.calendarRemovedTable,
       el.coachPendingTable,
       el.chargeStudentSelect,
@@ -5127,6 +5129,69 @@
     `;
   }
 
+  function getLeaveRequestStatusPill(leave) {
+    if (leave.revokedAt) {
+      return "<span class=\"status cancelled\">已取消</span>";
+    }
+    return "<span class=\"status normal\">已請假</span>";
+  }
+
+  function getLeaveRequestSubmitterText(leave) {
+    if (leave.submittedByRole === "coach") {
+      return `教練代送 ${leave.submittedBy || ""}`.trim();
+    }
+    if (leave.submittedByRole === "student") {
+      return "學生送出";
+    }
+    return leave.submittedBy || "-";
+  }
+
+  function getLeaveRequestMakeupText(leave) {
+    const related = state.makeupRequests
+      .filter((request) => request.leaveId === leave.id)
+      .sort((a, b) => new Date(b.pendingAt || b.startAt || 0) - new Date(a.pendingAt || a.startAt || 0));
+    if (!related.length) {
+      return leave.makeupEligible ? "尚未申請補課" : "-";
+    }
+    const latest = related[0];
+    const timeText = latest.startAt ? ` ${formatDateTime(latest.startAt)}` : "";
+    return `${getStatusPill(latest.status)}${timeText}`;
+  }
+
+  function renderCoachStudentLeaveTable() {
+    if (!el.coachStudentLeaveTable) {
+      return;
+    }
+    if (!activeCoachCode) {
+      el.coachStudentLeaveTable.innerHTML = "<thead><tr><th>請先登入教練</th></tr></thead>";
+      return;
+    }
+
+    const leaves = state.leaveRequests
+      .filter((leave) => leave.coachCode === activeCoachCode)
+      .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
+
+    const rows = leaves.map((leave) => {
+      const lesson = getLessonById(leave.lessonId);
+      const lessonTime = lesson?.startAt ? formatDateTime(lesson.startAt) : (leave.lessonId || "-");
+      return `
+        <tr>
+          <td>${getStudentDisplayName(leave.studentCode)}</td>
+          <td>${lessonTime}</td>
+          <td>${leave.submittedAt ? formatDateTime(leave.submittedAt) : "-"}</td>
+          <td>${getLeaveRequestSubmitterText(leave)}</td>
+          <td>${getLeaveRequestStatusPill(leave)}</td>
+          <td>${getLeaveRequestMakeupText(leave)}</td>
+        </tr>
+      `;
+    }).join("");
+
+    el.coachStudentLeaveTable.innerHTML = `
+      <thead><tr><th>學生</th><th>原課程時間</th><th>請假時間</th><th>送出方式</th><th>請假狀態</th><th>補課狀態</th></tr></thead>
+      <tbody>${rows || "<tr><td colspan=\"6\">目前沒有學生請假紀錄</td></tr>"}</tbody>
+    `;
+  }
+
   function renderMakeupSection() {
     if (!el.makeupLeaveSelect || !el.studentMakeupTable) {
       return;
@@ -5897,6 +5962,7 @@
     renderCoachPending();
     renderCoachCalendar();
     renderCoachLeaveTable();
+    renderCoachStudentLeaveTable();
     renderCalendarRemovedPanel();
     renderCompensationPanel();
     renderLogs();
