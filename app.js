@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260502-0001";
+const PUBLIC_APP_VERSION = "20260502-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -1795,13 +1795,43 @@ function getCoachRoundProgram(viewDate = getCoachTodayDate()) {
     || null;
 }
 
+function getCoachNextRoundDate(program) {
+  const programDateKey = getComparableDateKey(program?.date);
+  if (!programDateKey) {
+    return "";
+  }
+
+  return getCoachScopedPrograms()
+    .map((item) => ({
+      id: item.id,
+      dateKey: getComparableDateKey(item.date)
+    }))
+    .filter((item) => item.id !== program.id && item.dateKey && item.dateKey > programDateKey)
+    .sort((a, b) => a.dateKey.localeCompare(b.dateKey))[0]?.dateKey || "";
+}
+
+function isLogInProgramRound(log, program) {
+  if (!program || log?.programId !== program.id) {
+    return false;
+  }
+
+  const roundStart = getComparableDateKey(program.date);
+  const logDate = getLogActivityDateKey(log);
+  if (!roundStart || !logDate || logDate < roundStart) {
+    return false;
+  }
+
+  const nextRoundDate = getCoachNextRoundDate(program);
+  return !nextRoundDate || logDate < nextRoundDate;
+}
+
 function getCoachRoundContext(viewDate = getCoachTodayDate()) {
   const normalizedViewDate = normalizeDateKey(viewDate) || getTodayDateInAppZone();
   const viewDateKey = getComparableDateKey(normalizedViewDate);
   const program = getCoachRoundProgram(normalizedViewDate);
   const coachLogs = getCoachScopedLogs();
   const logs = program
-    ? coachLogs.filter((log) => log.programId === program.id)
+    ? coachLogs.filter((log) => isLogInProgramRound(log, program))
     : coachLogs.filter((log) => getLogActivityDateKey(log) === viewDateKey);
 
   return {
@@ -5226,7 +5256,7 @@ function renderCoachToday() {
     ? pendingStudents
         .map((student) => `<li><button class="ghost-button today-student-list-button" type="button" data-open-pending-student="${student.id || ""}">${student.name}</button></li>`)
         .join("")
-    : `<li class="muted-copy">\u672c\u8f2a\u6240\u6709\u5b78\u751f\u90fd\u5df2\u9001\u51fa\u3002</li>`;
+    : `<li class="muted-copy">${coachStudents.length ? "\u672c\u8f2a\u6240\u6709\u5b78\u751f\u90fd\u5df2\u9001\u51fa\u3002" : "\u76ee\u524d\u6c92\u6709\u53ef\u8ffd\u8e64\u7684\u5b78\u751f\u3002"}</li>`;
 
   if (els.todayLogsCount) {
     els.todayLogsCount.textContent = `\u5171 ${visibleRoundLogs.length} / ${roundLogs.length} \u7b46`;
@@ -5903,9 +5933,9 @@ function renderCoachStudentRoster() {
 
   const studentsPool = getCoachScopedStudents();
   const coachLogs = getCoachScopedLogs();
-  const program = getPublishedProgram(getCurrentCoach()?.id);
+  const program = getCoachRoundProgram(getCoachTodayDate()) || getPublishedProgram(getCurrentCoach()?.id);
   const submittedIds = new Set(
-    (program ? coachLogs.filter((log) => log.programId === program.id) : []).map((log) => log.studentId)
+    (program ? coachLogs.filter((log) => isLogInProgramRound(log, program)) : []).map((log) => log.studentId)
   );
   const displayDate = program?.date
     ? formatRocDateDisplay(program.date, "\u4eca\u65e5")
