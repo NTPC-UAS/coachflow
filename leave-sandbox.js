@@ -3459,6 +3459,28 @@
     return "<span class=\"status rejected\">失敗</span>";
   }
 
+  function markStudentPaymentDue(student, billingCycle, triggerSource) {
+    if (!student || !billingCycle?.isPaymentDue) {
+      return false;
+    }
+    const milestone = billingCycle.nextPaymentDueCount;
+    const currentStatus = normalizePaymentStatus(student.paymentStatus);
+    const nextNote = `第 ${milestone} 堂已達繳費門檻，待確認繳費。`;
+    let changed = false;
+    if (currentStatus !== "unpaid") {
+      student.paymentStatus = "unpaid";
+      changed = true;
+    }
+    if (!String(student.paymentNote || "").includes(nextNote)) {
+      student.paymentNote = nextNote;
+      changed = true;
+    }
+    if (changed) {
+      addLog(`[計費] ${student.code} 已達第 ${milestone} 堂，自動標記為未繳費。`);
+    }
+    return changed;
+  }
+
   async function maybeSendChargeReminder(studentCode, triggerSource) {
     const stats = getStudentChargeStats(studentCode);
     const student = stats.student;
@@ -3470,8 +3492,15 @@
     if (!billingCycle.isPaymentDue || milestone <= 0) {
       return false;
     }
+    const paymentStatusChanged = markStudentPaymentDue(student, billingCycle, triggerSource || "system");
     const reminderLogs = Array.isArray(student.chargeReminderLogs) ? student.chargeReminderLogs : [];
     if (reminderLogs.some((item) => Number(item?.milestone) === milestone)) {
+      if (paymentStatusChanged) {
+        saveState();
+        if (selectedChargeStudentCode === student.code) {
+          renderChargePanel();
+        }
+      }
       return false;
     }
     const reminderKey = `${student.code}:${milestone}`;
