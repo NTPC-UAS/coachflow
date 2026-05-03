@@ -9,13 +9,13 @@
   <meta name="apple-mobile-web-app-title" content="CoachFlow">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>CoachFlow 重訓課表與紀錄系統</title>
-  <link rel="manifest" href="coachflow.webmanifest?v=20260503-0017">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260503-0018">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260503-0017">
+  <link rel="stylesheet" href="styles.css?v=20260503-0018">
 </head>
 <body>
   <div class="app-shell">
@@ -566,7 +566,10 @@
             </div>
 
             <div class="student-active-bar is-hidden" id="student-active-bar">
-              <div class="student-active-copy" id="student-active-copy"></div>
+              <div class="student-active-info">
+                <div class="student-active-copy" id="student-active-copy"></div>
+                <div class="student-active-billing" id="student-active-billing" hidden>本期已扣 --/4</div>
+              </div>
               <div class="student-active-actions">
                 <button class="primary-button" id="load-student-program-inline" type="button">載入本輪課表</button>
                 <button class="ghost-button" id="open-student-leave-system-inline" type="button" hidden>前往請假系統</button>
@@ -857,7 +860,7 @@
     </div>
   </div>
 
-  <script charset="UTF-8" src="config.js?v=20260503-0017"></script>
-  <script charset="UTF-8" src="app.js?v=20260503-0017"></script>
+  <script charset="UTF-8" src="config.js?v=20260503-0018"></script>
+  <script charset="UTF-8" src="app.js?v=20260503-0018"></script>
 </body>
 </html>

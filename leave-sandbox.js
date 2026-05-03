@@ -1407,6 +1407,8 @@
     }
     const coachCode = normalizeParticipantCode(student.coachCode || activeCoachCode || "");
     const updatedAt = getStudentBillingUpdatedAt(student) || new Date().toISOString();
+    const stats = getStudentChargeStats(studentCode);
+    const billingCycle = getStudentBillingCycle(stats);
     return {
       studentCode,
       coachCode,
@@ -1421,6 +1423,13 @@
       paymentConfirmedAt: String(student.paymentConfirmedAt || ""),
       paymentConfirmedBy: normalizeParticipantCode(student.paymentConfirmedBy || ""),
       chargeReminderLogs: normalizeChargeReminderLogs(student.chargeReminderLogs),
+      chargeReminderStep: CHARGE_REMINDER_STEP,
+      systemChargedCount: billingCycle.systemChargedCount,
+      totalChargedCount: billingCycle.totalChargedCount,
+      currentCycleChargedCount: billingCycle.currentCycleChargedCount,
+      remainingToNextPayment: billingCycle.remainingToNextPayment,
+      nextPaymentDueCount: billingCycle.nextPaymentDueCount,
+      effectivePaymentStatus: billingCycle.effectivePaymentStatus,
       updatedAt,
       updatedBy: normalizeParticipantCode(student.billingUpdatedBy || activeCoachCode || activeStudentCode || "SYSTEM"),
       triggerSource: String(triggerSource || "")

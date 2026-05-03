@@ -1658,6 +1658,13 @@ function normalizeBillingProfile_(profile) {
     paymentConfirmedAt: safeString_(profile.paymentConfirmedAt, ""),
     paymentConfirmedBy: normalizeCode_(profile.paymentConfirmedBy),
     chargeReminderLogs: normalizeBillingReminderLogs_(profile.chargeReminderLogs),
+    chargeReminderStep: Math.max(1, toNonNegativeInt_(profile.chargeReminderStep, 4)),
+    systemChargedCount: hasNumericValue_(profile.systemChargedCount) ? toNonNegativeInt_(profile.systemChargedCount, 0) : "",
+    totalChargedCount: hasNumericValue_(profile.totalChargedCount) ? toNonNegativeInt_(profile.totalChargedCount, 0) : "",
+    currentCycleChargedCount: hasNumericValue_(profile.currentCycleChargedCount) ? toNonNegativeInt_(profile.currentCycleChargedCount, 0) : "",
+    remainingToNextPayment: hasNumericValue_(profile.remainingToNextPayment) ? toNonNegativeInt_(profile.remainingToNextPayment, 0) : "",
+    nextPaymentDueCount: hasNumericValue_(profile.nextPaymentDueCount) ? toNonNegativeInt_(profile.nextPaymentDueCount, 0) : "",
+    effectivePaymentStatus: normalizePaymentStatus_(profile.effectivePaymentStatus || profile.paymentStatus),
     updatedAt: safeString_(profile.updatedAt || profile.billingUpdatedAt, nowIso_()),
     updatedBy: normalizeCode_(profile.updatedBy || profile.billingUpdatedBy || "SYSTEM"),
     createdAt: safeString_(profile.createdAt, "")
@@ -1730,6 +1737,10 @@ function toNonNegativeInt_(value, fallback) {
     return fallback || 0;
   }
   return Math.max(0, Math.floor(n));
+}
+
+function hasNumericValue_(value) {
+  return value !== undefined && value !== null && value !== "" && Number.isFinite(Number(value));
 }
 
 function readChunkedProperty_(baseKey) {
