@@ -1652,6 +1652,8 @@ function normalizeBillingProfile_(profile) {
     emailUpdatedAt: safeString_(profile.emailUpdatedAt, ""),
     emailUpdatedBy: normalizeCode_(profile.emailUpdatedBy),
     chargeStartCount: toNonNegativeInt_(profile.chargeStartCount, 0),
+    chargeStartCountUpdatedAt: safeString_(profile.chargeStartCountUpdatedAt, ""),
+    chargeStartCountUpdatedBy: normalizeCode_(profile.chargeStartCountUpdatedBy),
     paidThroughCount: toNonNegativeInt_(profile.paidThroughCount, 0),
     paymentStatus: normalizePaymentStatus_(profile.paymentStatus),
     paymentNote: safeString_(profile.paymentNote, ""),

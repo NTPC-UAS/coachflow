@@ -180,6 +180,8 @@
         coachCode: "CH001",
         email: defaultNotifyEmail,
         chargeStartCount: 0,
+        chargeStartCountUpdatedAt: "",
+        chargeStartCountUpdatedBy: "",
         paidThroughCount: 0,
         paymentStatus: "unknown",
         paymentNote: "",
@@ -193,6 +195,8 @@
         coachCode: "CH001",
         email: defaultNotifyEmail,
         chargeStartCount: 2,
+        chargeStartCountUpdatedAt: "",
+        chargeStartCountUpdatedBy: "",
         paidThroughCount: 0,
         paymentStatus: "unknown",
         paymentNote: "",
@@ -206,6 +210,8 @@
         coachCode: "CH001",
         email: defaultNotifyEmail,
         chargeStartCount: 1,
+        chargeStartCountUpdatedAt: "",
+        chargeStartCountUpdatedBy: "",
         paidThroughCount: 0,
         paymentStatus: "unknown",
         paymentNote: "",
@@ -1373,6 +1379,7 @@
       : [];
     const times = [
       student?.billingUpdatedAt,
+      student?.chargeStartCountUpdatedAt,
       student?.paymentConfirmedAt,
       student?.emailUpdatedAt,
       ...logTimes
@@ -1390,6 +1397,45 @@
     student.billingUpdatedAt = now;
     student.billingUpdatedBy = normalizeParticipantCode(updatedBy || activeCoachCode || activeStudentCode || "SYSTEM");
     return now;
+  }
+
+  function getChargeStartBaselineAt(student) {
+    const explicitBaseline = String(student?.chargeStartCountUpdatedAt || "").trim();
+    if (hasValidDateValue(explicitBaseline)) {
+      return explicitBaseline;
+    }
+    if (toNonNegativeInt(student?.chargeStartCount, 0) <= 0) {
+      return "";
+    }
+    const fallbackBaseline = String(student?.billingUpdatedAt || "").trim();
+    const fallbackBy = normalizeParticipantCode(student?.billingUpdatedBy || "");
+    if (!fallbackBy || fallbackBy === "SYSTEM" || !hasValidDateValue(fallbackBaseline)) {
+      return "";
+    }
+    const fallbackTime = new Date(fallbackBaseline).getTime();
+    const paymentTime = new Date(student?.paymentConfirmedAt || "").getTime();
+    if (Number.isFinite(paymentTime) && Math.abs(fallbackTime - paymentTime) <= 5000) {
+      return "";
+    }
+    return fallbackBaseline;
+  }
+
+  function getChargeStartBaselineBy(student) {
+    const explicitBy = normalizeParticipantCode(student?.chargeStartCountUpdatedBy || "");
+    if (explicitBy) {
+      return explicitBy;
+    }
+    return getChargeStartBaselineAt(student) ? normalizeParticipantCode(student?.billingUpdatedBy || "") : "";
+  }
+
+  function isLessonAfterChargeStartBaseline(lesson, student) {
+    const baselineAt = getChargeStartBaselineAt(student);
+    if (!baselineAt) {
+      return true;
+    }
+    const lessonTime = new Date(lesson?.startAt || "").getTime();
+    const baselineTime = new Date(baselineAt).getTime();
+    return Number.isFinite(lessonTime) && (!Number.isFinite(baselineTime) || lessonTime > baselineTime);
   }
 
   function isUnsupportedAppsScriptAction(error, action) {
@@ -1417,6 +1463,8 @@
       emailUpdatedAt: String(student.emailUpdatedAt || ""),
       emailUpdatedBy: normalizeParticipantCode(student.emailUpdatedBy || ""),
       chargeStartCount: toNonNegativeInt(student.chargeStartCount, 0),
+      chargeStartCountUpdatedAt: getChargeStartBaselineAt(student),
+      chargeStartCountUpdatedBy: getChargeStartBaselineBy(student),
       paidThroughCount: toNonNegativeInt(student.paidThroughCount, 0),
       paymentStatus: normalizePaymentStatus(student.paymentStatus),
       paymentNote: String(student.paymentNote || ""),
@@ -1484,6 +1532,7 @@
     const candidates = [
       profile?.updatedAt,
       profile?.billingUpdatedAt,
+      profile?.chargeStartCountUpdatedAt,
       profile?.paymentConfirmedAt,
       profile?.emailUpdatedAt
     ];
@@ -1541,6 +1590,8 @@
       emailUpdatedAt: String(profile.emailUpdatedAt || student.emailUpdatedAt || ""),
       emailUpdatedBy: normalizeParticipantCode(profile.emailUpdatedBy || student.emailUpdatedBy || ""),
       chargeStartCount: profile.chargeStartCount === undefined ? toNonNegativeInt(student.chargeStartCount, 0) : toNonNegativeInt(profile.chargeStartCount, 0),
+      chargeStartCountUpdatedAt: String(profile.chargeStartCountUpdatedAt || student.chargeStartCountUpdatedAt || ""),
+      chargeStartCountUpdatedBy: normalizeParticipantCode(profile.chargeStartCountUpdatedBy || student.chargeStartCountUpdatedBy || ""),
       paidThroughCount: profile.paidThroughCount === undefined ? toNonNegativeInt(student.paidThroughCount, 0) : toNonNegativeInt(profile.paidThroughCount, 0),
       paymentStatus: profile.paymentStatus === undefined ? normalizePaymentStatus(student.paymentStatus) : normalizePaymentStatus(profile.paymentStatus),
       paymentNote: profile.paymentNote === undefined ? String(student.paymentNote || "") : String(profile.paymentNote || ""),
@@ -1559,6 +1610,8 @@
       emailUpdatedAt: student.emailUpdatedAt,
       emailUpdatedBy: student.emailUpdatedBy,
       chargeStartCount: student.chargeStartCount,
+      chargeStartCountUpdatedAt: student.chargeStartCountUpdatedAt,
+      chargeStartCountUpdatedBy: student.chargeStartCountUpdatedBy,
       paidThroughCount: student.paidThroughCount,
       paymentStatus: student.paymentStatus,
       paymentNote: student.paymentNote,
@@ -1575,6 +1628,8 @@
       emailUpdatedAt: next.emailUpdatedAt,
       emailUpdatedBy: next.emailUpdatedBy,
       chargeStartCount: next.chargeStartCount,
+      chargeStartCountUpdatedAt: next.chargeStartCountUpdatedAt,
+      chargeStartCountUpdatedBy: next.chargeStartCountUpdatedBy,
       paidThroughCount: next.paidThroughCount,
       paymentStatus: next.paymentStatus,
       paymentNote: next.paymentNote,
@@ -1855,6 +1910,8 @@
       coachCode: normalizedCoachCode,
       email: normalizedEmail || fallbackEmail,
       chargeStartCount: 0,
+      chargeStartCountUpdatedAt: "",
+      chargeStartCountUpdatedBy: "",
       paidThroughCount: 0,
       paymentStatus: "unknown",
       paymentNote: "",
@@ -2273,6 +2330,8 @@
       coachCode,
       email: "",
       chargeStartCount: 0,
+      chargeStartCountUpdatedAt: "",
+      chargeStartCountUpdatedBy: "",
       paidThroughCount: 0,
       paymentStatus: "unknown",
       paymentNote: "",
@@ -3620,7 +3679,8 @@
           lesson.studentCode === student.code &&
           lesson.attendanceStatus !== "calendar-removed" &&
           isLessonActiveForTrackingStats(lesson) &&
-          isLessonChargedForBilling(lesson)
+          isLessonChargedForBilling(lesson) &&
+          isLessonAfterChargeStartBaseline(lesson, student)
         ))
         .length;
       const existingSystemChargedCount = existingChargedCount;
@@ -3639,6 +3699,8 @@
         paymentConfirmedBy: String(student.paymentConfirmedBy || ""),
         emailUpdatedAt: String(student.emailUpdatedAt || ""),
         emailUpdatedBy: String(student.emailUpdatedBy || ""),
+        chargeStartCountUpdatedAt: String(student.chargeStartCountUpdatedAt || ""),
+        chargeStartCountUpdatedBy: normalizeParticipantCode(student.chargeStartCountUpdatedBy || ""),
         chargeReminderLogs: normalizeChargeReminderLogs(student.chargeReminderLogs),
         billingUpdatedAt: String(student.billingUpdatedAt || getStudentBillingUpdatedAt(student) || ""),
         billingUpdatedBy: normalizeParticipantCode(student.billingUpdatedBy || "")
@@ -3673,6 +3735,8 @@
       return {
         ...student,
         chargeStartCount: 0,
+        chargeStartCountUpdatedAt: "",
+        chargeStartCountUpdatedBy: "",
         billingUpdatedAt: new Date().toISOString(),
         billingUpdatedBy: "SYSTEM"
       };
@@ -3705,6 +3769,8 @@
     state.students = (state.students || []).map((student) => ({
       ...student,
       chargeStartCount: 0,
+      chargeStartCountUpdatedAt: "",
+      chargeStartCountUpdatedBy: "",
       paidThroughCount: 0,
       paymentStatus: "unknown",
       paymentNote: "",
@@ -3770,6 +3836,8 @@
     state.students = (state.students || []).map((student) => ({
       ...student,
       chargeStartCount: 0,
+      chargeStartCountUpdatedAt: "",
+      chargeStartCountUpdatedBy: "",
       paidThroughCount: 0,
       paymentStatus: "unknown",
       paymentNote: "",
@@ -3941,7 +4009,7 @@
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
     const startCount = toNonNegativeInt(student?.chargeStartCount, 0);
     const rawChargedLessons = lessons
-      .filter(isLessonChargedForBilling)
+      .filter((lesson) => isLessonChargedForBilling(lesson) && isLessonAfterChargeStartBaseline(lesson, student))
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
     const chargedLessons = rawChargedLessons
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
@@ -3997,14 +4065,20 @@
     const defaultQuotaCount = importedCount > 0 ? getPaidQuotaCeiling(importedCount) : CHARGE_REMINDER_STEP;
     const activeQuotaCount = storedPaidQuotaCount || defaultQuotaCount;
     const paidThroughCount = storedPaidQuotaCount || (storedStatus === "paid" || totalChargedCount > 0 ? activeQuotaCount : 0);
-    const cycleStartCount = Math.max(0, activeQuotaCount - CHARGE_REMINDER_STEP);
-    const currentCycleChargedCount = Math.min(
-      CHARGE_REMINDER_STEP,
-      Math.max(0, totalChargedCount - cycleStartCount)
-    );
-    const nextPaymentDueCount = activeQuotaCount;
-    const remainingToNextPayment = Math.max(0, activeQuotaCount - totalChargedCount);
-    const isPaymentDue = totalChargedCount >= activeQuotaCount && totalChargedCount > 0;
+    const cycleRemainder = totalChargedCount % CHARGE_REMINDER_STEP;
+    const currentCycleChargedCount = totalChargedCount <= 0
+      ? 0
+      : (cycleRemainder === 0 ? CHARGE_REMINDER_STEP : cycleRemainder);
+    const remainingToNextPayment = currentCycleChargedCount === CHARGE_REMINDER_STEP
+      ? 0
+      : CHARGE_REMINDER_STEP - currentCycleChargedCount;
+    const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
+    const coveredPaymentDueCount = storedPaidQuotaCount || (storedStatus === "paid" ? activeQuotaCount : 0);
+    const overduePaymentDueCount = lastCompletedPaymentDueCount > 0 && coveredPaymentDueCount < lastCompletedPaymentDueCount
+      ? lastCompletedPaymentDueCount
+      : 0;
+    const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
+    const isPaymentDue = overduePaymentDueCount > 0;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
     return {
       paidThroughCount,
@@ -4227,7 +4301,10 @@
     }
     const nextCount = toNonNegativeInt(el.chargeBaseCountInput?.value, 0);
     student.chargeStartCount = nextCount;
-    touchStudentBillingProfile(student, activeCoachCode || "SYSTEM");
+    const updatedBy = activeCoachCode || "SYSTEM";
+    const updatedAt = touchStudentBillingProfile(student, updatedBy);
+    student.chargeStartCountUpdatedAt = updatedAt;
+    student.chargeStartCountUpdatedBy = normalizeParticipantCode(updatedBy);
     addLog(`[計費] ${student.code} 導入前已扣堂數調整為 ${nextCount}。`);
     saveState();
     renderBillingPanels();

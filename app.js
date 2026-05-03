@@ -86,7 +86,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260503-0020";
+const PUBLIC_APP_VERSION = "20260503-0021";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_BILLING_DEFAULT_STEP = 4;
@@ -3920,6 +3920,15 @@ function getLeaveBillingSummaryFromProfile(rawProfile) {
   };
 }
 
+function hideStudentLeaveBillingTag() {
+  if (!els.studentActiveBilling) {
+    return;
+  }
+  els.studentActiveBilling.hidden = true;
+  els.studentActiveBilling.textContent = "";
+  els.studentActiveBilling.classList.remove("is-loading", "is-muted");
+}
+
 async function callLeaveSystemApi(action, payload = {}, method = "GET") {
   const url = getLeaveAppsScriptUrl();
   if (!url) {
@@ -4026,62 +4035,12 @@ function renderStudentActiveInfo(student, assignedCoachName, program) {
     }
   }
 
-  if (!els.studentActiveBilling) {
-    return;
-  }
-  if (!student) {
-    els.studentActiveBilling.hidden = true;
-    els.studentActiveBilling.textContent = `本期已扣 --/${LEAVE_BILLING_DEFAULT_STEP}`;
-    els.studentActiveBilling.classList.remove("is-loading", "is-muted");
-    return;
-  }
-  const assignedCoach = state.coaches.find((coach) => coach.id === (student.primaryCoachId || ""));
-  const cacheKey = getStudentLeaveBillingCacheKey(student, assignedCoach);
-  const cached = cacheKey ? studentLeaveBillingCache.get(cacheKey) : null;
-  const isLoading = cacheKey && studentLeaveBillingLoadingKey === cacheKey;
-  const summary = cached?.summary || null;
-  els.studentActiveBilling.hidden = false;
-  els.studentActiveBilling.textContent = summary?.label || (isLoading ? "本期已扣 載入中" : `本期已扣 --/${LEAVE_BILLING_DEFAULT_STEP}`);
-  els.studentActiveBilling.classList.toggle("is-loading", Boolean(isLoading && !summary));
-  els.studentActiveBilling.classList.toggle("is-muted", Boolean(!summary && !isLoading));
+  hideStudentLeaveBillingTag();
 }
 
 async function refreshStudentLeaveBillingSummary(options = {}) {
-  const student = getSelectedStudent();
-  if (!student) {
-    renderStudentActiveInfo(null, "", null);
-    return;
-  }
-  const assignedCoach = state.coaches.find((coach) => coach.id === (student.primaryCoachId || ""));
-  const cacheKey = getStudentLeaveBillingCacheKey(student, assignedCoach);
-  if (!cacheKey) {
-    return;
-  }
-  const cached = studentLeaveBillingCache.get(cacheKey);
-  if (!options.force && cached && Date.now() - cached.fetchedAt < LEAVE_BILLING_CACHE_TTL_MS) {
-    renderStudentActiveInfo(student, assignedCoach?.name || "尚未指派", getSelectedStudentProgram());
-    return;
-  }
-  if (studentLeaveBillingLoadingKey === cacheKey) {
-    return;
-  }
-
-  studentLeaveBillingLoadingKey = cacheKey;
-  renderStudentActiveInfo(student, assignedCoach?.name || "尚未指派", getSelectedStudentProgram());
-  try {
-    const summary = await fetchStudentLeaveBillingSummary(student, assignedCoach);
-    studentLeaveBillingCache.set(cacheKey, {
-      summary,
-      fetchedAt: Date.now()
-    });
-  } finally {
-    if (studentLeaveBillingLoadingKey === cacheKey) {
-      studentLeaveBillingLoadingKey = "";
-    }
-    const currentStudent = getSelectedStudent();
-    const currentCoach = state.coaches.find((coach) => coach.id === (currentStudent?.primaryCoachId || ""));
-    renderStudentActiveInfo(currentStudent, currentCoach?.name || "尚未指派", getSelectedStudentProgram());
-  }
+  studentLeaveBillingLoadingKey = "";
+  hideStudentLeaveBillingTag();
 }
 
 function renderStudentSummary() {
