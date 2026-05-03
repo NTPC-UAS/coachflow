@@ -6172,11 +6172,8 @@
     }
 
     el.chargeMetricsBox.innerHTML = `
-      <div class="metric"><div class="k">系統課程數</div><div class="v">${stats.lessons.length}</div></div>
       <div class="metric"><div class="k">導入前已扣堂</div><div class="v">${stats.startCount}</div></div>
-      <div class="metric"><div class="k">已扣堂數（系統）</div><div class="v">${stats.chargedLessons.length}</div></div>
       <div class="metric"><div class="k">累計已扣堂</div><div class="v">${stats.totalChargedCount}</div></div>
-      <div class="metric"><div class="k">已繳到堂數</div><div class="v">${billingCycle.paidThroughCount}</div></div>
       <div class="metric"><div class="k">本期已扣</div><div class="v">${billingCycle.currentCycleChargedCount}/${CHARGE_REMINDER_STEP}</div></div>
       <div class="metric"><div class="k">距下次繳費</div><div class="v">${billingCycle.remainingToNextPayment}</div></div>
       <div class="metric"><div class="k">繳費狀態</div><div class="v">${getPaymentStatusLabel(billingCycle.effectivePaymentStatus)}</div></div>
