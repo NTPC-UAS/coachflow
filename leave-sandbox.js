@@ -11,6 +11,7 @@
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
   const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
   const RESET_ALL_TRACKING_DATA_MIGRATION = "reset-all-tracking-data-20260503-0908";
+  const PURGE_PRE_RESET_TRACKING_DATA_MIGRATION = "purge-pre-reset-tracking-data-20260503-0009";
   const TRACKING_DATA_RESET_AT = "2026-05-03T09:08:00+08:00";
   const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
   const LEAVE_PREFILL_MAX_AGE_MS = 10 * 60 * 1000;
@@ -441,6 +442,18 @@
     return Number.isFinite(valueTime) && valueTime >= resetTime;
   }
 
+  function isLessonAfterTrackingDataReset(lesson) {
+    return isAfterTrackingDataReset(lesson?.startAt);
+  }
+
+  function isLessonActiveForTrackingStats(lesson) {
+    if (!isLessonAfterTrackingDataReset(lesson)) {
+      return false;
+    }
+    const startTime = new Date(lesson?.startAt || "").getTime();
+    return Number.isFinite(startTime) && (startTime <= Date.now() || lesson.attendanceStatus !== "scheduled");
+  }
+
   function getDateTimePartsInTaipei(dateValue) {
     const parts = new Intl.DateTimeFormat("en-CA", {
       timeZone: TZ,
@@ -651,6 +664,7 @@
       .filter(
         (lesson) =>
           lesson.studentCode === studentCode &&
+          isLessonAfterTrackingDataReset(lesson) &&
           lesson.attendanceStatus !== "coach-leave" &&
           lesson.attendanceStatus !== "calendar-removed" &&
           getDateKeyInTaipei(new Date(lesson.startAt)) === dateKey
@@ -663,6 +677,7 @@
       .filter(
         (lesson) =>
           lesson.coachCode === coachCode &&
+          isLessonAfterTrackingDataReset(lesson) &&
           lesson.calendarOccupied &&
           getDateKeyInTaipei(new Date(lesson.startAt)) === dateKey
       )
@@ -1395,6 +1410,7 @@
 
   function seedWeeklyLessonsForStudent(studentCode, coachCode) {
     const todayKey = getDateKeyInTaipei(new Date());
+    const nowTime = Date.now();
     const defaultWeekday = pickDefaultLessonWeekdayForCoach(coachCode);
     const firstCycleDay = getNextDateKeyByWeekday(todayKey, defaultWeekday, true);
     const defaultTime = pickDefaultLessonTimeForCoach(coachCode);
@@ -1402,6 +1418,11 @@
 
     dayOffsets.forEach((offset) => {
       const targetDateKey = addDays(firstCycleDay, offset);
+      const targetStartAt = makeTaipeiDateTime(targetDateKey, defaultTime).toISOString();
+      const targetTime = new Date(targetStartAt).getTime();
+      if (!isAfterTrackingDataReset(targetStartAt) || !Number.isFinite(targetTime) || targetTime <= nowTime) {
+        return;
+      }
       const existed = state.lessons.some(
         (lesson) =>
           lesson.studentCode === studentCode &&
@@ -2014,6 +2035,7 @@
           lesson.studentCode === studentCode &&
           lesson.coachCode === coachCode &&
           isGoogleSyncLesson(lesson) &&
+          isLessonAfterTrackingDataReset(lesson) &&
           !usedLessonIds.has(lesson.id)
       )
       .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - targetTime) - Math.abs(new Date(b.startAt).getTime() - targetTime));
@@ -2029,7 +2051,7 @@
     const usedLessonIds = new Set();
     const eventIdToLessons = new Map();
     state.lessons.forEach((lesson) => {
-      if (lesson.coachCode !== coachCode || !isGoogleSyncLesson(lesson)) {
+      if (lesson.coachCode !== coachCode || !isGoogleSyncLesson(lesson) || !isLessonAfterTrackingDataReset(lesson)) {
         return;
       }
       const key = normalizeCalendarEventId(lesson.calendarEventId);
@@ -2058,6 +2080,10 @@
       const startAt = String(event?.startAt || "").trim();
       const eventId = String(event?.eventId || "").trim();
       if (!startAt || !eventId) {
+        skippedNonLessonEvent += 1;
+        return;
+      }
+      if (!isAfterTrackingDataReset(startAt)) {
         skippedNonLessonEvent += 1;
         return;
       }
@@ -2288,6 +2314,7 @@
       .filter(
         (lesson) =>
           lesson.coachCode === activeCoachCode &&
+          isLessonAfterTrackingDataReset(lesson) &&
           lesson.calendarOccupied &&
           getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix)
       )
@@ -2514,6 +2541,7 @@
         state.lessons
           .filter((lesson) => (
             lesson.coachCode === activeCoachCode &&
+            isLessonAfterTrackingDataReset(lesson) &&
             lesson.calendarOccupied &&
             getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
             !matchedLessonIds.has(lesson.id) &&
@@ -2609,6 +2637,7 @@
         state.lessons
           .filter((lesson) => (
             lesson.coachCode === coachCode &&
+            isLessonAfterTrackingDataReset(lesson) &&
             lesson.calendarOccupied &&
             getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
             !matchedLessonIds.has(lesson.id) &&
@@ -2684,6 +2713,7 @@
       state.lessons
         .filter((lesson) => (
           lesson.coachCode === coachCode &&
+          isLessonAfterTrackingDataReset(lesson) &&
           lesson.calendarOccupied &&
           getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
           !matchedLessonIds.has(lesson.id) &&
@@ -3268,7 +3298,7 @@
     }));
 
     state.lessons = (state.lessons || [])
-      .filter((lesson) => lesson.sourceType !== "MAKEUP")
+      .filter((lesson) => lesson.sourceType !== "MAKEUP" && isLessonAfterTrackingDataReset(lesson))
       .map((lesson) => {
         const nextLesson = {
           ...lesson,
@@ -3296,6 +3326,69 @@
       message: "已依需求將既有堂數、請假、補課、繳費與事件紀錄歸零，從此刻重新記錄。"
     }];
     state.migrations[RESET_ALL_TRACKING_DATA_MIGRATION] = {
+      at: new Date().toISOString(),
+      resetAt: TRACKING_DATA_RESET_AT,
+      before
+    };
+    saveState();
+    return true;
+  }
+
+  function purgePreResetTrackingDataOnce() {
+    state.migrations = state.migrations && typeof state.migrations === "object" ? state.migrations : {};
+    if (state.migrations[PURGE_PRE_RESET_TRACKING_DATA_MIGRATION]) {
+      return false;
+    }
+
+    const before = {
+      lessons: (state.lessons || []).length,
+      leaveRequests: (state.leaveRequests || []).length,
+      makeupRequests: (state.makeupRequests || []).length,
+      coachBlocks: (state.coachBlocks || []).length,
+      compensationTasks: (state.compensationTasks || []).length,
+      eventLog: (state.eventLog || []).length
+    };
+
+    state.students = (state.students || []).map((student) => ({
+      ...student,
+      chargeStartCount: 0,
+      paidThroughCount: 0,
+      paymentStatus: "unknown",
+      paymentNote: "",
+      paymentConfirmedAt: "",
+      paymentConfirmedBy: "",
+      chargeReminderLogs: []
+    }));
+
+    state.lessons = (state.lessons || [])
+      .filter((lesson) => lesson.sourceType !== "MAKEUP" && isLessonAfterTrackingDataReset(lesson))
+      .map((lesson) => {
+        const nextLesson = {
+          ...lesson,
+          attendanceStatus: "scheduled",
+          charged: false
+        };
+        if (nextLesson.sourceType === "REGULAR" || nextLesson.sourceType === "GOOGLE_CALENDAR") {
+          nextLesson.calendarOccupied = true;
+        }
+        delete nextLesson.calendarRemovedAt;
+        delete nextLesson.calendarRemovedReason;
+        delete nextLesson.beforeCalendarRemoved;
+        delete nextLesson.completedAt;
+        delete nextLesson.completedBy;
+        return nextLesson;
+      });
+
+    state.leaveRequests = [];
+    state.makeupRequests = [];
+    state.coachBlocks = [];
+    state.compensationTasks = [];
+    state.eventLog = [{
+      id: newId("LOG"),
+      at: new Date().toISOString(),
+      message: "已重新清除歸零前課程與所有堂數、請假、補課、繳費紀錄，從歸零時間後重新計算。"
+    }];
+    state.migrations[PURGE_PRE_RESET_TRACKING_DATA_MIGRATION] = {
       at: new Date().toISOString(),
       resetAt: TRACKING_DATA_RESET_AT,
       before
@@ -3374,7 +3467,12 @@
   function getStudentChargeStats(studentCode) {
     const student = getStudentByCode(studentCode);
     const lessons = state.lessons
-      .filter((lesson) => lesson.studentCode === studentCode && lesson.attendanceStatus !== "calendar-removed")
+      .filter(
+        (lesson) =>
+          lesson.studentCode === studentCode &&
+          lesson.attendanceStatus !== "calendar-removed" &&
+          isLessonActiveForTrackingStats(lesson)
+      )
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
     const startCount = toNonNegativeInt(student?.chargeStartCount, 0);
     const rawChargedLessons = lessons
@@ -4709,6 +4807,9 @@
       if (studentCode && lesson.studentCode !== studentCode) {
         return;
       }
+      if (!isLessonAfterTrackingDataReset(lesson)) {
+        return;
+      }
       if (!isLessonAutoCompleted(lesson) || lesson.charged) {
         return;
       }
@@ -4767,6 +4868,7 @@
       .filter(
         (lesson) =>
           lesson.studentCode === student.code &&
+          isLessonAfterTrackingDataReset(lesson) &&
           isGoogleSyncLesson(lesson) &&
           lesson.attendanceStatus !== "coach-leave" &&
           lesson.attendanceStatus !== "calendar-removed"
@@ -6894,6 +6996,7 @@
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
     resetAllTrackingDataOnce();
+    purgePreResetTrackingDataOnce();
     resetImportedChargedCountsOnce();
     syncCoachflowRosterFromLocalState();
 
