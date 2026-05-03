@@ -8,6 +8,9 @@
   const DEFAULT_REJECT_REASON = "時段已被其他學生選走。";
   const CHARGE_REMINDER_STEP = 4;
   const MAX_CHARGE_REMINDER_LOGS = 24;
+  const CLOUD_BILLING_RECORD_TYPE = "billing-profile";
+  const CLOUD_BILLING_RECORD_PREFIX = "billing-profile:";
+  const CLOUD_BILLING_REFRESH_INTERVAL_MS = 45 * 1000;
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
   const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
   const RESET_ALL_TRACKING_DATA_MIGRATION = "reset-all-tracking-data-20260503-0908";
@@ -121,6 +124,7 @@
   let coachReviewPendingAction = "";
   let coachRejectReasonPreset = DEFAULT_REJECT_REASON;
   let activeCoachReadOnly = false;
+  let lastCloudBillingRefreshAt = 0;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
   let studentLoginPromptHidden = false;
@@ -1324,6 +1328,339 @@
     return changed;
   }
 
+  function getStudentBillingUpdatedAt(student) {
+    const logTimes = Array.isArray(student?.chargeReminderLogs)
+      ? student.chargeReminderLogs.map((item) => item?.sentAt)
+      : [];
+    const times = [
+      student?.billingUpdatedAt,
+      student?.paymentConfirmedAt,
+      student?.emailUpdatedAt,
+      ...logTimes
+    ]
+      .map((value) => new Date(value || "").getTime())
+      .filter((time) => Number.isFinite(time));
+    return times.length ? new Date(Math.max(...times)).toISOString() : "";
+  }
+
+  function touchStudentBillingProfile(student, updatedBy) {
+    if (!student) {
+      return "";
+    }
+    const now = new Date().toISOString();
+    student.billingUpdatedAt = now;
+    student.billingUpdatedBy = normalizeParticipantCode(updatedBy || activeCoachCode || activeStudentCode || "SYSTEM");
+    return now;
+  }
+
+  function isUnsupportedAppsScriptAction(error, action) {
+    const text = String(error?.message || error || "");
+    return /Unsupported action/i.test(text);
+  }
+
+  function buildCloudBillingProfile(student, triggerSource = "") {
+    if (!student) {
+      return null;
+    }
+    const studentCode = normalizeParticipantCode(student.code || student.studentCode);
+    if (!studentCode) {
+      return null;
+    }
+    const coachCode = normalizeParticipantCode(student.coachCode || activeCoachCode || "");
+    const updatedAt = getStudentBillingUpdatedAt(student) || new Date().toISOString();
+    return {
+      studentCode,
+      coachCode,
+      studentName: String(student.name || ""),
+      email: normalizeEmailList(student.email).join(", "),
+      emailUpdatedAt: String(student.emailUpdatedAt || ""),
+      emailUpdatedBy: normalizeParticipantCode(student.emailUpdatedBy || ""),
+      chargeStartCount: toNonNegativeInt(student.chargeStartCount, 0),
+      paidThroughCount: toNonNegativeInt(student.paidThroughCount, 0),
+      paymentStatus: normalizePaymentStatus(student.paymentStatus),
+      paymentNote: String(student.paymentNote || ""),
+      paymentConfirmedAt: String(student.paymentConfirmedAt || ""),
+      paymentConfirmedBy: normalizeParticipantCode(student.paymentConfirmedBy || ""),
+      chargeReminderLogs: normalizeChargeReminderLogs(student.chargeReminderLogs),
+      updatedAt,
+      updatedBy: normalizeParticipantCode(student.billingUpdatedBy || activeCoachCode || activeStudentCode || "SYSTEM"),
+      triggerSource: String(triggerSource || "")
+    };
+  }
+
+  function buildCloudBillingRecord(student, triggerSource = "") {
+    const profile = buildCloudBillingProfile(student, triggerSource);
+    if (!profile) {
+      return null;
+    }
+    return {
+      id: `${CLOUD_BILLING_RECORD_PREFIX}${profile.studentCode}`,
+      lessonId: "",
+      lessonKey: `${CLOUD_BILLING_RECORD_PREFIX}${profile.studentCode}`,
+      calendarEventId: "",
+      studentCode: profile.studentCode,
+      coachCode: profile.coachCode,
+      lessonStartAt: profile.updatedAt,
+      type: CLOUD_BILLING_RECORD_TYPE,
+      submittedAt: profile.updatedAt,
+      submittedBy: profile.updatedBy,
+      submittedByRole: "coach",
+      makeupEligible: false,
+      emailNoticeStatus: JSON.stringify(profile),
+      emailNoticeAt: profile.updatedAt,
+      revokedAt: "",
+      revokedBy: ""
+    };
+  }
+
+  function extractCloudBillingProfile(record) {
+    if (!record || String(record.type || "") !== CLOUD_BILLING_RECORD_TYPE) {
+      return null;
+    }
+    let parsed = {};
+    try {
+      parsed = JSON.parse(String(record.emailNoticeStatus || "{}"));
+    } catch (error) {
+      parsed = {};
+    }
+    return {
+      ...parsed,
+      studentCode: normalizeParticipantCode(parsed.studentCode || record.studentCode),
+      coachCode: normalizeParticipantCode(parsed.coachCode || record.coachCode),
+      updatedAt: String(parsed.updatedAt || record.updatedAt || record.submittedAt || record.emailNoticeAt || ""),
+      updatedBy: normalizeParticipantCode(parsed.updatedBy || record.submittedBy || "")
+    };
+  }
+
+  function getCloudBillingTimestamp(profile) {
+    const candidates = [
+      profile?.updatedAt,
+      profile?.billingUpdatedAt,
+      profile?.paymentConfirmedAt,
+      profile?.emailUpdatedAt
+    ];
+    const logTimes = Array.isArray(profile?.chargeReminderLogs)
+      ? profile.chargeReminderLogs.map((item) => item?.sentAt)
+      : [];
+    const times = [...candidates, ...logTimes]
+      .map((value) => new Date(value || "").getTime())
+      .filter((time) => Number.isFinite(time));
+    return times.length ? new Date(Math.max(...times)).toISOString() : "";
+  }
+
+  function getScopedBillingStudents(scope = {}) {
+    const coachCode = normalizeParticipantCode(scope.coachCode || activeCoachCode || "");
+    const studentCode = normalizeParticipantCode(scope.studentCode || activeStudentCode || "");
+    return (state.students || []).filter((student) => {
+      const currentStudentCode = normalizeParticipantCode(student?.code);
+      const currentCoachCode = normalizeParticipantCode(student?.coachCode);
+      return (!studentCode || currentStudentCode === studentCode) &&
+        (!coachCode || currentCoachCode === coachCode);
+    });
+  }
+
+  function applyCloudBillingProfile(profile) {
+    if (!profile) {
+      return false;
+    }
+    const studentCode = normalizeParticipantCode(profile.studentCode || profile.code);
+    if (!studentCode) {
+      return false;
+    }
+    const coachCode = normalizeParticipantCode(profile.coachCode || activeCoachCode || getStudentByCode(studentCode)?.coachCode || state.coaches[0]?.code || "CH001");
+    const student = getStudentByCode(studentCode) || ensureStudentProfile(studentCode, coachCode, {
+      studentName: profile.studentName || profile.name || "",
+      studentEmail: profile.email || "",
+      silentMode: true
+    });
+    if (!student) {
+      return false;
+    }
+
+    const cloudUpdatedAt = getCloudBillingTimestamp(profile);
+    const localUpdatedAt = getStudentBillingUpdatedAt(student);
+    const cloudTime = new Date(cloudUpdatedAt || "").getTime();
+    const localTime = new Date(localUpdatedAt || "").getTime();
+    if (Number.isFinite(cloudTime) && Number.isFinite(localTime) && cloudTime + 2000 < localTime) {
+      return false;
+    }
+
+    const next = {
+      ...student,
+      coachCode: coachCode || student.coachCode,
+      name: String(profile.studentName || profile.name || "").trim() || student.name,
+      email: profile.email === undefined ? String(student.email || "") : normalizeEmailList(profile.email).join(", "),
+      emailUpdatedAt: String(profile.emailUpdatedAt || student.emailUpdatedAt || ""),
+      emailUpdatedBy: normalizeParticipantCode(profile.emailUpdatedBy || student.emailUpdatedBy || ""),
+      chargeStartCount: profile.chargeStartCount === undefined ? toNonNegativeInt(student.chargeStartCount, 0) : toNonNegativeInt(profile.chargeStartCount, 0),
+      paidThroughCount: profile.paidThroughCount === undefined ? toNonNegativeInt(student.paidThroughCount, 0) : toNonNegativeInt(profile.paidThroughCount, 0),
+      paymentStatus: profile.paymentStatus === undefined ? normalizePaymentStatus(student.paymentStatus) : normalizePaymentStatus(profile.paymentStatus),
+      paymentNote: profile.paymentNote === undefined ? String(student.paymentNote || "") : String(profile.paymentNote || ""),
+      paymentConfirmedAt: String(profile.paymentConfirmedAt || student.paymentConfirmedAt || ""),
+      paymentConfirmedBy: normalizeParticipantCode(profile.paymentConfirmedBy || student.paymentConfirmedBy || ""),
+      chargeReminderLogs: profile.chargeReminderLogs === undefined
+        ? normalizeChargeReminderLogs(student.chargeReminderLogs)
+        : normalizeChargeReminderLogs(profile.chargeReminderLogs),
+      billingUpdatedAt: cloudUpdatedAt || localUpdatedAt || "",
+      billingUpdatedBy: normalizeParticipantCode(profile.updatedBy || profile.billingUpdatedBy || student.billingUpdatedBy || "")
+    };
+    const before = JSON.stringify({
+      coachCode: student.coachCode,
+      name: student.name,
+      email: student.email,
+      emailUpdatedAt: student.emailUpdatedAt,
+      emailUpdatedBy: student.emailUpdatedBy,
+      chargeStartCount: student.chargeStartCount,
+      paidThroughCount: student.paidThroughCount,
+      paymentStatus: student.paymentStatus,
+      paymentNote: student.paymentNote,
+      paymentConfirmedAt: student.paymentConfirmedAt,
+      paymentConfirmedBy: student.paymentConfirmedBy,
+      chargeReminderLogs: normalizeChargeReminderLogs(student.chargeReminderLogs),
+      billingUpdatedAt: student.billingUpdatedAt,
+      billingUpdatedBy: student.billingUpdatedBy
+    });
+    const after = JSON.stringify({
+      coachCode: next.coachCode,
+      name: next.name,
+      email: next.email,
+      emailUpdatedAt: next.emailUpdatedAt,
+      emailUpdatedBy: next.emailUpdatedBy,
+      chargeStartCount: next.chargeStartCount,
+      paidThroughCount: next.paidThroughCount,
+      paymentStatus: next.paymentStatus,
+      paymentNote: next.paymentNote,
+      paymentConfirmedAt: next.paymentConfirmedAt,
+      paymentConfirmedBy: next.paymentConfirmedBy,
+      chargeReminderLogs: next.chargeReminderLogs,
+      billingUpdatedAt: next.billingUpdatedAt,
+      billingUpdatedBy: next.billingUpdatedBy
+    });
+    if (before === after) {
+      return false;
+    }
+    Object.assign(student, next);
+    return true;
+  }
+
+  async function listCloudBillingProfiles(scope = {}) {
+    const payload = {
+      coachCode: normalizeParticipantCode(scope.coachCode || activeCoachCode || ""),
+      studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
+    };
+    const listFallbackProfiles = async () => {
+      const fallbackResult = await callAppsScriptApi("listLeaveRecords", payload, "GET");
+      return (Array.isArray(fallbackResult?.records) ? fallbackResult.records : [])
+        .map(extractCloudBillingProfile)
+        .filter(Boolean);
+    };
+    try {
+      const result = await callAppsScriptApi("listBillingProfiles", payload, "GET");
+      return Array.isArray(result?.profiles) ? result.profiles : await listFallbackProfiles();
+    } catch (error) {
+      if (!isUnsupportedAppsScriptAction(error, "listBillingProfiles")) {
+        throw error;
+      }
+      return listFallbackProfiles();
+    }
+  }
+
+  async function pushCloudBillingProfile(studentCode, triggerSource = "") {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const student = getStudentByCode(studentCode);
+    if (!student) {
+      return false;
+    }
+    const profile = buildCloudBillingProfile(student, triggerSource);
+    if (!profile) {
+      return false;
+    }
+    try {
+      const result = await callAppsScriptApi("saveBillingProfile", { profile });
+      if (result?.profile) {
+        applyCloudBillingProfile(result.profile);
+      }
+      return result?.ok !== false;
+    } catch (error) {
+      if (!isUnsupportedAppsScriptAction(error, "saveBillingProfile")) {
+        throw error;
+      }
+      const existingResult = await callAppsScriptApi("listLeaveRecords", {
+        coachCode: profile.coachCode,
+        studentCode: profile.studentCode
+      }, "GET");
+      const existingProfile = (Array.isArray(existingResult?.records) ? existingResult.records : [])
+        .map(extractCloudBillingProfile)
+        .filter(Boolean)
+        .sort((a, b) => new Date(getCloudBillingTimestamp(b) || 0) - new Date(getCloudBillingTimestamp(a) || 0))[0];
+      const existingTime = new Date(getCloudBillingTimestamp(existingProfile) || "").getTime();
+      const incomingTime = new Date(getCloudBillingTimestamp(profile) || "").getTime();
+      if (Number.isFinite(existingTime) && Number.isFinite(incomingTime) && existingTime > incomingTime + 2000) {
+        applyCloudBillingProfile(existingProfile);
+        return false;
+      }
+      const record = buildCloudBillingRecord(student, triggerSource);
+      if (!record) {
+        return false;
+      }
+      const fallbackResult = await callAppsScriptApi("saveLeaveRecord", { record });
+      return fallbackResult?.ok !== false;
+    }
+  }
+
+  function pushStudentBillingProfileQuietly(studentCode, triggerSource = "") {
+    pushCloudBillingProfile(studentCode, triggerSource).catch((error) => {
+      console.warn("Cloud billing profile sync failed:", error);
+    });
+  }
+
+  async function seedMissingCloudBillingProfiles(cloudProfiles, scope = {}) {
+    const cloudStudentCodes = new Set(
+      (cloudProfiles || [])
+        .map((profile) => normalizeParticipantCode(profile?.studentCode))
+        .filter(Boolean)
+    );
+    const localStudents = getScopedBillingStudents(scope)
+      .filter((student) => !cloudStudentCodes.has(normalizeParticipantCode(student?.code)));
+    let seeded = false;
+    for (const student of localStudents) {
+      try {
+        seeded = await pushCloudBillingProfile(student.code, "seed_missing_billing_profile") || seeded;
+      } catch (error) {
+        console.warn("Cloud billing profile seed failed:", error);
+      }
+    }
+    return seeded;
+  }
+
+  async function syncCloudBillingProfiles(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const profiles = (await listCloudBillingProfiles(scope))
+      .filter((profile) => isAfterTrackingDataReset(getCloudBillingTimestamp(profile)));
+    let changed = false;
+    profiles.forEach((profile) => {
+      if (applyCloudBillingProfile(profile)) {
+        changed = true;
+      }
+    });
+    if (changed) {
+      addLog(`[同步] 已同步 ${profiles.length} 筆學生繳費資料。`);
+      saveState();
+    }
+    const hasBillingScope = Boolean(
+      normalizeParticipantCode(scope.coachCode || activeCoachCode || "") ||
+      normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
+    );
+    if (hasBillingScope) {
+      await seedMissingCloudBillingProfiles(profiles, scope);
+    }
+    return changed;
+  }
+
   function getCoachByCode(coachCode) {
     return state.coaches.find((coach) => coach.code === coachCode);
   }
@@ -1475,7 +1812,9 @@
       paymentNote: "",
       paymentConfirmedAt: "",
       paymentConfirmedBy: "",
-      chargeReminderLogs: []
+      chargeReminderLogs: [],
+      billingUpdatedAt: "",
+      billingUpdatedBy: ""
     };
     state.students.push(created);
     seedWeeklyLessonsForStudent(created.code, created.coachCode);
@@ -3185,6 +3524,7 @@
       .map((item) => ({
         id: String(item?.id || newId("BILLMAIL")),
         milestone: toNonNegativeInt(item?.milestone, 0),
+        label: String(item?.label || ""),
         status: item?.status === "success" ? "success" : "failed",
         sentAt: item?.sentAt ? String(item.sentAt) : "",
         to: String(item?.to || ""),
@@ -3227,7 +3567,9 @@
         paymentConfirmedBy: String(student.paymentConfirmedBy || ""),
         emailUpdatedAt: String(student.emailUpdatedAt || ""),
         emailUpdatedBy: String(student.emailUpdatedBy || ""),
-        chargeReminderLogs: normalizeChargeReminderLogs(student.chargeReminderLogs)
+        chargeReminderLogs: normalizeChargeReminderLogs(student.chargeReminderLogs),
+        billingUpdatedAt: String(student.billingUpdatedAt || getStudentBillingUpdatedAt(student) || ""),
+        billingUpdatedBy: normalizeParticipantCode(student.billingUpdatedBy || "")
       };
       const before = JSON.stringify(student);
       const after = JSON.stringify(normalized);
@@ -3258,7 +3600,9 @@
       }
       return {
         ...student,
-        chargeStartCount: 0
+        chargeStartCount: 0,
+        billingUpdatedAt: new Date().toISOString(),
+        billingUpdatedBy: "SYSTEM"
       };
     });
     state.migrations[RESET_IMPORTED_CHARGED_COUNT_MIGRATION] = {
@@ -3294,7 +3638,9 @@
       paymentNote: "",
       paymentConfirmedAt: "",
       paymentConfirmedBy: "",
-      chargeReminderLogs: []
+      chargeReminderLogs: [],
+      billingUpdatedAt: new Date().toISOString(),
+      billingUpdatedBy: "SYSTEM"
     }));
 
     state.lessons = (state.lessons || [])
@@ -3357,7 +3703,9 @@
       paymentNote: "",
       paymentConfirmedAt: "",
       paymentConfirmedBy: "",
-      chargeReminderLogs: []
+      chargeReminderLogs: [],
+      billingUpdatedAt: new Date().toISOString(),
+      billingUpdatedBy: "SYSTEM"
     }));
 
     state.lessons = (state.lessons || [])
@@ -3595,11 +3943,15 @@
       return false;
     }
     const paymentStatusChanged = markStudentPaymentDue(student, billingCycle, triggerSource || "system");
+    if (paymentStatusChanged) {
+      touchStudentBillingProfile(student, triggerSource || "system");
+    }
     const reminderLogs = Array.isArray(student.chargeReminderLogs) ? student.chargeReminderLogs : [];
     if (reminderLogs.some((item) => Number(item?.milestone) === milestone)) {
       if (paymentStatusChanged) {
         saveState();
         renderBillingPanels();
+        pushStudentBillingProfileQuietly(student.code, triggerSource || "system");
       }
       return false;
     }
@@ -3641,9 +3993,11 @@
         triggerSource: triggerSource || "system"
       };
       student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
+      touchStudentBillingProfile(student, triggerSource || "system");
       addLog(`[計費提醒] ${student.code} 第 ${milestone} 堂提醒${sent ? "已送出" : "未送出"}。`);
       saveState();
       renderBillingPanels();
+      pushStudentBillingProfileQuietly(student.code, triggerSource || "system");
       return sent;
     } finally {
       sendingChargeReminderKeys.delete(reminderKey);
@@ -3707,9 +4061,11 @@
         triggerSource: "manual_charge_panel"
       };
       student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
+      touchStudentBillingProfile(student, "manual_charge_panel");
       addLog(`[計費] ${student.code} 計費摘要${sent ? "已寄送" : "未寄送"}。`);
       saveState();
       renderBillingPanels();
+      pushStudentBillingProfileQuietly(student.code, "manual_charge_panel");
       return sent;
     } finally {
       sendingChargeReminderKeys.delete(sendKey);
@@ -3734,11 +4090,13 @@
     student.email = normalizedEmail;
     student.emailUpdatedAt = new Date().toISOString();
     student.emailUpdatedBy = activeCoachCode || "SYSTEM";
+    touchStudentBillingProfile(student, activeCoachCode || "SYSTEM");
     addLog(
       `[通知] ${student.code} 學生通知 Email 已更新：${normalizedEmail || "清空（將改用預設通知信箱）"}。`
     );
     saveState();
     renderBillingPanels();
+    pushStudentBillingProfileQuietly(student.code, "student_email");
     notifyUser(`學生 ${student.name || student.code} 的通知 Email 已儲存。`, "success");
   }
 
@@ -3753,10 +4111,12 @@
     }
     const nextCount = toNonNegativeInt(el.chargeBaseCountInput?.value, 0);
     student.chargeStartCount = nextCount;
+    touchStudentBillingProfile(student, activeCoachCode || "SYSTEM");
     addLog(`[計費] ${student.code} 導入前已扣堂數調整為 ${nextCount}。`);
     saveState();
     renderBillingPanels();
     notifyUser(`已儲存 ${student.name || student.code} 的導入前已扣堂數：${nextCount}。`, "success");
+    pushStudentBillingProfileQuietly(student.code, "set_base_count");
     maybeSendChargeReminder(student.code, "set_base_count").catch((error) => {
       console.error("billing reminder failed:", error);
     });
@@ -3807,8 +4167,10 @@
         triggerSource: "payment_confirmed_by_coach"
       };
       student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
+      touchStudentBillingProfile(student, "payment_confirmed_by_coach");
       addLog(`[計費] ${student.code} 匯款確認信${sent ? "已寄送" : "未寄送"}。`);
       saveState();
+      pushStudentBillingProfileQuietly(student.code, "payment_confirmed_by_coach");
       return sent;
     } finally {
       sendingChargeReminderKeys.delete(confirmationKey);
@@ -3838,12 +4200,14 @@
     if (nextStatus === "paid") {
       student.paidThroughCount = nextPaidThrough;
     }
+    touchStudentBillingProfile(student, activeCoachCode || "SYSTEM");
     addLog(
       `[計費] ${student.code} 繳費狀態更新為 ${getPaymentStatusLabel(nextStatus)}（${student.paymentConfirmedBy}，已繳到第 ${nextStatus === "paid" ? nextPaidThrough : billingCycle.paidThroughCount} 堂）。`
     );
     saveState();
     renderBillingPanels();
     notifyUser(`已更新 ${student.name || student.code} 的繳費狀態：${getPaymentStatusLabel(nextStatus)}。`, "success");
+    pushStudentBillingProfileQuietly(student.code, "payment_status");
     if (nextStatus === "paid") {
       if (el.chargePaymentSaveBtn) {
         el.chargePaymentSaveBtn.disabled = true;
@@ -6273,7 +6637,39 @@
     }
   }
 
+  async function refreshCloudBillingProfilesFromCurrentSession(force = false) {
+    if (!activeCoachCode && !activeStudentCode) {
+      return false;
+    }
+    const now = Date.now();
+    if (!force && now - lastCloudBillingRefreshAt < CLOUD_BILLING_REFRESH_INTERVAL_MS) {
+      return false;
+    }
+    lastCloudBillingRefreshAt = now;
+    const changed = await syncCloudBillingProfiles({
+      coachCode: activeCoachCode,
+      studentCode: activeStudentCode
+    });
+    if (changed) {
+      renderBillingPanels();
+    }
+    return changed;
+  }
+
   function bindEvents() {
+    window.addEventListener("focus", () => {
+      refreshCloudBillingProfilesFromCurrentSession().catch((error) => {
+        console.warn("Cloud billing focus refresh failed:", error);
+      });
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (document.hidden) {
+        return;
+      }
+      refreshCloudBillingProfilesFromCurrentSession().catch((error) => {
+        console.warn("Cloud billing visibility refresh failed:", error);
+      });
+    });
     if (el.studentLoginBtn) {
       el.studentLoginBtn.addEventListener("click", async () => {
         await syncCoachflowRosterFromCloud();
@@ -6289,13 +6685,19 @@
             console.warn("Cloud leave sync failed for student login:", error);
             cloudLeaveFailed = true;
           }
+          let billingChanged = false;
+          try {
+            billingChanged = await syncCloudBillingProfiles({ studentCode: activeStudentCode, coachCode: activeCoachCode });
+          } catch (error) {
+            console.warn("Cloud billing sync failed for student login:", error);
+          }
           let calendarChanged = false;
           try {
             calendarChanged = await syncStudentCalendarEventsFromGoogle();
           } catch (error) {
             console.warn("Student Google calendar sync failed for student login:", error);
           }
-          if (leaveChanged || calendarChanged) {
+          if (leaveChanged || billingChanged || calendarChanged) {
             renderAll();
           }
           if (cloudLeaveFailed) {
@@ -6329,10 +6731,16 @@
           } catch (error) {
             console.warn("Cloud leave sync failed for coach login:", error);
           }
-          if (cloudChanged || localChanged || leaveChanged) {
+          let billingChanged = false;
+          try {
+            billingChanged = await syncCloudBillingProfiles({ coachCode: activeCoachCode });
+          } catch (error) {
+            console.warn("Cloud billing sync failed for coach login:", error);
+          }
+          if (cloudChanged || localChanged || leaveChanged || billingChanged) {
             renderAll();
           }
-          return Boolean(cloudChanged || localChanged || leaveChanged);
+          return Boolean(cloudChanged || localChanged || leaveChanged || billingChanged);
         };
         if (readOnlyLogin) {
           syncReadOnlyCoachCalendarFromGoogle(activeCoachCode)
@@ -7005,7 +7413,13 @@
     const cloudSyncPromise = (async () => {
       const syncedFromCloud = await syncCoachflowRosterFromCloud();
       const syncedFromLocal = syncCoachflowRosterFromLocalState();
-      return Boolean(syncedFromCloud || syncedFromLocal);
+      let billingSynced = false;
+      try {
+        billingSynced = await syncCloudBillingProfiles();
+      } catch (error) {
+        console.warn("Cloud billing sync failed during bootstrap roster sync:", error);
+      }
+      return Boolean(syncedFromCloud || syncedFromLocal || billingSynced);
     })();
 
     const sessionPrefill = applySessionPrefillFromUrl();
@@ -7087,6 +7501,7 @@
     try {
       const cloudSyncChanged = await cloudSyncPromise;
       let cloudLeaveSynced = false;
+      let cloudBillingSynced = false;
       if ((autoStudentLoaded || autoCoachLoaded) && (activeStudentCode || activeCoachCode)) {
         try {
           cloudLeaveSynced = await syncCloudLeaveRecords({
@@ -7095,6 +7510,14 @@
           });
         } catch (error) {
           console.warn("Cloud leave sync failed during bootstrap:", error);
+        }
+        try {
+          cloudBillingSynced = await syncCloudBillingProfiles({
+            studentCode: activeStudentCode,
+            coachCode: activeCoachCode
+          });
+        } catch (error) {
+          console.warn("Cloud billing sync failed during bootstrap:", error);
         }
       }
       let studentCalendarSynced = false;
@@ -7124,10 +7547,13 @@
       if (cloudLeaveSynced && !cloudSyncChanged && !studentCalendarSynced) {
         renderAll();
       }
+      if (cloudBillingSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced) {
+        renderAll();
+      }
       if (readOnlyCalendarSynced && !cloudSyncChanged) {
         renderAll();
       }
-      if (coachCalendarSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !readOnlyCalendarSynced) {
+      if (coachCalendarSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !cloudBillingSynced && !readOnlyCalendarSynced) {
         renderAll();
       }
     } catch (error) {

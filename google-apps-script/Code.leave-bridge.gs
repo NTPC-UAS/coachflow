@@ -11,6 +11,8 @@
  * - deleteSingleEvent
  * - listLeaveRecords
  * - saveLeaveRecord
+ * - listBillingProfiles
+ * - saveBillingProfile
  * - sendEmail
  *
  * Optional Script Property:
@@ -78,6 +80,12 @@ function handleAction_(action, payload) {
     case "saveLeaveRecord":
       return saveLeaveRecord_(payload || {});
 
+    case "listBillingProfiles":
+      return listBillingProfiles_(payload || {});
+
+    case "saveBillingProfile":
+      return saveBillingProfile_(payload || {});
+
     case "sendEmail":
       return sendEmailNotice_(payload || {});
 
@@ -85,7 +93,7 @@ function handleAction_(action, payload) {
       return {
         ok: false,
         action: action,
-        message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/sendEmail."
+        message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/sendEmail."
       };
   }
 }
@@ -577,6 +585,169 @@ function getLeaveRecords_() {
 
 function setLeaveRecords_(records) {
   writeChunkedProperty_("LEAVE_RECORDS_V1", JSON.stringify(records || []));
+}
+
+function listBillingProfiles_(payload) {
+  const coachCode = normalizeCode_(payload.coachCode);
+  const studentCode = normalizeCode_(payload.studentCode);
+  const profiles = getBillingProfiles_()
+    .filter(function(profile) {
+      return (!coachCode || normalizeCode_(profile.coachCode) === coachCode) &&
+        (!studentCode || normalizeCode_(profile.studentCode) === studentCode);
+    })
+    .sort(function(a, b) {
+      return new Date(b.updatedAt || 0) - new Date(a.updatedAt || 0);
+    });
+  return {
+    ok: true,
+    action: "listBillingProfiles",
+    count: profiles.length,
+    profiles: profiles
+  };
+}
+
+function saveBillingProfile_(payload) {
+  const profile = normalizeBillingProfile_(payload.profile || payload);
+  if (!profile.studentCode) {
+    return {
+      ok: false,
+      action: "saveBillingProfile",
+      message: "Missing studentCode."
+    };
+  }
+
+  const now = nowIso_();
+  const profiles = getBillingProfiles_();
+  const profileKey = getBillingProfileKey_(profile);
+  let replaced = false;
+  let ignored = false;
+  const existingIndex = profiles.findIndex(function(item) {
+    return getBillingProfileKey_(item) === profileKey;
+  });
+  if (existingIndex >= 0) {
+    const existing = profiles[existingIndex];
+    const incomingTime = new Date(profile.updatedAt || 0).getTime();
+    const existingTime = new Date(existing.updatedAt || 0).getTime();
+    if (Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime + 2000 < existingTime) {
+      ignored = true;
+      profile.createdAt = existing.createdAt || now;
+      profile.updatedAt = existing.updatedAt || now;
+      setBillingProfiles_(profiles);
+      return {
+        ok: true,
+        action: "saveBillingProfile",
+        profile: existing,
+        replaced: false,
+        ignored: ignored
+      };
+    }
+    profile.createdAt = existing.createdAt || profile.createdAt || now;
+    profile.updatedAt = profile.updatedAt || now;
+    profiles[existingIndex] = profile;
+    replaced = true;
+  } else {
+    profile.createdAt = profile.createdAt || now;
+    profile.updatedAt = profile.updatedAt || now;
+    profiles.push(profile);
+  }
+  setBillingProfiles_(profiles);
+  return {
+    ok: true,
+    action: "saveBillingProfile",
+    profile: profile,
+    replaced: replaced,
+    ignored: ignored
+  };
+}
+
+function normalizeBillingProfile_(profile) {
+  profile = profile || {};
+  return {
+    studentCode: normalizeCode_(profile.studentCode || profile.code),
+    coachCode: normalizeCode_(profile.coachCode),
+    studentName: safeString_(profile.studentName || profile.name, ""),
+    email: safeString_(profile.email, ""),
+    emailUpdatedAt: safeString_(profile.emailUpdatedAt, ""),
+    emailUpdatedBy: normalizeCode_(profile.emailUpdatedBy),
+    chargeStartCount: toNonNegativeInt_(profile.chargeStartCount, 0),
+    paidThroughCount: toNonNegativeInt_(profile.paidThroughCount, 0),
+    paymentStatus: normalizePaymentStatus_(profile.paymentStatus),
+    paymentNote: safeString_(profile.paymentNote, ""),
+    paymentConfirmedAt: safeString_(profile.paymentConfirmedAt, ""),
+    paymentConfirmedBy: normalizeCode_(profile.paymentConfirmedBy),
+    chargeReminderLogs: normalizeBillingReminderLogs_(profile.chargeReminderLogs),
+    updatedAt: safeString_(profile.updatedAt || profile.billingUpdatedAt, nowIso_()),
+    updatedBy: normalizeCode_(profile.updatedBy || profile.billingUpdatedBy || "SYSTEM"),
+    createdAt: safeString_(profile.createdAt, "")
+  };
+}
+
+function getBillingProfileKey_(profile) {
+  return normalizeCode_(profile.studentCode);
+}
+
+function getBillingProfiles_() {
+  const raw = readChunkedProperty_("BILLING_PROFILES_V1");
+  if (!raw) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed.map(normalizeBillingProfile_) : [];
+  } catch (error) {
+    return [];
+  }
+}
+
+function setBillingProfiles_(profiles) {
+  writeChunkedProperty_("BILLING_PROFILES_V1", JSON.stringify(profiles || []));
+}
+
+function normalizeBillingReminderLogs_(logs) {
+  let source = logs;
+  if (typeof source === "string") {
+    try {
+      source = JSON.parse(source);
+    } catch (error) {
+      source = [];
+    }
+  }
+  if (!Array.isArray(source)) {
+    return [];
+  }
+  return source
+    .map(function(item) {
+      return {
+        id: safeString_(item && item.id, ""),
+        milestone: toNonNegativeInt_(item && item.milestone, 0),
+        label: safeString_(item && item.label, ""),
+        status: safeString_(item && item.status, "") === "success" ? "success" : "failed",
+        sentAt: safeString_(item && item.sentAt, ""),
+        to: safeString_(item && item.to, ""),
+        note: safeString_(item && item.note, ""),
+        triggerSource: safeString_(item && item.triggerSource, "")
+      };
+    })
+    .filter(function(item) {
+      return item.milestone > 0;
+    })
+    .sort(function(a, b) {
+      return new Date(b.sentAt || 0) - new Date(a.sentAt || 0);
+    })
+    .slice(0, 24);
+}
+
+function normalizePaymentStatus_(value) {
+  const text = safeString_(value, "unknown");
+  return text === "paid" || text === "unpaid" ? text : "unknown";
+}
+
+function toNonNegativeInt_(value, fallback) {
+  const n = Number(value);
+  if (!Number.isFinite(n)) {
+    return fallback || 0;
+  }
+  return Math.max(0, Math.floor(n));
 }
 
 function readChunkedProperty_(baseKey) {
