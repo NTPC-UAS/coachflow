@@ -3599,9 +3599,7 @@
     if (reminderLogs.some((item) => Number(item?.milestone) === milestone)) {
       if (paymentStatusChanged) {
         saveState();
-        if (selectedChargeStudentCode === student.code) {
-          renderChargePanel();
-        }
+        renderBillingPanels();
       }
       return false;
     }
@@ -3645,9 +3643,7 @@
       student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
       addLog(`[計費提醒] ${student.code} 第 ${milestone} 堂提醒${sent ? "已送出" : "未送出"}。`);
       saveState();
-      if (selectedChargeStudentCode === student.code) {
-        renderChargePanel();
-      }
+      renderBillingPanels();
       return sent;
     } finally {
       sendingChargeReminderKeys.delete(reminderKey);
@@ -3713,7 +3709,7 @@
       student.chargeReminderLogs = [logEntry, ...reminderLogs].slice(0, MAX_CHARGE_REMINDER_LOGS);
       addLog(`[計費] ${student.code} 計費摘要${sent ? "已寄送" : "未寄送"}。`);
       saveState();
-      renderChargePanel();
+      renderBillingPanels();
       return sent;
     } finally {
       sendingChargeReminderKeys.delete(sendKey);
@@ -3742,7 +3738,7 @@
       `[通知] ${student.code} 學生通知 Email 已更新：${normalizedEmail || "清空（將改用預設通知信箱）"}。`
     );
     saveState();
-    renderChargePanel();
+    renderBillingPanels();
     notifyUser(`學生 ${student.name || student.code} 的通知 Email 已儲存。`, "success");
   }
 
@@ -3759,7 +3755,7 @@
     student.chargeStartCount = nextCount;
     addLog(`[計費] ${student.code} 導入前已扣堂數調整為 ${nextCount}。`);
     saveState();
-    renderChargePanel();
+    renderBillingPanels();
     notifyUser(`已儲存 ${student.name || student.code} 的導入前已扣堂數：${nextCount}。`, "success");
     maybeSendChargeReminder(student.code, "set_base_count").catch((error) => {
       console.error("billing reminder failed:", error);
@@ -3846,7 +3842,7 @@
       `[計費] ${student.code} 繳費狀態更新為 ${getPaymentStatusLabel(nextStatus)}（${student.paymentConfirmedBy}，已繳到第 ${nextStatus === "paid" ? nextPaidThrough : billingCycle.paidThroughCount} 堂）。`
     );
     saveState();
-    renderChargePanel();
+    renderBillingPanels();
     notifyUser(`已更新 ${student.name || student.code} 的繳費狀態：${getPaymentStatusLabel(nextStatus)}。`, "success");
     if (nextStatus === "paid") {
       if (el.chargePaymentSaveBtn) {
@@ -3862,7 +3858,7 @@
           el.chargePaymentSaveBtn.disabled = false;
           el.chargePaymentSaveBtn.textContent = "儲存繳費註記";
         }
-        renderChargePanel();
+        renderBillingPanels();
       }
     }
   }
@@ -6072,6 +6068,11 @@
       <thead><tr><th>學生</th><th>最後上課日期</th><th>累計扣堂</th><th>繳費狀態</th></tr></thead>
       <tbody>${rows || "<tr><td colspan=\"4\">目前沒有學生資料</td></tr>"}</tbody>
     `;
+  }
+
+  function renderBillingPanels() {
+    renderStudentOverviewPanel();
+    renderChargePanel();
   }
 
   function renderChargePanel() {
