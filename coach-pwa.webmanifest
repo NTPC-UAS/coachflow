@@ -1,8 +1,9 @@
 {
-  "name": "CoachFlow 教練請假系統",
+  "id": "./leave-coach-sandbox.html?source=coach-pwa",
+  "name": "CoachFlow 教練版",
   "short_name": "CoachFlow教練",
-  "description": "CoachFlow 教練端請假、補課與月曆管理",
-  "start_url": "./leave-coach-sandbox.html?v=20260503-0012&source=coach-pwa",
+  "description": "CoachFlow 教練端手機版，用於處理請假、補課、扣堂與繳費狀態。",
+  "start_url": "./leave-coach-sandbox.html?v=20260503-0013&source=coach-pwa",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -34,9 +35,9 @@
   ],
   "shortcuts": [
     {
-      "name": "教練請假系統",
-      "short_name": "請假",
-      "url": "./leave-coach-sandbox.html?v=20260503-0012&source=coach-pwa-shortcut",
+      "name": "開啟教練版",
+      "short_name": "教練版",
+      "url": "./leave-coach-sandbox.html?v=20260503-0013&source=coach-pwa-shortcut",
       "icons": [
         {
           "src": "./coachflow-coach-icon-192.png",
