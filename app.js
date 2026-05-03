@@ -84,7 +84,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260503-0016";
+const PUBLIC_APP_VERSION = "20260503-0017";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -1641,6 +1641,7 @@ async function ensureStudentAccessOnInit() {
 }
 
 async function init() {
+  registerCoachFlowPwa();
   applyStaticCopy();
   applyAppMode();
   if (IS_CLOUD_MODE) {
@@ -1710,6 +1711,26 @@ async function init() {
   applyCoachViewMode();
   applyStudentViewMode();
   applyAppMode();
+}
+
+function registerCoachFlowPwa() {
+  if (!("serviceWorker" in navigator) || !location.protocol.startsWith("http")) {
+    return;
+  }
+
+  const register = () => {
+    navigator.serviceWorker
+      .register(`./coachflow-sw.js?v=${PUBLIC_APP_VERSION}`)
+      .catch((error) => {
+        console.warn("CoachFlow PWA registration failed:", error);
+      });
+  };
+
+  if (document.readyState === "complete") {
+    register();
+  } else {
+    window.addEventListener("load", register, { once: true });
+  }
 }
 
 function renderCoachExerciseOptions() {

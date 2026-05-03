@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <meta name="theme-color" content="#c2410c">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="CoachFlow">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <title>安裝 CoachFlow</title>
+  <link rel="manifest" href="coachflow.webmanifest?v=20260503-0017">
+  <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
+  <style>
+    :root {
+      --brand: #c2410c;
+      --brand-dark: #9a3412;
+      --ink: #172033;
+      --muted: #64748b;
+      --line: #e2e8f0;
+      --warm: #fff7ed;
+      --soft: #f8fafc;
+      --card: #ffffff;
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      font-family: "Noto Sans TC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      color: var(--ink);
+      background: linear-gradient(145deg, #fff7ed 0%, #ffffff 46%, #eff6ff 100%);
+    }
+
+    main {
+      width: min(720px, 100%);
+      min-height: 100vh;
+      margin: 0 auto;
+      padding: max(28px, env(safe-area-inset-top)) 18px max(32px, env(safe-area-inset-bottom));
+      display: grid;
+      align-content: center;
+      gap: 18px;
+    }
+
+    .panel {
+      border: 1px solid var(--line);
+      border-radius: 8px;
+      background: rgba(255, 255, 255, 0.94);
+      box-shadow: 0 18px 48px rgba(15, 23, 42, 0.12);
+      padding: 22px;
+    }
+
+    .header {
+      display: flex;
+      gap: 16px;
+      align-items: center;
+    }
+
+    .app-icon {
+      width: 76px;
+      height: 76px;
+      border-radius: 8px;
+      box-shadow: 0 12px 26px rgba(194, 65, 12, 0.22);
+      flex: 0 0 auto;
+    }
+
+    .eyebrow {
+      margin: 0 0 4px;
+      color: var(--brand-dark);
+      font-size: 13px;
+      font-weight: 800;
+    }
+
+    h1 {
+      margin: 0;
+      font-size: clamp(30px, 8vw, 44px);
+      line-height: 1.08;
+      letter-spacing: 0;
+    }
+
+    .copy {
+      margin: 18px 0 0;
+      color: var(--muted);
+      line-height: 1.75;
+      font-size: 16px;
+    }
+
+    .actions {
+      display: grid;
+      gap: 10px;
+      margin-top: 22px;
+    }
+
+    button,
+    .button {
+      width: 100%;
+      min-height: 52px;
+      border: 1px solid #cbd5e1;
+      border-radius: 8px;
+      padding: 12px 16px;
+      background: #fff;
+      color: var(--ink);
+      font: inherit;
+      font-weight: 800;
+      text-align: center;
+      text-decoration: none;
+      cursor: pointer;
+    }
+
+    .primary {
+      border-color: var(--brand);
+      background: var(--brand);
+      color: #fff;
+    }
+
+    .role-grid {
+      display: grid;
+      grid-template-columns: repeat(3, minmax(0, 1fr));
+      gap: 10px;
+      margin-top: 16px;
+    }
+
+    .role-grid .button {
+      min-height: 48px;
+      display: grid;
+      place-items: center;
+    }
+
+    .help {
+      border: 1px solid #fed7aa;
+      border-radius: 8px;
+      background: var(--warm);
+      padding: 14px 16px;
+      color: #7c2d12;
+      line-height: 1.7;
+    }
+
+    .help h2 {
+      margin: 0 0 8px;
+      font-size: 16px;
+    }
+
+    .help ol {
+      margin: 0;
+      padding-left: 22px;
+    }
+
+    .status {
+      color: var(--brand-dark);
+      font-size: 14px;
+      font-weight: 800;
+    }
+
+    .status[hidden],
+    .primary[hidden] {
+      display: none;
+    }
+
+    @media (max-width: 560px) {
+      main {
+        align-content: start;
+      }
+
+      .panel {
+        padding: 18px;
+      }
+
+      .header {
+        align-items: flex-start;
+      }
+
+      .app-icon {
+        width: 64px;
+        height: 64px;
+      }
+
+      .role-grid {
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <section class="panel">
+      <div class="header">
+        <img class="app-icon" src="coachflow-coach-icon.svg" alt="CoachFlow">
+        <div>
+          <p class="eyebrow">CoachFlow 手機 App</p>
+          <h1>安裝到手機主畫面</h1>
+        </div>
+      </div>
+
+      <p class="copy">這個安裝版會連到目前的 CoachFlow 雲端系統，教練發布、學生填寫、管理者查看都會使用同一份資料。</p>
+
+      <div class="actions">
+        <button class="primary" id="install-btn" type="button" hidden>安裝到手機</button>
+        <a class="button" href="index.html?v=20260503-0017&source=install">開啟 CoachFlow</a>
+      </div>
+
+      <div class="role-grid" aria-label="快速開啟">
+        <a class="button" href="student.html?v=20260503-0017&source=install">學生入口</a>
+        <a class="button" href="coach.html?v=20260503-0017&source=install">教練入口</a>
+        <a class="button" href="admin.html?v=20260503-0017&source=install">管理入口</a>
+      </div>
+    </section>
+
+    <section class="help" id="install-help">
+      <h2>手機安裝方式</h2>
+      <ol>
+        <li>Android Chrome 若出現安裝按鈕，直接點選安裝。</li>
+        <li>iPhone 請用 Safari 開啟，按分享，再選「加入主畫面」。</li>
+      </ol>
+    </section>
+
+    <div class="status" id="install-status">正在準備安裝功能...</div>
+  </main>
+
+  <script>
+    const version = "20260503-0017";
+    let deferredPrompt = null;
+    const installBtn = document.getElementById("install-btn");
+    const installStatus = document.getElementById("install-status");
+    const isStandalone = window.matchMedia("(display-mode: standalone)").matches || window.navigator.standalone;
+
+    function setStatus(message) {
+      installStatus.textContent = message;
+    }
+
+    function registerServiceWorker() {
+      if (!("serviceWorker" in navigator) || !location.protocol.startsWith("http")) {
+        return;
+      }
+      navigator.serviceWorker.register("./coachflow-sw.js?v=" + version).catch((error) => {
+        console.warn("CoachFlow PWA registration failed:", error);
+      });
+    }
+
+    window.addEventListener("load", registerServiceWorker);
+
+    if (isStandalone) {
+      setStatus("已用 App 模式開啟。");
+    } else {
+      setStatus("Android 符合條件時會顯示安裝按鈕；iPhone 請使用 Safari 分享選單。");
+    }
+
+    window.addEventListener("beforeinstallprompt", (event) => {
+      event.preventDefault();
+      deferredPrompt = event;
+      installBtn.hidden = false;
+      setStatus("可以安裝到手機主畫面。");
+    });
+
+    installBtn.addEventListener("click", async () => {
+      if (!deferredPrompt) {
+        setStatus("請使用瀏覽器選單加入主畫面。");
+        return;
+      }
+
+      deferredPrompt.prompt();
+      const choice = await deferredPrompt.userChoice;
+      deferredPrompt = null;
+      installBtn.hidden = true;
+      setStatus(choice.outcome === "accepted" ? "已送出安裝。" : "尚未安裝，可稍後再試。");
+    });
+
+    window.addEventListener("appinstalled", () => {
+      installBtn.hidden = true;
+      setStatus("CoachFlow 已安裝。");
+    });
+  </script>
+</body>
+</html>
