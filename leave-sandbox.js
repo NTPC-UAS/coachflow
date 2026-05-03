@@ -3526,22 +3526,26 @@
   function getStudentBillingCycle(stats) {
     const student = stats?.student;
     const systemChargedCount = toNonNegativeInt(stats?.chargedLessons?.length, 0);
+    const importedCount = toNonNegativeInt(stats?.startCount, 0);
+    const totalChargedCount = toNonNegativeInt(stats?.totalChargedCount, importedCount + systemChargedCount);
     const storedStatus = normalizePaymentStatus(student?.paymentStatus);
     const storedPaidQuotaCount = normalizePaidQuotaCount(student, stats?.startCount);
-    const paidThroughCount = storedPaidQuotaCount || (storedStatus === "paid" ? CHARGE_REMINDER_STEP : 0);
-    const activeQuotaCount = paidThroughCount || CHARGE_REMINDER_STEP;
+    const defaultQuotaCount = importedCount > 0 ? getPaidQuotaCeiling(importedCount) : CHARGE_REMINDER_STEP;
+    const activeQuotaCount = storedPaidQuotaCount || defaultQuotaCount;
+    const paidThroughCount = storedPaidQuotaCount || (storedStatus === "paid" || totalChargedCount > 0 ? activeQuotaCount : 0);
     const cycleStartCount = Math.max(0, activeQuotaCount - CHARGE_REMINDER_STEP);
     const currentCycleChargedCount = Math.min(
       CHARGE_REMINDER_STEP,
-      Math.max(0, systemChargedCount - cycleStartCount)
+      Math.max(0, totalChargedCount - cycleStartCount)
     );
     const nextPaymentDueCount = activeQuotaCount;
-    const remainingToNextPayment = Math.max(0, activeQuotaCount - systemChargedCount);
-    const isPaymentDue = systemChargedCount >= activeQuotaCount && systemChargedCount > 0;
+    const remainingToNextPayment = Math.max(0, activeQuotaCount - totalChargedCount);
+    const isPaymentDue = totalChargedCount >= activeQuotaCount && totalChargedCount > 0;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
     return {
       paidThroughCount,
       systemChargedCount,
+      totalChargedCount,
       currentCycleChargedCount,
       nextPaymentDueCount,
       remainingToNextPayment,
@@ -3829,7 +3833,7 @@
     const stats = getStudentChargeStats(student.code);
     const billingCycle = getStudentBillingCycle(stats);
     const nextPaidThrough = nextStatus === "paid"
-      ? getNextPaidQuotaCount(billingCycle.systemChargedCount)
+      ? getNextPaidQuotaCount(billingCycle.totalChargedCount)
       : billingCycle.paidThroughCount;
     student.paymentStatus = nextStatus;
     student.paymentNote = note;
