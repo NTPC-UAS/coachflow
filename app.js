@@ -84,7 +84,8 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260503-0006";
+const PUBLIC_APP_VERSION = "20260503-0007";
+const TRACKING_DATA_RESET_AT = "2026-05-03T09:08:00+08:00";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 
@@ -418,6 +419,16 @@ function isUsableWorkoutLog(record) {
     && !!String(record?.exercise || "").trim();
 }
 
+function isAfterTrackingDataReset(dateValue) {
+  const resetTime = new Date(TRACKING_DATA_RESET_AT).getTime();
+  const valueTime = new Date(dateValue || "").getTime();
+  return Number.isFinite(valueTime) && valueTime >= resetTime;
+}
+
+function isWorkoutLogAfterTrackingDataReset(log = {}) {
+  return isAfterTrackingDataReset(log.submittedAt || log.updatedAt);
+}
+
 function applyCloudPayloadToState(payload) {
   if (!payload || payload.ok === false) {
     throw new Error(payload?.message || "雲端資料回傳失敗。");
@@ -446,7 +457,7 @@ function applyCloudPayloadToState(payload) {
   if (Array.isArray(payload.workoutLogs)) {
     state.workoutLogs = payload.workoutLogs
       .map(normalizeCloudLog)
-      .filter(isUsableWorkoutLog);
+      .filter((log) => isUsableWorkoutLog(log) && isWorkoutLogAfterTrackingDataReset(log));
   }
 
   if (payload.coach) {
@@ -2247,7 +2258,7 @@ function hydrateFromStorage() {
         coachId,
         coachName
       };
-    });
+    }).filter((log) => isUsableWorkoutLog(log) && isWorkoutLogAfterTrackingDataReset(log));
     persistState();
   } catch {
     persistState();

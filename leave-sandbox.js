@@ -10,6 +10,8 @@
   const MAX_CHARGE_REMINDER_LOGS = 24;
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
   const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
+  const RESET_ALL_TRACKING_DATA_MIGRATION = "reset-all-tracking-data-20260503-0908";
+  const TRACKING_DATA_RESET_AT = "2026-05-03T09:08:00+08:00";
   const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
   const LEAVE_PREFILL_MAX_AGE_MS = 10 * 60 * 1000;
   const READ_ONLY_ACCOUNT_CODE = "READONLY";
@@ -431,6 +433,12 @@
 
   function newId(prefix) {
     return `${prefix}_${Math.random().toString(36).slice(2, 8)}_${Date.now().toString(36)}`;
+  }
+
+  function isAfterTrackingDataReset(dateValue) {
+    const resetTime = new Date(TRACKING_DATA_RESET_AT).getTime();
+    const valueTime = new Date(dateValue || "").getTime();
+    return Number.isFinite(valueTime) && valueTime >= resetTime;
   }
 
   function getDateTimePartsInTaipei(dateValue) {
@@ -1286,7 +1294,8 @@
       studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
     };
     const result = await callAppsScriptApi("listLeaveRecords", payload, "GET");
-    const records = Array.isArray(result?.records) ? result.records : [];
+    const records = (Array.isArray(result?.records) ? result.records : [])
+      .filter((record) => isAfterTrackingDataReset(record.submittedAt || record.updatedAt));
     let changed = false;
     records.forEach((record) => {
       if (applyCloudLeaveRecord(record)) {
@@ -3231,6 +3240,68 @@
     }
     saveState();
     return resetCount > 0;
+  }
+
+  function resetAllTrackingDataOnce() {
+    state.migrations = state.migrations && typeof state.migrations === "object" ? state.migrations : {};
+    if (state.migrations[RESET_ALL_TRACKING_DATA_MIGRATION]) {
+      return false;
+    }
+
+    const before = {
+      leaveRequests: (state.leaveRequests || []).length,
+      makeupRequests: (state.makeupRequests || []).length,
+      coachBlocks: (state.coachBlocks || []).length,
+      compensationTasks: (state.compensationTasks || []).length,
+      eventLog: (state.eventLog || []).length
+    };
+
+    state.students = (state.students || []).map((student) => ({
+      ...student,
+      chargeStartCount: 0,
+      paidThroughCount: 0,
+      paymentStatus: "unknown",
+      paymentNote: "",
+      paymentConfirmedAt: "",
+      paymentConfirmedBy: "",
+      chargeReminderLogs: []
+    }));
+
+    state.lessons = (state.lessons || [])
+      .filter((lesson) => lesson.sourceType !== "MAKEUP")
+      .map((lesson) => {
+        const nextLesson = {
+          ...lesson,
+          attendanceStatus: "scheduled",
+          charged: false
+        };
+        if (nextLesson.sourceType === "REGULAR" || nextLesson.sourceType === "GOOGLE_CALENDAR") {
+          nextLesson.calendarOccupied = true;
+        }
+        delete nextLesson.calendarRemovedAt;
+        delete nextLesson.calendarRemovedReason;
+        delete nextLesson.beforeCalendarRemoved;
+        delete nextLesson.completedAt;
+        delete nextLesson.completedBy;
+        return nextLesson;
+      });
+
+    state.leaveRequests = [];
+    state.makeupRequests = [];
+    state.coachBlocks = [];
+    state.compensationTasks = [];
+    state.eventLog = [{
+      id: newId("LOG"),
+      at: new Date().toISOString(),
+      message: "已依需求將既有堂數、請假、補課、繳費與事件紀錄歸零，從此刻重新記錄。"
+    }];
+    state.migrations[RESET_ALL_TRACKING_DATA_MIGRATION] = {
+      at: new Date().toISOString(),
+      resetAt: TRACKING_DATA_RESET_AT,
+      before
+    };
+    saveState();
+    return true;
   }
 
   function ensureParticipantEmails() {
@@ -6793,6 +6864,7 @@
     ensureLessonCalendarEventIds();
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
+    resetAllTrackingDataOnce();
     resetImportedChargedCountsOnce();
     syncCoachflowRosterFromLocalState();
 
