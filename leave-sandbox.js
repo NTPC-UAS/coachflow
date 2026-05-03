@@ -3619,10 +3619,11 @@
         .filter((lesson) => (
           lesson.studentCode === student.code &&
           lesson.attendanceStatus !== "calendar-removed" &&
-          lesson.charged
+          isLessonActiveForTrackingStats(lesson) &&
+          isLessonChargedForBilling(lesson)
         ))
         .length;
-      const existingSystemChargedCount = Math.max(0, existingChargedCount - existingStartCount);
+      const existingSystemChargedCount = existingChargedCount;
       const fallbackPaidThrough = existingStatus === "paid"
         ? getPaidQuotaCeiling(existingSystemChargedCount)
         : 0;
@@ -3943,7 +3944,6 @@
       .filter(isLessonChargedForBilling)
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
     const chargedLessons = rawChargedLessons
-      .slice(Math.min(startCount, rawChargedLessons.length))
       .sort((a, b) => new Date(b.startAt) - new Date(a.startAt));
     return {
       student,
