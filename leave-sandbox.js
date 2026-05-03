@@ -15,7 +15,9 @@
   const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
   const RESET_ALL_TRACKING_DATA_MIGRATION = "reset-all-tracking-data-20260503-0908";
   const PURGE_PRE_RESET_TRACKING_DATA_MIGRATION = "purge-pre-reset-tracking-data-20260503-0009";
+  const RESTORE_AUTO_REMOVED_LOCAL_LESSONS_MIGRATION = "restore-auto-removed-local-lessons-20260503-0015";
   const TRACKING_DATA_RESET_AT = "2026-05-03T09:08:00+08:00";
+  const BILLING_TRACKING_START_AT = "2026-05-03T00:00:00+08:00";
   const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
   const LEAVE_PREFILL_MAX_AGE_MS = 10 * 60 * 1000;
   const READ_ONLY_ACCOUNT_CODE = "READONLY";
@@ -446,12 +448,26 @@
     return Number.isFinite(valueTime) && valueTime >= resetTime;
   }
 
+  function hasValidDateValue(dateValue) {
+    return Number.isFinite(new Date(dateValue || "").getTime());
+  }
+
+  function isAfterBillingTrackingStart(dateValue) {
+    const startTime = new Date(BILLING_TRACKING_START_AT).getTime();
+    const valueTime = new Date(dateValue || "").getTime();
+    return Number.isFinite(valueTime) && valueTime >= startTime;
+  }
+
   function isLessonAfterTrackingDataReset(lesson) {
-    return isAfterTrackingDataReset(lesson?.startAt);
+    return hasValidDateValue(lesson?.startAt);
+  }
+
+  function isLessonAfterBillingTrackingStart(lesson) {
+    return isAfterBillingTrackingStart(lesson?.startAt);
   }
 
   function isLessonActiveForTrackingStats(lesson) {
-    if (!isLessonAfterTrackingDataReset(lesson)) {
+    if (!isLessonAfterBillingTrackingStart(lesson)) {
       return false;
     }
     const startTime = new Date(lesson?.startAt || "").getTime();
@@ -1235,11 +1251,34 @@
       .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - startTime) - Math.abs(new Date(b.startAt).getTime() - startTime))[0] || null;
   }
 
+  function ensureLessonForCloudLeaveRecord(record) {
+    const studentCode = normalizeParticipantCode(record?.studentCode);
+    const coachCode = normalizeParticipantCode(record?.coachCode);
+    const startAt = String(record?.lessonStartAt || "").trim();
+    if (!studentCode || !coachCode || !hasValidDateValue(startAt)) {
+      return null;
+    }
+    ensureCoachProfile(coachCode);
+    ensureStudentProfile(studentCode, coachCode, { silentMode: true });
+    const dateKey = getDateKeyInTaipei(new Date(startAt));
+    const timeText = getTimeText(startAt);
+    const lesson = makeLesson(newId("L"), studentCode, coachCode, dateKey, timeText);
+    lesson.sourceType = "GOOGLE_CALENDAR";
+    lesson.startAt = new Date(startAt).toISOString();
+    lesson.calendarEventId = "";
+    lesson.calendarOccupied = false;
+    lesson.attendanceStatus = "leave-normal";
+    lesson.charged = false;
+    state.lessons.push(lesson);
+    addLog(`[雲端請假] 已補回 ${studentCode} ${formatDateTime(lesson.startAt)} 的請假課程。`);
+    return lesson;
+  }
+
   function applyCloudLeaveRecord(record) {
     if (!record || String(record.type || "normal") !== "normal") {
       return false;
     }
-    const lesson = findLessonForCloudLeaveRecord(record);
+    const lesson = findLessonForCloudLeaveRecord(record) || ensureLessonForCloudLeaveRecord(record);
     if (!lesson) {
       return false;
     }
@@ -1280,13 +1319,13 @@
       existing.calendarEventId = recordCalendarEventId;
       changed = true;
     }
-    if (recordCalendarEventId && normalizeCalendarEventId(lesson.calendarEventId) !== normalizeCalendarEventId(recordCalendarEventId)) {
-      lesson.calendarEventId = recordCalendarEventId;
-      changed = true;
-    }
     if (lesson.attendanceStatus !== "leave-normal" || lesson.calendarOccupied !== false) {
       lesson.attendanceStatus = "leave-normal";
       lesson.calendarOccupied = false;
+      changed = true;
+    }
+    if (lesson.calendarEventId) {
+      lesson.calendarEventId = "";
       changed = true;
     }
     return changed;
@@ -2069,6 +2108,13 @@
     return /^GCAL_/i.test(String(eventId || "").trim());
   }
 
+  function shouldAutoRemoveUnmatchedLocalCalendarLesson(lesson) {
+    if (!lesson || lesson.attendanceStatus === "leave-normal") {
+      return false;
+    }
+    return false;
+  }
+
   function getDaySyncRange(dateKey) {
     return {
       startAt: makeTaipeiDateTime(dateKey, "00:00").toISOString(),
@@ -2422,7 +2468,7 @@
         skippedNonLessonEvent += 1;
         return;
       }
-      if (!isAfterTrackingDataReset(startAt)) {
+      if (!hasValidDateValue(startAt)) {
         skippedNonLessonEvent += 1;
         return;
       }
@@ -2853,6 +2899,7 @@
       return false;
     }
     const monthStarts = [
+      shiftMonth(studentCalendarMonthStart || new Date(), -1),
       getMonthStart(studentCalendarMonthStart || new Date()),
       shiftMonth(studentCalendarMonthStart || new Date(), 1),
       shiftMonth(studentCalendarMonthStart || new Date(), 2)
@@ -2864,6 +2911,7 @@
     let totalRemovedPlaceholders = 0;
     let syncedAny = false;
     let completionStats = { changed: false, count: 0, studentCodes: [] };
+    let cloudLeaveChanged = false;
     for (const monthStart of monthStarts) {
       const monthRange = getMonthSyncRange(monthStart);
       try {
@@ -2884,7 +2932,7 @@
             lesson.calendarOccupied &&
             getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
             !matchedLessonIds.has(lesson.id) &&
-            isGeneratedLocalCalendarEventId(lesson.calendarEventId)
+            shouldAutoRemoveUnmatchedLocalCalendarLesson(lesson)
           ))
           .forEach((lesson) => {
             markLessonRemovedByCalendar(lesson, "student_google_auto_sync");
@@ -2903,6 +2951,14 @@
       ensureLessonCalendarEventIds();
       ensureParticipantEmails();
       ensureStudentBillingProfiles();
+      try {
+        cloudLeaveChanged = await syncCloudLeaveRecords({
+          coachCode: activeCoachCode,
+          studentCode: activeStudentCode
+        });
+      } catch (error) {
+        console.warn("Cloud leave sync failed after student calendar sync:", error);
+      }
       completionStats = markAutoCompletedLessonsForBilling({
         coachCode: activeCoachCode,
         studentCode: activeStudentCode,
@@ -2918,7 +2974,7 @@
         });
       });
     }
-    return syncedAny || completionStats.changed;
+    return syncedAny || completionStats.changed || cloudLeaveChanged;
   }
 
   async function syncCoachCalendarEventsFromGoogle(options = {}) {
@@ -2939,7 +2995,7 @@
     );
     const monthStarts = [];
     const seenMonths = new Set();
-    for (let offset = 0; offset <= lookaheadMonths; offset += 1) {
+    for (let offset = -1; offset <= lookaheadMonths; offset += 1) {
       const monthStart = shiftMonth(baseMonthStart, offset);
       const monthKey = getDateKeyInTaipei(monthStart).slice(0, 7);
       if (!seenMonths.has(monthKey)) {
@@ -2959,6 +3015,7 @@
     let totalCreated = 0;
     let totalRemovedPlaceholders = 0;
     let syncedAny = false;
+    let cloudLeaveChanged = false;
 
     for (const monthStart of monthStarts) {
       const monthRange = getMonthSyncRange(monthStart);
@@ -2980,7 +3037,7 @@
             lesson.calendarOccupied &&
             getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
             !matchedLessonIds.has(lesson.id) &&
-            isGeneratedLocalCalendarEventId(lesson.calendarEventId)
+            shouldAutoRemoveUnmatchedLocalCalendarLesson(lesson)
           ))
           .forEach((lesson) => {
             markLessonRemovedByCalendar(lesson, "coach_google_auto_sync");
@@ -3000,6 +3057,11 @@
       ensureLessonCalendarEventIds();
       ensureParticipantEmails();
       ensureStudentBillingProfiles();
+      try {
+        cloudLeaveChanged = await syncCloudLeaveRecords({ coachCode });
+      } catch (error) {
+        console.warn("Cloud leave sync failed after coach calendar sync:", error);
+      }
       const completionStats = markAutoCompletedLessonsForBilling({
         coachCode,
         sourceLabel: "教練端日曆同步"
@@ -3018,7 +3080,7 @@
         });
       });
     }
-    return syncedAny;
+    return syncedAny || cloudLeaveChanged;
   }
 
   async function syncReadOnlyCoachCalendarFromGoogle(coachCodeInput) {
@@ -3056,7 +3118,7 @@
           lesson.calendarOccupied &&
           getDateKeyInTaipei(new Date(lesson.startAt)).startsWith(monthPrefix) &&
           !matchedLessonIds.has(lesson.id) &&
-          isGeneratedLocalCalendarEventId(lesson.calendarEventId)
+          shouldAutoRemoveUnmatchedLocalCalendarLesson(lesson)
         ))
         .forEach((lesson) => {
           markLessonRemovedByCalendar(lesson, "readonly_google_auto_sync");
@@ -3743,6 +3805,51 @@
     };
     saveState();
     return true;
+  }
+
+  function restoreAutoRemovedLocalLessonsOnce() {
+    state.migrations = state.migrations && typeof state.migrations === "object" ? state.migrations : {};
+    if (state.migrations[RESTORE_AUTO_REMOVED_LOCAL_LESSONS_MIGRATION]) {
+      return false;
+    }
+    const autoSyncReasons = new Set([
+      "student_google_auto_sync",
+      "coach_google_auto_sync",
+      "readonly_google_auto_sync"
+    ]);
+    let restoredCount = 0;
+    state.lessons = (state.lessons || []).map((lesson) => {
+      if (
+        !lesson ||
+        lesson.attendanceStatus !== "calendar-removed" ||
+        !autoSyncReasons.has(String(lesson.calendarRemovedReason || "")) ||
+        !isGeneratedLocalCalendarEventId(lesson.beforeCalendarRemoved?.calendarEventId || "")
+      ) {
+        return lesson;
+      }
+      const previous = lesson.beforeCalendarRemoved || {};
+      restoredCount += 1;
+      const nextLesson = {
+        ...lesson,
+        attendanceStatus: previous.attendanceStatus || "scheduled",
+        calendarOccupied: previous.calendarOccupied !== false,
+        calendarEventId: previous.calendarEventId || lesson.calendarEventId || "",
+        charged: false
+      };
+      delete nextLesson.calendarRemovedAt;
+      delete nextLesson.calendarRemovedReason;
+      delete nextLesson.beforeCalendarRemoved;
+      return nextLesson;
+    });
+    state.migrations[RESTORE_AUTO_REMOVED_LOCAL_LESSONS_MIGRATION] = {
+      at: new Date().toISOString(),
+      restoredCount
+    };
+    if (restoredCount > 0) {
+      addLog(`[修復] 已還原 ${restoredCount} 堂被日曆同步誤標刪除的本機課程。`);
+    }
+    saveState();
+    return restoredCount > 0;
   }
 
   function ensureParticipantEmails() {
@@ -5154,7 +5261,7 @@
   }
 
   function isLessonChargedForBilling(lesson) {
-    return Boolean(lesson?.charged || isLessonAutoCompleted(lesson));
+    return Boolean(isLessonAfterBillingTrackingStart(lesson) && (lesson?.charged || isLessonAutoCompleted(lesson)));
   }
 
   function markAutoCompletedLessonsForBilling(options = {}) {
@@ -5171,7 +5278,7 @@
       if (studentCode && lesson.studentCode !== studentCode) {
         return;
       }
-      if (!isLessonAfterTrackingDataReset(lesson)) {
+      if (!isLessonAfterBillingTrackingStart(lesson)) {
         return;
       }
       if (!isLessonAutoCompleted(lesson) || lesson.charged) {
@@ -6413,7 +6520,9 @@
     const rows = students.map((student) => {
       const stats = getStudentChargeStats(student.code);
       const billingCycle = getStudentBillingCycle(stats);
-      const lastLesson = getLastCompletedLesson(stats.lessons);
+      const historyLessons = (state.lessons || [])
+        .filter((lesson) => lesson.studentCode === student.code && isLessonAfterTrackingDataReset(lesson));
+      const lastLesson = getLastCompletedLesson(historyLessons);
       const paymentClass = billingCycle.effectivePaymentStatus === "unpaid"
         ? "rejected"
         : billingCycle.effectivePaymentStatus === "paid"
@@ -7408,6 +7517,7 @@
     resetAllTrackingDataOnce();
     purgePreResetTrackingDataOnce();
     resetImportedChargedCountsOnce();
+    restoreAutoRemovedLocalLessonsOnce();
     syncCoachflowRosterFromLocalState();
 
     const cloudSyncPromise = (async () => {

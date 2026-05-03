@@ -3,7 +3,7 @@
   "name": "CoachFlow 教練版",
   "short_name": "CoachFlow教練",
   "description": "CoachFlow 教練端手機版，用於處理請假、補課、扣堂與繳費狀態。",
-  "start_url": "./leave-coach-sandbox.html?v=20260503-0014&source=coach-pwa",
+  "start_url": "./leave-coach-sandbox.html?v=20260503-0015&source=coach-pwa",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -37,7 +37,7 @@
     {
       "name": "開啟教練版",
       "short_name": "教練版",
-      "url": "./leave-coach-sandbox.html?v=20260503-0014&source=coach-pwa-shortcut",
+      "url": "./leave-coach-sandbox.html?v=20260503-0015&source=coach-pwa-shortcut",
       "icons": [
         {
           "src": "./coachflow-coach-icon-192.png",
