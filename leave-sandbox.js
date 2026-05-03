@@ -5233,8 +5233,16 @@
       return;
     }
 
+    const nowTime = Date.now();
     const leaves = state.leaveRequests
-      .filter((leave) => leave.coachCode === activeCoachCode && !leave.revokedAt)
+      .filter((leave) => {
+        if (leave.coachCode !== activeCoachCode || leave.revokedAt) {
+          return false;
+        }
+        const lesson = getLessonById(leave.lessonId);
+        const lessonTime = new Date(lesson?.startAt || "").getTime();
+        return !Number.isFinite(lessonTime) || lessonTime >= nowTime;
+      })
       .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
 
     const rows = leaves.map((leave) => {
@@ -5254,7 +5262,7 @@
 
     el.coachStudentLeaveTable.innerHTML = `
       <thead><tr><th>學生</th><th>原課程時間</th><th>請假時間</th><th>送出方式</th><th>請假狀態</th><th>補課狀態</th></tr></thead>
-      <tbody>${rows || "<tr><td colspan=\"6\">目前沒有學生請假紀錄</td></tr>"}</tbody>
+      <tbody>${rows || "<tr><td colspan=\"6\">目前沒有尚未發生的學生請假紀錄</td></tr>"}</tbody>
     `;
   }
 
