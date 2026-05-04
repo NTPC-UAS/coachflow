@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="refresh" content="0; url=install.html?v=20260504-0001&source=coach-install">
+  <meta http-equiv="refresh" content="0; url=install.html?v=20260504-0002&source=coach-install">
   <title>前往 CoachFlow 安裝頁</title>
 </head>
 <body>
@@ -11,7 +11,7 @@
     const target = new URL("install.html", window.location.href);
     const current = new URLSearchParams(window.location.search);
     current.forEach((value, key) => target.searchParams.set(key, value));
-    target.searchParams.set("v", "20260504-0001");
+    target.searchParams.set("v", "20260504-0002");
     target.searchParams.set("source", current.get("source") || "coach-install");
     window.location.replace(target.toString());
   </script>

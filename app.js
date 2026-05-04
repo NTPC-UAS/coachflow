@@ -86,7 +86,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260504-0001";
+const PUBLIC_APP_VERSION = "20260504-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_BILLING_DEFAULT_STEP = 4;
@@ -3815,11 +3815,7 @@ function getLeaveAppsScriptUrl() {
 }
 
 function getStudentLeaveBillingDefaultSummary() {
-  return {
-    currentCycleChargedCount: 0,
-    chargeReminderStep: LEAVE_BILLING_DEFAULT_STEP,
-    label: `本期已扣 0/${LEAVE_BILLING_DEFAULT_STEP}`
-  };
+  return null;
 }
 
 function getStudentLeaveBillingCacheKey(student, assignedCoach) {
@@ -3890,7 +3886,13 @@ function getLeaveBillingSummaryFromProfile(rawProfile) {
   const profile = normalizeLeaveBillingProfile(rawProfile);
   const step = profile.chargeReminderStep || LEAVE_BILLING_DEFAULT_STEP;
   let currentCycleChargedCount;
-  if (hasNumericValue(rawProfile?.currentCycleChargedCount)) {
+  if (hasNumericValue(rawProfile?.totalChargedCount)) {
+    const totalChargedCount = toNonNegativeInteger(rawProfile.totalChargedCount, 0);
+    const cycleRemainder = totalChargedCount % step;
+    currentCycleChargedCount = totalChargedCount <= 0
+      ? 0
+      : (cycleRemainder === 0 ? step : cycleRemainder);
+  } else if (hasNumericValue(rawProfile?.currentCycleChargedCount)) {
     currentCycleChargedCount = Math.min(step, toNonNegativeInteger(rawProfile.currentCycleChargedCount, 0));
   } else {
     const importedCount = toNonNegativeInteger(profile.chargeStartCount, 0);
@@ -3900,18 +3902,10 @@ function getLeaveBillingSummaryFromProfile(rawProfile) {
     const totalChargedCount = hasNumericValue(rawProfile?.totalChargedCount)
       ? toNonNegativeInteger(rawProfile.totalChargedCount, importedCount + systemChargedCount)
       : importedCount + systemChargedCount;
-    const rawPaidThroughCount = toNonNegativeInteger(profile.paidThroughCount, 0);
-    const legacyAdjustedCount = rawPaidThroughCount - importedCount;
-    const paidThroughCount =
-      rawPaidThroughCount > 0 &&
-      importedCount > 0 &&
-      rawPaidThroughCount % step !== 0 &&
-      legacyAdjustedCount > 0
-        ? Math.ceil(legacyAdjustedCount / step) * step
-        : rawPaidThroughCount;
-    const activeQuotaCount = paidThroughCount || (importedCount > 0 ? Math.ceil(importedCount / step) * step : step);
-    const cycleStartCount = Math.max(0, activeQuotaCount - step);
-    currentCycleChargedCount = Math.min(step, Math.max(0, totalChargedCount - cycleStartCount));
+    const cycleRemainder = totalChargedCount % step;
+    currentCycleChargedCount = totalChargedCount <= 0
+      ? 0
+      : (cycleRemainder === 0 ? step : cycleRemainder);
   }
   return {
     currentCycleChargedCount,
@@ -3927,6 +3921,20 @@ function hideStudentLeaveBillingTag() {
   els.studentActiveBilling.hidden = true;
   els.studentActiveBilling.textContent = "";
   els.studentActiveBilling.classList.remove("is-loading", "is-muted");
+}
+
+function showStudentLeaveBillingTag(summary, isLoading = false) {
+  if (!els.studentActiveBilling) {
+    return;
+  }
+  if (!summary && !isLoading) {
+    hideStudentLeaveBillingTag();
+    return;
+  }
+  els.studentActiveBilling.hidden = false;
+  els.studentActiveBilling.textContent = summary?.label || "本期已扣 讀取中";
+  els.studentActiveBilling.classList.toggle("is-loading", Boolean(isLoading && !summary));
+  els.studentActiveBilling.classList.toggle("is-muted", Boolean(!summary && !isLoading));
 }
 
 async function callLeaveSystemApi(action, payload = {}, method = "GET") {
@@ -3982,10 +3990,9 @@ async function callLeaveSystemApi(action, payload = {}, method = "GET") {
 }
 
 async function fetchStudentLeaveBillingSummary(student, assignedCoach) {
-  const fallback = getStudentLeaveBillingDefaultSummary();
   const studentCode = normalizeLeaveSystemCode(student?.accessCode || student?.id || "");
   if (!studentCode || !getLeaveAppsScriptUrl()) {
-    return fallback;
+    return getStudentLeaveBillingDefaultSummary();
   }
   const coachCode = normalizeLeaveSystemCode(assignedCoach?.accessCode || "");
   const payload = { studentCode };
@@ -4019,7 +4026,7 @@ async function fetchStudentLeaveBillingSummary(student, assignedCoach) {
   const latestProfile = profiles
     .filter((profile) => normalizeLeaveSystemCode(profile.studentCode) === studentCode)
     .sort((a, b) => getBillingProfileTime(b) - getBillingProfileTime(a))[0];
-  return latestProfile ? getLeaveBillingSummaryFromProfile(latestProfile) : fallback;
+  return latestProfile ? getLeaveBillingSummaryFromProfile(latestProfile) : getStudentLeaveBillingDefaultSummary();
 }
 
 function renderStudentActiveInfo(student, assignedCoachName, program) {
@@ -4035,12 +4042,54 @@ function renderStudentActiveInfo(student, assignedCoachName, program) {
     }
   }
 
-  hideStudentLeaveBillingTag();
+  if (!student) {
+    hideStudentLeaveBillingTag();
+    return;
+  }
+  const assignedCoach = state.coaches.find((coach) => coach.id === (student.primaryCoachId || ""));
+  const cacheKey = getStudentLeaveBillingCacheKey(student, assignedCoach);
+  const cached = cacheKey ? studentLeaveBillingCache.get(cacheKey) : null;
+  const isLoading = cacheKey && studentLeaveBillingLoadingKey === cacheKey;
+  showStudentLeaveBillingTag(cached?.summary || null, Boolean(isLoading));
 }
 
 async function refreshStudentLeaveBillingSummary(options = {}) {
-  studentLeaveBillingLoadingKey = "";
-  hideStudentLeaveBillingTag();
+  const student = getSelectedStudent();
+  if (!student) {
+    renderStudentActiveInfo(null, "", null);
+    return;
+  }
+  const assignedCoach = state.coaches.find((coach) => coach.id === (student.primaryCoachId || ""));
+  const cacheKey = getStudentLeaveBillingCacheKey(student, assignedCoach);
+  if (!cacheKey || !getLeaveAppsScriptUrl()) {
+    hideStudentLeaveBillingTag();
+    return;
+  }
+  const cached = studentLeaveBillingCache.get(cacheKey);
+  if (!options.force && cached && Date.now() - cached.fetchedAt < LEAVE_BILLING_CACHE_TTL_MS) {
+    renderStudentActiveInfo(student, assignedCoach?.name || "尚未指派", getSelectedStudentProgram());
+    return;
+  }
+  if (studentLeaveBillingLoadingKey === cacheKey) {
+    return;
+  }
+
+  studentLeaveBillingLoadingKey = cacheKey;
+  renderStudentActiveInfo(student, assignedCoach?.name || "尚未指派", getSelectedStudentProgram());
+  try {
+    const summary = await fetchStudentLeaveBillingSummary(student, assignedCoach);
+    studentLeaveBillingCache.set(cacheKey, {
+      summary,
+      fetchedAt: Date.now()
+    });
+  } finally {
+    if (studentLeaveBillingLoadingKey === cacheKey) {
+      studentLeaveBillingLoadingKey = "";
+    }
+    const currentStudent = getSelectedStudent();
+    const currentCoach = state.coaches.find((coach) => coach.id === (currentStudent?.primaryCoachId || ""));
+    renderStudentActiveInfo(currentStudent, currentCoach?.name || "尚未指派", getSelectedStudentProgram());
+  }
 }
 
 function renderStudentSummary() {
