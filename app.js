@@ -86,11 +86,14 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260504-0002";
+const PUBLIC_APP_VERSION = "20260504-0003";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
+const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
 const LEAVE_BILLING_DEFAULT_STEP = 4;
 const LEAVE_BILLING_CACHE_TTL_MS = 45 * 1000;
+const LEAVE_BILLING_TRACKING_START_AT = "2026-05-03T00:00:00+08:00";
+const LEAVE_BILLING_SUMMARY_TIME_TOLERANCE_MS = 30 * 1000;
 
 const IS_CLOUD_MODE =
   String(APP_CONFIG.mode || "local").toLowerCase() === "cloud" &&
@@ -3842,6 +3845,182 @@ function getBillingProfileTime(profile) {
   return times.length ? Math.max(...times) : 0;
 }
 
+function buildLeaveBillingCycleSummary(totalChargedCount, step = LEAVE_BILLING_DEFAULT_STEP, extra = {}) {
+  const normalizedStep = Math.max(1, toNonNegativeInteger(step, LEAVE_BILLING_DEFAULT_STEP) || LEAVE_BILLING_DEFAULT_STEP);
+  const normalizedTotal = toNonNegativeInteger(totalChargedCount, 0);
+  const cycleRemainder = normalizedTotal % normalizedStep;
+  const currentCycleChargedCount = normalizedTotal <= 0
+    ? 0
+    : (cycleRemainder === 0 ? normalizedStep : cycleRemainder);
+  return {
+    ...extra,
+    currentCycleChargedCount,
+    chargeReminderStep: normalizedStep,
+    totalChargedCount: normalizedTotal,
+    label: `本期已扣 ${currentCycleChargedCount}/${normalizedStep}`
+  };
+}
+
+function readLeaveSandboxLocalState() {
+  try {
+    const raw = localStorage.getItem(LEAVE_SANDBOX_STORAGE_KEY);
+    if (!raw) {
+      return null;
+    }
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch (error) {
+    console.warn("Failed to read local leave billing state:", error);
+    return null;
+  }
+}
+
+function isLeaveLessonAfterBillingTrackingStart(lesson) {
+  const startTime = new Date(LEAVE_BILLING_TRACKING_START_AT).getTime();
+  const lessonTime = new Date(lesson?.startAt || "").getTime();
+  return Number.isFinite(lessonTime) && lessonTime >= startTime;
+}
+
+function isLocalLeaveGoogleSyncLesson(lesson) {
+  return lesson?.sourceType === "REGULAR" || lesson?.sourceType === "GOOGLE_CALENDAR";
+}
+
+function isLocalLeaveLessonAutoCompleted(lesson) {
+  const lessonTime = new Date(lesson?.startAt || "").getTime();
+  return Boolean(
+    lesson &&
+    lesson.attendanceStatus === "scheduled" &&
+    lesson.calendarOccupied &&
+    isLocalLeaveGoogleSyncLesson(lesson) &&
+    Number.isFinite(lessonTime) &&
+    lessonTime <= Date.now()
+  );
+}
+
+function isLocalLeaveLessonActiveForBilling(lesson) {
+  if (!isLeaveLessonAfterBillingTrackingStart(lesson)) {
+    return false;
+  }
+  const lessonTime = new Date(lesson?.startAt || "").getTime();
+  return Number.isFinite(lessonTime) && (lessonTime <= Date.now() || lesson.attendanceStatus !== "scheduled");
+}
+
+function isLocalLeaveLessonChargedForBilling(lesson) {
+  return Boolean(isLeaveLessonAfterBillingTrackingStart(lesson) && (lesson?.charged || isLocalLeaveLessonAutoCompleted(lesson)));
+}
+
+function isManualLeaveBillingBaselineSource(updatedBy, leaveState) {
+  const source = normalizeLeaveSystemCode(updatedBy || "");
+  if (!source || source === "SYSTEM") {
+    return false;
+  }
+  if ((leaveState?.coaches || []).some((coach) => normalizeLeaveSystemCode(coach?.code || coach?.accessCode) === source)) {
+    return true;
+  }
+  return /^(MO|CH)\d{3,}$/.test(source);
+}
+
+function getLocalLeaveChargeStartBaselineAt(studentProfile, leaveState) {
+  const explicitBaseline = String(studentProfile?.chargeStartCountUpdatedAt || "").trim();
+  if (Number.isFinite(new Date(explicitBaseline || "").getTime())) {
+    return explicitBaseline;
+  }
+  if (toNonNegativeInteger(studentProfile?.chargeStartCount, 0) <= 0) {
+    return "";
+  }
+  const fallbackBaseline = String(studentProfile?.billingUpdatedAt || "").trim();
+  if (!Number.isFinite(new Date(fallbackBaseline || "").getTime())) {
+    return "";
+  }
+  if (!isManualLeaveBillingBaselineSource(studentProfile?.billingUpdatedBy || "", leaveState)) {
+    return "";
+  }
+  const fallbackTime = new Date(fallbackBaseline).getTime();
+  const paymentTime = new Date(studentProfile?.paymentConfirmedAt || "").getTime();
+  if (Number.isFinite(paymentTime) && Math.abs(fallbackTime - paymentTime) <= 5000) {
+    return "";
+  }
+  return fallbackBaseline;
+}
+
+function isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leaveState) {
+  const baselineAt = getLocalLeaveChargeStartBaselineAt(studentProfile, leaveState);
+  if (!baselineAt) {
+    return true;
+  }
+  const lessonTime = new Date(lesson?.startAt || "").getTime();
+  const baselineTime = new Date(baselineAt).getTime();
+  return Number.isFinite(lessonTime) && (!Number.isFinite(baselineTime) || lessonTime > baselineTime);
+}
+
+function getLocalLeaveBillingSummary(student, assignedCoach) {
+  const leaveState = readLeaveSandboxLocalState();
+  if (!leaveState) {
+    return null;
+  }
+  const studentCode = normalizeLeaveSystemCode(student?.accessCode || student?.id || "");
+  const coachCode = normalizeLeaveSystemCode(assignedCoach?.accessCode || "");
+  if (!studentCode) {
+    return null;
+  }
+  const studentProfile = (leaveState.students || []).find((item) => (
+    normalizeLeaveSystemCode(item?.code || item?.studentCode) === studentCode &&
+    (!coachCode || normalizeLeaveSystemCode(item?.coachCode) === coachCode)
+  )) || null;
+  const startCount = toNonNegativeInteger(studentProfile?.chargeStartCount, 0);
+  const lessons = (leaveState.lessons || []).filter((lesson) => (
+    normalizeLeaveSystemCode(lesson?.studentCode) === studentCode &&
+    (!coachCode || normalizeLeaveSystemCode(lesson?.coachCode) === coachCode) &&
+    lesson?.attendanceStatus !== "calendar-removed" &&
+    isLocalLeaveLessonActiveForBilling(lesson)
+  ));
+  const chargedLessons = lessons.filter((lesson) => (
+    isLocalLeaveLessonChargedForBilling(lesson) &&
+    isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leaveState)
+  ));
+  if (!studentProfile && !chargedLessons.length) {
+    return null;
+  }
+  const totalChargedCount = startCount + chargedLessons.length;
+  const lessonTimes = chargedLessons.flatMap((lesson) => [lesson?.completedAt, lesson?.updatedAt, lesson?.startAt]);
+  const updatedTime = Math.max(
+    getBillingProfileTime(studentProfile || {}),
+    ...lessonTimes
+      .map((value) => new Date(value || "").getTime())
+      .filter((time) => Number.isFinite(time)),
+    0
+  );
+  return buildLeaveBillingCycleSummary(totalChargedCount, LEAVE_BILLING_DEFAULT_STEP, {
+    source: "local",
+    updatedTime,
+    systemChargedCount: chargedLessons.length,
+    chargeStartCount: startCount
+  });
+}
+
+function chooseStudentLeaveBillingSummary(localSummary, cloudSummary) {
+  if (!localSummary) {
+    return cloudSummary || null;
+  }
+  if (!cloudSummary) {
+    return localSummary;
+  }
+  const localTime = Number(localSummary.updatedTime || 0);
+  const cloudTime = Number(cloudSummary.updatedTime || 0);
+  if (cloudTime > localTime + LEAVE_BILLING_SUMMARY_TIME_TOLERANCE_MS) {
+    return cloudSummary;
+  }
+  if (localTime > cloudTime + LEAVE_BILLING_SUMMARY_TIME_TOLERANCE_MS) {
+    return localSummary;
+  }
+  const localTotal = hasNumericValue(localSummary.totalChargedCount) ? toNonNegativeInteger(localSummary.totalChargedCount, 0) : -1;
+  const cloudTotal = hasNumericValue(cloudSummary.totalChargedCount) ? toNonNegativeInteger(cloudSummary.totalChargedCount, 0) : -1;
+  if (localTotal >= 0 && cloudTotal >= 0 && localTotal !== cloudTotal) {
+    return localTotal > cloudTotal ? localSummary : cloudSummary;
+  }
+  return localSummary;
+}
+
 function normalizeLeaveBillingProfile(profile = {}) {
   return {
     ...profile,
@@ -3885,33 +4064,29 @@ function extractLeaveBillingProfileFromRecord(record = {}) {
 function getLeaveBillingSummaryFromProfile(rawProfile) {
   const profile = normalizeLeaveBillingProfile(rawProfile);
   const step = profile.chargeReminderStep || LEAVE_BILLING_DEFAULT_STEP;
-  let currentCycleChargedCount;
   if (hasNumericValue(rawProfile?.totalChargedCount)) {
-    const totalChargedCount = toNonNegativeInteger(rawProfile.totalChargedCount, 0);
-    const cycleRemainder = totalChargedCount % step;
-    currentCycleChargedCount = totalChargedCount <= 0
-      ? 0
-      : (cycleRemainder === 0 ? step : cycleRemainder);
+    return buildLeaveBillingCycleSummary(rawProfile.totalChargedCount, step, {
+      source: "cloud",
+      updatedTime: getBillingProfileTime(rawProfile)
+    });
   } else if (hasNumericValue(rawProfile?.currentCycleChargedCount)) {
-    currentCycleChargedCount = Math.min(step, toNonNegativeInteger(rawProfile.currentCycleChargedCount, 0));
-  } else {
-    const importedCount = toNonNegativeInteger(profile.chargeStartCount, 0);
-    const systemChargedCount = hasNumericValue(rawProfile?.systemChargedCount)
-      ? toNonNegativeInteger(rawProfile.systemChargedCount, 0)
-      : 0;
-    const totalChargedCount = hasNumericValue(rawProfile?.totalChargedCount)
-      ? toNonNegativeInteger(rawProfile.totalChargedCount, importedCount + systemChargedCount)
-      : importedCount + systemChargedCount;
-    const cycleRemainder = totalChargedCount % step;
-    currentCycleChargedCount = totalChargedCount <= 0
-      ? 0
-      : (cycleRemainder === 0 ? step : cycleRemainder);
+    const currentCycleChargedCount = Math.min(step, toNonNegativeInteger(rawProfile.currentCycleChargedCount, 0));
+    return {
+      source: "cloud",
+      updatedTime: getBillingProfileTime(rawProfile),
+      currentCycleChargedCount,
+      chargeReminderStep: step,
+      label: `本期已扣 ${currentCycleChargedCount}/${step}`
+    };
   }
-  return {
-    currentCycleChargedCount,
-    chargeReminderStep: step,
-    label: `本期已扣 ${currentCycleChargedCount}/${step}`
-  };
+  const importedCount = toNonNegativeInteger(profile.chargeStartCount, 0);
+  const systemChargedCount = hasNumericValue(rawProfile?.systemChargedCount)
+    ? toNonNegativeInteger(rawProfile.systemChargedCount, 0)
+    : 0;
+  return buildLeaveBillingCycleSummary(importedCount + systemChargedCount, step, {
+    source: "cloud",
+    updatedTime: getBillingProfileTime(rawProfile)
+  });
 }
 
 function hideStudentLeaveBillingTag() {
@@ -3990,9 +4165,10 @@ async function callLeaveSystemApi(action, payload = {}, method = "GET") {
 }
 
 async function fetchStudentLeaveBillingSummary(student, assignedCoach) {
+  const localSummary = getLocalLeaveBillingSummary(student, assignedCoach);
   const studentCode = normalizeLeaveSystemCode(student?.accessCode || student?.id || "");
   if (!studentCode || !getLeaveAppsScriptUrl()) {
-    return getStudentLeaveBillingDefaultSummary();
+    return localSummary || getStudentLeaveBillingDefaultSummary();
   }
   const coachCode = normalizeLeaveSystemCode(assignedCoach?.accessCode || "");
   const payload = { studentCode };
@@ -4026,7 +4202,8 @@ async function fetchStudentLeaveBillingSummary(student, assignedCoach) {
   const latestProfile = profiles
     .filter((profile) => normalizeLeaveSystemCode(profile.studentCode) === studentCode)
     .sort((a, b) => getBillingProfileTime(b) - getBillingProfileTime(a))[0];
-  return latestProfile ? getLeaveBillingSummaryFromProfile(latestProfile) : getStudentLeaveBillingDefaultSummary();
+  const cloudSummary = latestProfile ? getLeaveBillingSummaryFromProfile(latestProfile) : getStudentLeaveBillingDefaultSummary();
+  return chooseStudentLeaveBillingSummary(localSummary, cloudSummary);
 }
 
 function renderStudentActiveInfo(student, assignedCoachName, program) {
