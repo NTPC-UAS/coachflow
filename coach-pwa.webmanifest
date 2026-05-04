@@ -3,7 +3,7 @@
   "name": "CoachFlow 重訓課表與紀錄系統",
   "short_name": "CoachFlow",
   "description": "安裝到手機主畫面後，使用同一份雲端課表、學生紀錄與教練資料。",
-  "start_url": "./index.html?v=20260503-0021&source=coachflow-pwa",
+  "start_url": "./index.html?v=20260504-0001&source=coachflow-pwa",
   "scope": "./",
   "display": "standalone",
   "orientation": "portrait",
@@ -38,7 +38,7 @@
     {
       "name": "學生填寫",
       "short_name": "學生",
-      "url": "./student.html?v=20260503-0021&source=coachflow-pwa-shortcut",
+      "url": "./student.html?v=20260504-0001&source=coachflow-pwa-shortcut",
       "icons": [
         {
           "src": "./coachflow-coach-icon-192.png",
@@ -50,7 +50,7 @@
     {
       "name": "教練管理",
       "short_name": "教練",
-      "url": "./coach.html?v=20260503-0021&source=coachflow-pwa-shortcut",
+      "url": "./coach.html?v=20260504-0001&source=coachflow-pwa-shortcut",
       "icons": [
         {
           "src": "./coachflow-coach-icon-192.png",
@@ -62,7 +62,7 @@
     {
       "name": "管理者",
       "short_name": "管理",
-      "url": "./admin.html?v=20260503-0021&source=coachflow-pwa-shortcut",
+      "url": "./admin.html?v=20260504-0001&source=coachflow-pwa-shortcut",
       "icons": [
         {
           "src": "./coachflow-coach-icon-192.png",

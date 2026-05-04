@@ -1399,6 +1399,17 @@
     return now;
   }
 
+  function isManualChargeStartFallbackSource(updatedBy) {
+    const source = normalizeParticipantCode(updatedBy || "");
+    if (!source || source === "SYSTEM") {
+      return false;
+    }
+    if ((state.coaches || []).some((coach) => normalizeParticipantCode(coach?.code) === source)) {
+      return true;
+    }
+    return /^(MO|CH)\d{3,}$/.test(source);
+  }
+
   function getChargeStartBaselineAt(student) {
     const explicitBaseline = String(student?.chargeStartCountUpdatedAt || "").trim();
     if (hasValidDateValue(explicitBaseline)) {
@@ -1409,7 +1420,7 @@
     }
     const fallbackBaseline = String(student?.billingUpdatedAt || "").trim();
     const fallbackBy = normalizeParticipantCode(student?.billingUpdatedBy || "");
-    if (!fallbackBy || fallbackBy === "SYSTEM" || !hasValidDateValue(fallbackBaseline)) {
+    if (!isManualChargeStartFallbackSource(fallbackBy) || !hasValidDateValue(fallbackBaseline)) {
       return "";
     }
     const fallbackTime = new Date(fallbackBaseline).getTime();
