@@ -11,6 +11,7 @@
   const CLOUD_BILLING_RECORD_TYPE = "billing-profile";
   const CLOUD_BILLING_RECORD_PREFIX = "billing-profile:";
   const CLOUD_BILLING_REFRESH_INTERVAL_MS = 45 * 1000;
+  const LOCAL_LEAVE_RECONCILE_GRACE_MS = 5 * 60 * 1000;
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
   const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
   const RESET_ALL_TRACKING_DATA_MIGRATION = "reset-all-tracking-data-20260503-0908";
@@ -127,6 +128,7 @@
   let coachRejectReasonPreset = DEFAULT_REJECT_REASON;
   let activeCoachReadOnly = false;
   let lastCloudBillingRefreshAt = 0;
+  let lastCloudSessionRefreshAt = 0;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
   let studentLoginPromptHidden = false;
@@ -1199,6 +1201,98 @@
     ].join("|");
   }
 
+  function getCloudLeaveMatchKeyFromValues(studentCode, coachCode, startAt) {
+    const normalizedStudentCode = normalizeParticipantCode(studentCode);
+    const normalizedCoachCode = normalizeParticipantCode(coachCode);
+    const startTime = new Date(startAt || "").getTime();
+    if (!normalizedStudentCode || !normalizedCoachCode || !Number.isFinite(startTime)) {
+      return "";
+    }
+    return [
+      normalizedStudentCode,
+      normalizedCoachCode,
+      new Date(startTime).toISOString()
+    ].join("|");
+  }
+
+  function getCloudLeaveRecordMatchKey(record) {
+    const lessonKey = String(record?.lessonKey || "").trim();
+    return lessonKey || getCloudLeaveMatchKeyFromValues(record?.studentCode, record?.coachCode, record?.lessonStartAt);
+  }
+
+  function isLeaveInCloudSyncScope(leave, lesson, scope) {
+    const studentCode = normalizeParticipantCode(leave?.studentCode || lesson?.studentCode);
+    const coachCode = normalizeParticipantCode(leave?.coachCode || lesson?.coachCode);
+    if (scope.studentCode && studentCode !== scope.studentCode) {
+      return false;
+    }
+    if (scope.coachCode && coachCode !== scope.coachCode) {
+      return false;
+    }
+    return Boolean(studentCode || coachCode);
+  }
+
+  function reconcileLocalLeaveRecordsWithCloud(records, scope) {
+    if (!scope.coachCode && !scope.studentCode) {
+      return false;
+    }
+
+    const activeCloudIds = new Set();
+    const activeCloudLessonKeys = new Set();
+    records.forEach((record) => {
+      if (!record || String(record.type || "normal") !== "normal" || String(record.revokedAt || "").trim()) {
+        return;
+      }
+      const id = String(record.id || "").trim();
+      const lessonKey = getCloudLeaveRecordMatchKey(record);
+      if (id) {
+        activeCloudIds.add(id);
+      }
+      if (lessonKey) {
+        activeCloudLessonKeys.add(lessonKey);
+      }
+    });
+
+    let changed = false;
+    state.leaveRequests.forEach((leave) => {
+      if (!leave || String(leave.type || "normal") !== "normal" || leave.revokedAt) {
+        return;
+      }
+      if (!isAfterTrackingDataReset(leave.submittedAt || leave.updatedAt)) {
+        return;
+      }
+      const submittedTime = new Date(leave.submittedAt || "").getTime();
+      if (Number.isFinite(submittedTime) && Date.now() - submittedTime < LOCAL_LEAVE_RECONCILE_GRACE_MS) {
+        return;
+      }
+
+      const lesson = getLessonById(leave.lessonId);
+      if (!isLeaveInCloudSyncScope(leave, lesson, scope)) {
+        return;
+      }
+
+      const leaveId = String(leave.id || "").trim();
+      const lessonKey = lesson ? getLessonCloudMatchKey(lesson) : "";
+      if ((leaveId && activeCloudIds.has(leaveId)) || (lessonKey && activeCloudLessonKeys.has(lessonKey))) {
+        return;
+      }
+
+      leave.revokedAt = new Date().toISOString();
+      leave.revokedBy = "cloud-sync";
+      if (lesson) {
+        if (lesson.attendanceStatus === "leave-normal") {
+          lesson.attendanceStatus = "scheduled";
+        }
+        lesson.calendarOccupied = true;
+        if (!lesson.calendarEventId && leave.calendarEventId) {
+          lesson.calendarEventId = leave.calendarEventId;
+        }
+      }
+      changed = true;
+    });
+    return changed;
+  }
+
   function buildCloudLeaveRecord(leave, lesson) {
     const targetLesson = lesson || getLessonById(leave?.lessonId);
     if (!leave || !targetLesson) {
@@ -1353,11 +1447,16 @@
     if (!getAppsScriptUrl()) {
       return false;
     }
+    const hasCoachScope = Object.prototype.hasOwnProperty.call(scope, "coachCode");
+    const hasStudentScope = Object.prototype.hasOwnProperty.call(scope, "studentCode");
     const payload = {
-      coachCode: normalizeParticipantCode(scope.coachCode || activeCoachCode || ""),
-      studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
+      coachCode: normalizeParticipantCode(scope.coachCode || (!hasCoachScope ? activeCoachCode : "") || ""),
+      studentCode: normalizeParticipantCode(scope.studentCode || (!hasStudentScope ? activeStudentCode : "") || "")
     };
     const result = await callAppsScriptApi("listLeaveRecords", payload, "GET");
+    if (result?.ok === false || !Array.isArray(result?.records)) {
+      return false;
+    }
     const records = (Array.isArray(result?.records) ? result.records : [])
       .filter((record) => isAfterTrackingDataReset(record.submittedAt || record.updatedAt));
     let changed = false;
@@ -1366,6 +1465,9 @@
         changed = true;
       }
     });
+    if (reconcileLocalLeaveRecordsWithCloud(records, payload)) {
+      changed = true;
+    }
     if (changed) {
       addLog(`[雲端請假] 已同步 ${records.length} 筆請假紀錄。`);
       saveState();
@@ -6862,18 +6964,64 @@
     return changed;
   }
 
+  async function refreshCloudSessionDataFromCurrentSession(force = false) {
+    if (!activeCoachCode && !activeStudentCode) {
+      return false;
+    }
+    const now = Date.now();
+    if (!force && now - lastCloudSessionRefreshAt < CLOUD_BILLING_REFRESH_INTERVAL_MS) {
+      return false;
+    }
+    lastCloudSessionRefreshAt = now;
+
+    let changed = false;
+    try {
+      changed = await syncCloudLeaveRecords({
+        coachCode: activeCoachCode,
+        studentCode: activeStudentCode
+      }) || changed;
+    } catch (error) {
+      console.warn("Cloud leave session refresh failed:", error);
+    }
+    try {
+      changed = await syncCloudBillingProfiles({
+        coachCode: activeCoachCode,
+        studentCode: activeStudentCode
+      }) || changed;
+    } catch (error) {
+      console.warn("Cloud billing session refresh failed:", error);
+    }
+
+    try {
+      if (activeStudentCode) {
+        changed = await syncStudentCalendarEventsFromGoogle() || changed;
+      } else if (activeCoachCode && activeCoachReadOnly) {
+        changed = await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode) || changed;
+      } else if (activeCoachCode) {
+        changed = await syncCoachCalendarEventsFromGoogle({ showStatus: false }) || changed;
+      }
+    } catch (error) {
+      console.warn("Google calendar session refresh failed:", error);
+    }
+
+    if (changed) {
+      renderAll();
+    }
+    return changed;
+  }
+
   function bindEvents() {
     window.addEventListener("focus", () => {
-      refreshCloudBillingProfilesFromCurrentSession().catch((error) => {
-        console.warn("Cloud billing focus refresh failed:", error);
+      refreshCloudSessionDataFromCurrentSession().catch((error) => {
+        console.warn("Cloud session focus refresh failed:", error);
       });
     });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) {
         return;
       }
-      refreshCloudBillingProfilesFromCurrentSession().catch((error) => {
-        console.warn("Cloud billing visibility refresh failed:", error);
+      refreshCloudSessionDataFromCurrentSession().catch((error) => {
+        console.warn("Cloud session visibility refresh failed:", error);
       });
     });
     if (el.studentLoginBtn) {

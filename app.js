@@ -13,13 +13,52 @@ const defaultState = {
 
 const state = structuredClone(defaultState);
 
+function isMobileViewport() {
+  return window.innerWidth <= 820 || window.matchMedia?.("(max-width: 820px)")?.matches;
+}
+
+function isStandaloneAppMode() {
+  return Boolean(
+    window.matchMedia?.("(display-mode: standalone)")?.matches ||
+    window.navigator?.standalone
+  );
+}
+
+function isCoachFlowPwaSource() {
+  const source = String(new URLSearchParams(window.location.search).get("source") || "").toLowerCase();
+  return source.startsWith("coachflow-pwa");
+}
+
+function shouldForceMobileLayout() {
+  const isLikelyPhoneApp = (isStandaloneAppMode() || isCoachFlowPwaSource()) &&
+    window.navigator?.maxTouchPoints > 0 &&
+    window.innerWidth <= 1024;
+  return isMobileViewport() || isLikelyPhoneApp;
+}
+
+function enforceForcedMobileLayout() {
+  if (!shouldForceMobileLayout()) {
+    return false;
+  }
+  let changed = false;
+  if (studentViewMode !== "card") {
+    studentViewMode = "card";
+    changed = true;
+  }
+  if (coachViewMode !== "mobile") {
+    coachViewMode = "mobile";
+    changed = true;
+  }
+  return changed;
+}
+
 let editingProgramId = null;
 let coachProgramEditorMode = "create";
 let loadedStudentEntries = [];
 let pendingSubmission = null;
 let currentStudentId = "";
 let currentStudentProgramId = "";
-let studentViewMode = window.innerWidth <= 820 ? "card" : "table";
+let studentViewMode = shouldForceMobileLayout() ? "card" : "table";
 let studentHistoryOpened = false;
 let lastSubmittedLogs = [];
 let studentSubmissionCompleted = false;
@@ -30,7 +69,7 @@ let studentHistoryVisibleCount = 1;
 let coachTodayVisibleCount = 6;
 let coachHistoryVisibleCount = 6;
 let todayStudentDetailVisibleCount = 6;
-let coachViewMode = "desktop";
+let coachViewMode = shouldForceMobileLayout() ? "mobile" : "desktop";
 let coachHistoryOpened = false;
 let pendingHistoryImportRows = [];
 let assigningStudentId = "";
@@ -86,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260505-0001";
+const PUBLIC_APP_VERSION = "20260505-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -2335,12 +2374,14 @@ function hydrateSession() {
           : null;
       coachViewMode = parsed.coachViewMode || coachViewMode;
       studentViewMode = parsed.studentViewMode || studentViewMode;
+      enforceForcedMobileLayout();
     } catch {
     persistSession();
   }
 }
 
 function persistSession() {
+  enforceForcedMobileLayout();
   let existing = {};
   try {
     existing = JSON.parse(localStorage.getItem(SESSION_KEY) || "{}");
@@ -4829,11 +4870,7 @@ async function confirmStudentAccessCore(options = {}) {
     markStudentUsed(matchedStudent.id);
   }
   els.studentProgramStatus.textContent = `${matchedStudent.name} \u8eab\u4efd\u5df2\u78ba\u8a8d`;
-  if (els.studentPanelViewToggle) {
-    els.studentPanelViewToggle.hidden = false;
-    els.studentPanelViewToggle.classList.remove("is-hidden");
-    els.studentPanelViewToggle.style.display = "";
-  }
+  syncForcedMobileLayoutControls();
   renderStudentProgramOptions();
   renderStudentSummary();
   renderStudentHistoryFilters();
@@ -5711,15 +5748,31 @@ function saveStudentProgramEdits() {
 }
 
 function setStudentViewMode(mode) {
-  studentViewMode = mode;
+  studentViewMode = shouldForceMobileLayout() ? "card" : mode;
   persistSession();
   applyStudentViewMode();
 }
 
 function setCoachViewMode(mode) {
-  coachViewMode = mode;
+  coachViewMode = shouldForceMobileLayout() ? "mobile" : mode;
   persistSession();
   applyCoachViewMode();
+}
+
+function setLayoutToggleHidden(toggle, hidden) {
+  if (!toggle) {
+    return;
+  }
+  toggle.hidden = hidden;
+  toggle.classList.toggle("is-hidden", hidden);
+  toggle.style.display = hidden ? "none" : "";
+}
+
+function syncForcedMobileLayoutControls() {
+  const hidden = shouldForceMobileLayout();
+  setLayoutToggleHidden(els.coachGlobalViewDesktopButton?.closest(".view-toggle"), hidden);
+  setLayoutToggleHidden(els.studentPanelViewToggle, hidden);
+  setLayoutToggleHidden(els.studentViewCardButton?.closest(".view-toggle"), hidden);
 }
 
 function applyCoachHistoryVisibility() {
@@ -5736,11 +5789,13 @@ function applyCoachHistoryVisibility() {
 }
 
 function applyCoachViewMode() {
+  enforceForcedMobileLayout();
   const isMobile = coachViewMode === "mobile";
   const coachPanel = document.querySelector("#coach-panel");
   coachPanel?.classList.toggle("coach-mobile-preview", isMobile);
   els.coachGlobalViewDesktopButton?.classList.toggle("is-active", !isMobile);
   els.coachGlobalViewMobileButton?.classList.toggle("is-active", isMobile);
+  syncForcedMobileLayoutControls();
   applyCoachHistoryVisibility();
 }
 
@@ -5781,6 +5836,7 @@ function toggleTodayStudentDetailVisibleCount() {
 }
 
 function applyStudentViewMode() {
+  enforceForcedMobileLayout();
   const isCard = studentViewMode === "card";
   const hasStudent = Boolean(getSelectedStudent());
   const hasLoadedProgram = loadedStudentEntries.length > 0;
@@ -5799,12 +5855,17 @@ function applyStudentViewMode() {
   els.studentHistoryCard.classList.toggle("is-mobile-preview", isCard);
   els.studentHistoryCard.classList.toggle("is-mobile-open", !isCard || studentHistoryOpened);
   els.studentAuthShell.classList.toggle("is-mobile-preview", isCard && !hasStudent);
+  syncForcedMobileLayoutControls();
 }
 
 function handleViewportChange() {
-  if (window.innerWidth <= 820 && studentViewMode !== "card") {
-    setStudentViewMode("card");
+  if (enforceForcedMobileLayout()) {
+    persistSession();
+    applyCoachViewMode();
+    applyStudentViewMode();
+    return;
   }
+  syncForcedMobileLayoutControls();
 }
 
 function syncStudentAccessUI() {
@@ -5851,11 +5912,7 @@ function syncStudentAccessUI() {
   }
   els.studentMobileTools.classList.toggle("is-visible", hasStudent && isCard);
   els.studentMobileSecondaryActions.classList.toggle("is-visible", hasStudent && isCard && hasLoadedProgram);
-  if (els.studentPanelViewToggle) {
-    els.studentPanelViewToggle.hidden = false;
-    els.studentPanelViewToggle.classList.remove("is-hidden");
-    els.studentPanelViewToggle.style.display = "";
-  }
+  syncForcedMobileLayoutControls();
   if (!hasStudent) {
     els.studentMobileSubmitBar.classList.remove("is-visible");
     els.studentMobileTools.classList.remove("is-visible");
