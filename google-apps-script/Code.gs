@@ -118,6 +118,9 @@ function doGet(e) {
       case "listBillingProfiles":
         return jsonResponse_(listBillingProfiles_(e && e.parameter ? e.parameter : {}));
 
+      case "getLeaveStateSnapshot":
+        return jsonResponse_(getLeaveStateSnapshot_(e && e.parameter ? e.parameter : {}));
+
       case "bootstrap":
       default:
         return jsonResponse_(buildFullBootstrap_());
@@ -251,10 +254,16 @@ function doPost(e) {
       case "saveBillingProfile":
         return jsonResponse_(saveBillingProfile_(payload));
 
+      case "getLeaveStateSnapshot":
+        return jsonResponse_(getLeaveStateSnapshot_(payload));
+
+      case "saveLeaveStateSnapshot":
+        return jsonResponse_(saveLeaveStateSnapshot_(payload));
+
       default:
         return jsonResponse_({
           ok: false,
-          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/sendEmail."
+          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/getLeaveStateSnapshot/saveLeaveStateSnapshot/sendEmail."
         });
     }
   } catch (error) {
@@ -1692,6 +1701,88 @@ function getBillingProfiles_() {
 
 function setBillingProfiles_(profiles) {
   writeChunkedProperty_("BILLING_PROFILES_V1", JSON.stringify(profiles || []));
+}
+
+function getLeaveStateSnapshot_(payload) {
+  const key = getLeaveStateSnapshotKey_(payload);
+  const raw = readChunkedProperty_(key);
+  if (!raw) {
+    return {
+      ok: true,
+      action: "getLeaveStateSnapshot",
+      found: false,
+      snapshot: null
+    };
+  }
+
+  try {
+    const snapshot = JSON.parse(raw);
+    return {
+      ok: true,
+      action: "getLeaveStateSnapshot",
+      found: true,
+      snapshot: snapshot
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      action: "getLeaveStateSnapshot",
+      message: "Cloud leave snapshot is not readable."
+    };
+  }
+}
+
+function saveLeaveStateSnapshot_(payload) {
+  const incoming = normalizeLeaveStateSnapshot_(payload.snapshot || payload);
+  const key = getLeaveStateSnapshotKey_(incoming);
+  const existingResult = getLeaveStateSnapshot_(incoming);
+  const existing = existingResult.found ? existingResult.snapshot : null;
+  const force = payload.force === true || String(payload.force || "").toLowerCase() === "true";
+  const baseUpdatedAt = safeString_(payload.baseUpdatedAt || incoming.baseUpdatedAt, "");
+  const existingTime = new Date(existing && existing.updatedAt || 0).getTime();
+  const baseTime = new Date(baseUpdatedAt || 0).getTime();
+  if (!force && existing && Number.isFinite(existingTime) && (!Number.isFinite(baseTime) || baseTime + 2000 < existingTime)) {
+    return {
+      ok: true,
+      action: "saveLeaveStateSnapshot",
+      conflict: true,
+      message: "Cloud leave snapshot is newer than this local copy.",
+      snapshot: existing
+    };
+  }
+
+  incoming.createdAt = safeString_(incoming.createdAt || (existing && existing.createdAt), nowIso_());
+  incoming.updatedAt = nowIso_();
+  writeChunkedProperty_(key, JSON.stringify(incoming));
+  return {
+    ok: true,
+    action: "saveLeaveStateSnapshot",
+    snapshot: incoming,
+    replaced: Boolean(existing)
+  };
+}
+
+function normalizeLeaveStateSnapshot_(snapshot) {
+  snapshot = snapshot || {};
+  const now = nowIso_();
+  return {
+    version: safeString_(snapshot.version, "1"),
+    schemaVersion: safeString_(snapshot.schemaVersion, ""),
+    coachCode: normalizeCode_(snapshot.coachCode),
+    studentCode: normalizeCode_(snapshot.studentCode),
+    source: safeString_(snapshot.source, ""),
+    sourceVersion: safeString_(snapshot.sourceVersion, ""),
+    updatedAt: safeString_(snapshot.updatedAt, now),
+    updatedBy: normalizeCode_(snapshot.updatedBy || snapshot.coachCode || "SYSTEM"),
+    createdAt: safeString_(snapshot.createdAt, ""),
+    counts: snapshot.counts && typeof snapshot.counts === "object" ? snapshot.counts : {},
+    state: snapshot.state && typeof snapshot.state === "object" ? snapshot.state : {}
+  };
+}
+
+function getLeaveStateSnapshotKey_(payload) {
+  const coachCode = normalizeCode_(payload && payload.coachCode);
+  return "LEAVE_STATE_SNAPSHOT_V1_" + (coachCode || "GLOBAL");
 }
 
 function normalizeBillingReminderLogs_(logs) {

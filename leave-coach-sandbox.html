@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260505-0002">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260505-0003">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -492,7 +492,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260505-0002&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260505-0003&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -506,6 +506,17 @@
         <button id="coach-login-btn" class="primary" type="button">載入教練資料</button>
       </div>
       <p class="hint" id="coach-session-text">尚未載入教練。</p>
+    </section>
+
+    <section class="card">
+      <span class="role">雲端同步</span>
+      <h2>電腦資料搬到雲端</h2>
+      <p class="hint">請在資料最完整的那台電腦登入教練後，按一次上傳。手機和其他裝置之後會讀取這份雲端資料。</p>
+      <div class="btn-row" style="margin-top:10px;">
+        <button id="coach-cloud-upload-btn" class="primary" type="button">把這台電腦資料上傳到雲端</button>
+        <button id="coach-cloud-download-btn" type="button">從雲端重新載入</button>
+      </div>
+      <p class="hint" id="coach-cloud-sync-text">請先登入教練代碼。</p>
     </section>
 
     <section class="card">
@@ -689,10 +700,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260505-0002"></script>
-  <script src="leave-sandbox.js?v=20260505-0002"></script>
+  <script src="config.js?v=20260505-0003"></script>
+  <script src="leave-sandbox.js?v=20260505-0003"></script>
   <script>
-    const coachPwaVersion = "20260505-0002";
+    const coachPwaVersion = "20260505-0003";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");

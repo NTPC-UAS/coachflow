@@ -109,7 +109,10 @@
     chargeReminderTable: document.getElementById("charge-reminder-table"),
     chargeMetricsBox: document.getElementById("charge-metrics-box"),
     chargeLedgerTable: document.getElementById("charge-ledger-table"),
-    studentOverviewTable: document.getElementById("student-overview-table")
+    studentOverviewTable: document.getElementById("student-overview-table"),
+    coachCloudUploadBtn: document.getElementById("coach-cloud-upload-btn"),
+    coachCloudDownloadBtn: document.getElementById("coach-cloud-download-btn"),
+    coachCloudSyncText: document.getElementById("coach-cloud-sync-text")
   };
 
   let state = loadState();
@@ -129,6 +132,10 @@
   let activeCoachReadOnly = false;
   let lastCloudBillingRefreshAt = 0;
   let lastCloudSessionRefreshAt = 0;
+  let cloudSnapshotUploadTimer = 0;
+  let isApplyingCloudSnapshot = false;
+  let isUploadingCloudSnapshot = false;
+  let leaveStateSnapshotUnsupported = false;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
   let studentLoginPromptHidden = false;
@@ -435,6 +442,7 @@
 
   function saveState() {
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+    queueCloudStateSnapshotUpload("local-save");
   }
 
   function addLog(message) {
@@ -1473,6 +1481,377 @@
       saveState();
     }
     return changed;
+  }
+
+  function clonePlain(value) {
+    return JSON.parse(JSON.stringify(value));
+  }
+
+  function getCloudStateScope(scope = {}) {
+    return {
+      coachCode: normalizeParticipantCode(scope.coachCode || activeCoachCode || ""),
+      studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
+    };
+  }
+
+  function isStudentInScope(student, scope) {
+    const studentCode = normalizeParticipantCode(student?.code || student?.studentCode);
+    const coachCode = normalizeParticipantCode(student?.coachCode);
+    if (scope.studentCode && studentCode !== scope.studentCode) {
+      return false;
+    }
+    if (scope.coachCode && coachCode !== scope.coachCode) {
+      return false;
+    }
+    return Boolean(studentCode || coachCode);
+  }
+
+  function isCoachInScope(coach, scope) {
+    const coachCode = normalizeParticipantCode(coach?.code || coach?.coachCode);
+    return !scope.coachCode || coachCode === scope.coachCode;
+  }
+
+  function isLessonInScope(lesson, scope) {
+    const studentCode = normalizeParticipantCode(lesson?.studentCode);
+    const coachCode = normalizeParticipantCode(lesson?.coachCode);
+    if (scope.studentCode && studentCode !== scope.studentCode) {
+      return false;
+    }
+    if (scope.coachCode && coachCode !== scope.coachCode) {
+      return false;
+    }
+    return Boolean(studentCode || coachCode);
+  }
+
+  function isMakeupRequestInScope(request, scope) {
+    const studentCode = normalizeParticipantCode(request?.studentCode);
+    const coachCode = normalizeParticipantCode(request?.coachCode);
+    if (scope.studentCode && studentCode !== scope.studentCode) {
+      return false;
+    }
+    if (scope.coachCode && coachCode !== scope.coachCode) {
+      return false;
+    }
+    return Boolean(studentCode || coachCode);
+  }
+
+  function isCoachBlockInScope(block, scope) {
+    const coachCode = normalizeParticipantCode(block?.coachCode);
+    return Boolean(coachCode) && (!scope.coachCode || coachCode === scope.coachCode);
+  }
+
+  function isCompensationTaskInScope(task, scope) {
+    const payload = task?.payload || {};
+    const coachCode = normalizeParticipantCode(payload.coachCode || task?.coachCode);
+    const studentCode = normalizeParticipantCode(payload.studentCode || task?.studentCode);
+    if (scope.studentCode && studentCode !== scope.studentCode) {
+      return false;
+    }
+    if (scope.coachCode && coachCode !== scope.coachCode) {
+      return false;
+    }
+    return Boolean(studentCode || coachCode);
+  }
+
+  function buildLeaveStateSnapshot(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const snapshotState = {
+      students: state.students.filter((student) => isStudentInScope(student, syncScope)).map(clonePlain),
+      coaches: state.coaches.filter((coach) => isCoachInScope(coach, syncScope)).map(clonePlain),
+      lessons: state.lessons.filter((lesson) => isLessonInScope(lesson, syncScope)).map(clonePlain),
+      leaveRequests: state.leaveRequests
+        .filter((leave) => isLeaveInCloudSyncScope(leave, getLessonById(leave.lessonId), syncScope))
+        .map(clonePlain),
+      makeupRequests: state.makeupRequests.filter((request) => isMakeupRequestInScope(request, syncScope)).map(clonePlain),
+      coachBlocks: (state.coachBlocks || []).filter((block) => isCoachBlockInScope(block, syncScope)).map(clonePlain),
+      compensationTasks: (state.compensationTasks || [])
+        .filter((task) => isCompensationTaskInScope(task, syncScope))
+        .map(clonePlain)
+    };
+    return {
+      version: "1",
+      schemaVersion: String(SCHEMA_VERSION),
+      coachCode: syncScope.coachCode,
+      studentCode: syncScope.studentCode,
+      source: "coachflow-leave",
+      sourceVersion: new URLSearchParams(window.location.search).get("v") || "",
+      updatedAt: new Date().toISOString(),
+      updatedBy: syncScope.coachCode || syncScope.studentCode || "SYSTEM",
+      baseUpdatedAt: state.cloudSnapshotUpdatedAt || "",
+      counts: {
+        students: snapshotState.students.length,
+        coaches: snapshotState.coaches.length,
+        lessons: snapshotState.lessons.length,
+        leaveRequests: snapshotState.leaveRequests.length,
+        makeupRequests: snapshotState.makeupRequests.length,
+        coachBlocks: snapshotState.coachBlocks.length,
+        compensationTasks: snapshotState.compensationTasks.length
+      },
+      state: snapshotState
+    };
+  }
+
+  function getItemKey(item, fallbackPrefix) {
+    return String(item?.id || item?.code || item?.studentCode || item?.coachCode || `${fallbackPrefix}-${Math.random()}`).trim();
+  }
+
+  function replaceScopedStateItems(collectionName, incomingItems, isInScope, scope, keyFn) {
+    const incoming = Array.isArray(incomingItems) ? incomingItems.map(clonePlain) : [];
+    const incomingKeys = new Set();
+    const normalizedIncoming = [];
+    incoming.forEach((item) => {
+      if (!isInScope(item, scope)) {
+        return;
+      }
+      const key = keyFn(item);
+      if (!key || incomingKeys.has(key)) {
+        return;
+      }
+      incomingKeys.add(key);
+      normalizedIncoming.push(item);
+    });
+    const kept = (state[collectionName] || []).filter((item) => !isInScope(item, scope));
+    state[collectionName] = kept.concat(normalizedIncoming);
+  }
+
+  function applyCloudLeaveStateSnapshot(snapshot, scope = {}) {
+    if (!snapshot || !snapshot.state || typeof snapshot.state !== "object") {
+      return false;
+    }
+    const syncScope = getCloudStateScope({
+      coachCode: snapshot.coachCode || scope.coachCode,
+      studentCode: snapshot.studentCode || scope.studentCode
+    });
+    if (!syncScope.coachCode && !syncScope.studentCode) {
+      return false;
+    }
+    if (state.cloudSnapshotUpdatedAt && snapshot.updatedAt === state.cloudSnapshotUpdatedAt) {
+      return false;
+    }
+
+    const incomingState = snapshot.state;
+    isApplyingCloudSnapshot = true;
+    try {
+      replaceScopedStateItems("coaches", incomingState.coaches, isCoachInScope, syncScope, (coach) => normalizeParticipantCode(coach.code || coach.coachCode));
+      replaceScopedStateItems("students", incomingState.students, isStudentInScope, syncScope, (student) => normalizeParticipantCode(student.code || student.studentCode));
+      replaceScopedStateItems("lessons", incomingState.lessons, isLessonInScope, syncScope, (lesson) => String(lesson.id || getLessonCloudMatchKey(lesson)));
+      replaceScopedStateItems("leaveRequests", incomingState.leaveRequests, (leave, targetScope) => (
+        isLeaveInCloudSyncScope(leave, getLessonById(leave.lessonId), targetScope)
+      ), syncScope, (leave) => String(leave.id || leave.lessonId || ""));
+      replaceScopedStateItems("makeupRequests", incomingState.makeupRequests, isMakeupRequestInScope, syncScope, (request) => String(request.id || ""));
+      replaceScopedStateItems("coachBlocks", incomingState.coachBlocks, isCoachBlockInScope, syncScope, (block) => String(block.id || `${block.coachCode}|${block.startAt}`));
+      replaceScopedStateItems("compensationTasks", incomingState.compensationTasks || [], isCompensationTaskInScope, syncScope, (task) => String(task.id || ""));
+      state.cloudSnapshotUpdatedAt = snapshot.updatedAt || new Date().toISOString();
+      state.cloudSnapshotUpdatedBy = snapshot.updatedBy || "";
+      saveState();
+    } finally {
+      isApplyingCloudSnapshot = false;
+    }
+    return true;
+  }
+
+  async function fetchLeaveStateSnapshotFromCloud(scope = {}) {
+    if (!getAppsScriptUrl() || leaveStateSnapshotUnsupported) {
+      return null;
+    }
+    const syncScope = getCloudStateScope(scope);
+    if (!syncScope.coachCode && !syncScope.studentCode) {
+      return null;
+    }
+    try {
+      const result = await callAppsScriptApi("getLeaveStateSnapshot", syncScope, "GET");
+      return result?.found ? result.snapshot : null;
+    } catch (error) {
+      if (isUnsupportedAppsScriptAction(error, "getLeaveStateSnapshot")) {
+        leaveStateSnapshotUnsupported = true;
+        return null;
+      }
+      throw error;
+    }
+  }
+
+  async function pullLeaveStateSnapshotFromCloud(scope = {}) {
+    const snapshot = await fetchLeaveStateSnapshotFromCloud(scope);
+    if (!snapshot) {
+      return false;
+    }
+    return applyCloudLeaveStateSnapshot(snapshot, scope);
+  }
+
+  async function saveLeaveStateSnapshotToCloud(scope = {}, options = {}) {
+    if (!getAppsScriptUrl() || leaveStateSnapshotUnsupported) {
+      return false;
+    }
+    const syncScope = getCloudStateScope(scope);
+    if (!syncScope.coachCode && !syncScope.studentCode) {
+      return false;
+    }
+    const snapshot = buildLeaveStateSnapshot(syncScope);
+    try {
+      const result = await callAppsScriptApi("saveLeaveStateSnapshot", {
+        snapshot,
+        force: Boolean(options.force),
+        baseUpdatedAt: state.cloudSnapshotUpdatedAt || ""
+      });
+      if (result?.conflict && result.snapshot) {
+        applyCloudLeaveStateSnapshot(result.snapshot, syncScope);
+        return false;
+      }
+      if (result?.snapshot?.updatedAt) {
+        state.cloudSnapshotUpdatedAt = result.snapshot.updatedAt;
+        state.cloudSnapshotUpdatedBy = result.snapshot.updatedBy || "";
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+      return result?.ok !== false;
+    } catch (error) {
+      if (isUnsupportedAppsScriptAction(error, "saveLeaveStateSnapshot")) {
+        leaveStateSnapshotUnsupported = true;
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  function queueCloudStateSnapshotUpload(reason = "") {
+    if (
+      isApplyingCloudSnapshot ||
+      isUploadingCloudSnapshot ||
+      leaveStateSnapshotUnsupported ||
+      !state.cloudSnapshotUpdatedAt ||
+      !activeCoachCode ||
+      activeStudentCode ||
+      !el.coachCloudUploadBtn ||
+      isCoachReadOnlyMode() ||
+      !getAppsScriptUrl()
+    ) {
+      return;
+    }
+    window.clearTimeout(cloudSnapshotUploadTimer);
+    cloudSnapshotUploadTimer = window.setTimeout(() => {
+      saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode }, { reason })
+        .catch((error) => {
+          console.warn("Cloud leave snapshot auto upload failed:", error);
+        });
+    }, 1800);
+  }
+
+  async function pushScopedCloudRecords(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const leaves = state.leaveRequests.filter((leave) => (
+      isLeaveInCloudSyncScope(leave, getLessonById(leave.lessonId), syncScope)
+    ));
+    let leaveCount = 0;
+    for (const leave of leaves) {
+      const lesson = getLessonById(leave.lessonId);
+      if (lesson && await pushCloudLeaveRecord(leave, lesson)) {
+        leaveCount += 1;
+      }
+    }
+
+    const students = state.students.filter((student) => isStudentInScope(student, syncScope));
+    let billingCount = 0;
+    for (const student of students) {
+      if (await pushCloudBillingProfile(student.code, "manual_snapshot_upload")) {
+        billingCount += 1;
+      }
+    }
+    return { leaveCount, billingCount };
+  }
+
+  function renderCloudSnapshotControls() {
+    const hasCoach = Boolean(activeCoachCode);
+    [el.coachCloudUploadBtn, el.coachCloudDownloadBtn].filter(Boolean).forEach((button) => {
+      button.disabled = !hasCoach || isCoachReadOnlyMode() || isUploadingCloudSnapshot;
+    });
+    if (el.coachCloudSyncText) {
+      const updatedText = state.cloudSnapshotUpdatedAt
+        ? `雲端資料最後同步：${formatDateTime(state.cloudSnapshotUpdatedAt)}`
+        : "尚未把這台電腦的請假系統資料上傳到雲端。";
+      el.coachCloudSyncText.textContent = hasCoach ? updatedText : "請先登入教練代碼。";
+    }
+  }
+
+  async function uploadLocalLeaveStateToCloud() {
+    if (!activeCoachCode) {
+      alert("請先載入教練資料。");
+      return;
+    }
+    const snapshot = buildLeaveStateSnapshot({ coachCode: activeCoachCode });
+    const confirmed = window.confirm(
+      [
+        "要把這台電腦目前的請假系統資料上傳到雲端嗎？",
+        "",
+        `課程：${snapshot.counts.lessons} 筆`,
+        `請假：${snapshot.counts.leaveRequests} 筆`,
+        `補課：${snapshot.counts.makeupRequests} 筆`,
+        `學生：${snapshot.counts.students} 位`,
+        "",
+        "上傳後，手機和其他電腦會以這份雲端資料為準。"
+      ].join("\n")
+    );
+    if (!confirmed) {
+      return;
+    }
+
+    isUploadingCloudSnapshot = true;
+    const uploadButtonText = el.coachCloudUploadBtn?.textContent || "";
+    if (el.coachCloudUploadBtn) {
+      el.coachCloudUploadBtn.disabled = true;
+      el.coachCloudUploadBtn.textContent = "上傳中...";
+    }
+    try {
+      notifyUser("正在把這台電腦的請假系統資料同步到雲端...", "info");
+      const counts = await pushScopedCloudRecords({ coachCode: activeCoachCode });
+      const saved = await saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode }, { force: true });
+      if (!saved) {
+        notifyUser("雲端快照端點尚未更新，請先重新部署 Apps Script 後再按一次。", "warning");
+        return;
+      }
+      renderAll();
+      notifyUser(`已上傳到雲端：請假 ${counts.leaveCount} 筆、扣課資料 ${counts.billingCount} 位，完整快照已更新。`, "success");
+    } catch (error) {
+      notifyUser(`雲端同步失敗：${String(error?.message || error)}`, "warning");
+    } finally {
+      isUploadingCloudSnapshot = false;
+      if (el.coachCloudUploadBtn) {
+        el.coachCloudUploadBtn.disabled = false;
+        el.coachCloudUploadBtn.textContent = uploadButtonText || "把這台電腦資料上傳到雲端";
+      }
+      renderCloudSnapshotControls();
+    }
+  }
+
+  async function downloadCloudLeaveStateToLocal() {
+    if (!activeCoachCode) {
+      alert("請先載入教練資料。");
+      return;
+    }
+    const confirmed = window.confirm("要用雲端請假系統資料覆蓋這台裝置目前的本機資料嗎？");
+    if (!confirmed) {
+      return;
+    }
+    const downloadButtonText = el.coachCloudDownloadBtn?.textContent || "";
+    if (el.coachCloudDownloadBtn) {
+      el.coachCloudDownloadBtn.disabled = true;
+      el.coachCloudDownloadBtn.textContent = "載入中...";
+    }
+    try {
+      const changed = await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
+      if (changed) {
+        renderAll();
+        notifyUser("已用雲端請假系統資料更新這台裝置。", "success");
+      } else {
+        notifyUser("目前沒有可套用的雲端請假系統資料。", "info");
+      }
+    } catch (error) {
+      notifyUser(`雲端載入失敗：${String(error?.message || error)}`, "warning");
+    } finally {
+      if (el.coachCloudDownloadBtn) {
+        el.coachCloudDownloadBtn.disabled = false;
+        el.coachCloudDownloadBtn.textContent = downloadButtonText || "從雲端重新載入";
+      }
+      renderCloudSnapshotControls();
+    }
   }
 
   function getStudentBillingUpdatedAt(student) {
@@ -6918,6 +7297,7 @@
     renderLogs();
     renderStudentOverviewPanel();
     renderChargePanel();
+    renderCloudSnapshotControls();
     updateCoachReadOnlyUi();
   }
 
@@ -6975,6 +7355,14 @@
     lastCloudSessionRefreshAt = now;
 
     let changed = false;
+    try {
+      changed = await pullLeaveStateSnapshotFromCloud({
+        coachCode: activeCoachCode,
+        studentCode: activeStudentCode
+      }) || changed;
+    } catch (error) {
+      console.warn("Cloud leave snapshot refresh failed:", error);
+    }
     try {
       changed = await syncCloudLeaveRecords({
         coachCode: activeCoachCode,
@@ -7034,7 +7422,8 @@
           let leaveChanged = false;
           let cloudLeaveFailed = false;
           try {
-            leaveChanged = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode });
+            leaveChanged = await pullLeaveStateSnapshotFromCloud({ studentCode: activeStudentCode, coachCode: activeCoachCode }) || leaveChanged;
+            leaveChanged = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode }) || leaveChanged;
           } catch (error) {
             console.warn("Cloud leave sync failed for student login:", error);
             cloudLeaveFailed = true;
@@ -7081,7 +7470,8 @@
           const localChanged = syncCoachflowRosterFromLocalState();
           let leaveChanged = false;
           try {
-            leaveChanged = await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+            leaveChanged = await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode }) || leaveChanged;
+            leaveChanged = await syncCloudLeaveRecords({ coachCode: activeCoachCode }) || leaveChanged;
           } catch (error) {
             console.warn("Cloud leave sync failed for coach login:", error);
           }
@@ -7478,6 +7868,22 @@
         retryAllCompensationTasks();
       });
     }
+    if (el.coachCloudUploadBtn) {
+      el.coachCloudUploadBtn.addEventListener("click", () => {
+        if (!requireCoachWriteAccess()) {
+          return;
+        }
+        uploadLocalLeaveStateToCloud();
+      });
+    }
+    if (el.coachCloudDownloadBtn) {
+      el.coachCloudDownloadBtn.addEventListener("click", () => {
+        if (!requireCoachWriteAccess()) {
+          return;
+        }
+        downloadCloudLeaveStateToLocal();
+      });
+    }
     if (el.compensationTable) {
       el.compensationTable.addEventListener("click", (event) => {
         const button = closestFromEvent(event, "button[data-action='retry-comp'], button[data-action='delete-comp']");
@@ -7859,10 +8265,14 @@
       let cloudBillingSynced = false;
       if ((autoStudentLoaded || autoCoachLoaded) && (activeStudentCode || activeCoachCode)) {
         try {
+          cloudLeaveSynced = await pullLeaveStateSnapshotFromCloud({
+            studentCode: activeStudentCode,
+            coachCode: activeCoachCode
+          }) || cloudLeaveSynced;
           cloudLeaveSynced = await syncCloudLeaveRecords({
             studentCode: activeStudentCode,
             coachCode: activeCoachCode
-          });
+          }) || cloudLeaveSynced;
         } catch (error) {
           console.warn("Cloud leave sync failed during bootstrap:", error);
         }
