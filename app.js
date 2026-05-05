@@ -86,7 +86,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260504-0003";
+const PUBLIC_APP_VERSION = "20260505-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -579,6 +579,16 @@ async function bootstrapCloudMode() {
       applyCloudPayloadToState(payload);
     } catch (error) {
       console.warn("Admin cloud bootstrap failed, using local state:", error);
+    }
+    return;
+  }
+
+  if (APP_MODE === "dual") {
+    try {
+      const payload = await callCloudApiCritical("bootstrap", {}, "GET", 3);
+      applyCloudPayloadToState(payload);
+    } catch (error) {
+      console.warn("Dual cloud bootstrap failed, using local state:", error);
     }
     return;
   }
@@ -1340,6 +1350,7 @@ const els = {
   coachGlobalViewMobileButton: document.querySelector("#coach-global-view-mobile"),
   studentPanelViewToggle: document.querySelector("#student-panel .panel-header .view-toggle"),
   studentAccessCode: document.querySelector("#student-access-code"),
+  confirmStudentAccess: document.querySelector("#confirm-student-access"),
   studentProgramSelect: document.querySelector("#student-program-select"),
   studentSummary: document.querySelector("#student-summary"),
   studentAutoLoginBanner: document.querySelector("#student-autologin-banner"),
@@ -2707,7 +2718,7 @@ function applyAppMode() {
     coachSessionBlock.style.display = showCoachSessionBlock ? "" : "none";
   }
   if (els.coachAuthShell) {
-    const showCoachAuthShell = APP_MODE === "coach";
+    const showCoachAuthShell = APP_MODE === "coach" || (APP_MODE === "dual" && !getCurrentCoach());
     els.coachAuthShell.hidden = !showCoachAuthShell;
     els.coachAuthShell.style.display = showCoachAuthShell ? "" : "none";
   }
@@ -2745,7 +2756,7 @@ function applyAppMode() {
     if (coachHeaderCopy) coachHeaderCopy.textContent = "建立課表、管理學生、查看今日紀錄與歷史資料。";
   }
 
-  if (APP_MODE === "coach") {
+  if (APP_MODE === "coach" || APP_MODE === "dual") {
     syncCoachAccessUI();
   }
   if (APP_MODE === "student") {
@@ -4561,7 +4572,7 @@ function renderCoachSummary() {
     return;
   }
   const coach = getCurrentCoach();
-  if (!coach || APP_MODE !== "coach") {
+  if (!coach || (APP_MODE !== "coach" && APP_MODE !== "dual")) {
     els.coachSummary.innerHTML = `<p class="muted-copy">請先輸入教練代碼，或直接使用你的專屬連結。</p>`;
     return;
   }
@@ -4590,7 +4601,7 @@ function resetCoachAccess() {
 }
 
 function syncCoachAccessUI() {
-  if (APP_MODE !== "coach") {
+  if (APP_MODE !== "coach" && APP_MODE !== "dual") {
     return;
   }
 
@@ -4726,6 +4737,7 @@ async function confirmCoachAccessCore(options = {}) {
   }
   setCoachEditorDirty(false);
   refreshCoachWorkspace();
+  syncCoachAccessUI();
   persistSession();
   updateModeAccessInUrl("coach", authenticatedCoachAccess);
   return true;
