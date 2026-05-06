@@ -1595,10 +1595,10 @@
     return String(item?.id || item?.code || item?.studentCode || item?.coachCode || `${fallbackPrefix}-${Math.random()}`).trim();
   }
 
-  function replaceScopedStateItems(collectionName, incomingItems, isInScope, scope, keyFn) {
+  function mergeScopedStateItems(collectionName, incomingItems, isInScope, scope, keyFn) {
     const incoming = Array.isArray(incomingItems) ? incomingItems.map(clonePlain) : [];
     const incomingKeys = new Set();
-    const normalizedIncoming = [];
+    const incomingByKey = new Map();
     incoming.forEach((item) => {
       if (!isInScope(item, scope)) {
         return;
@@ -1608,10 +1608,28 @@
         return;
       }
       incomingKeys.add(key);
-      normalizedIncoming.push(item);
+      incomingByKey.set(key, item);
     });
-    const kept = (state[collectionName] || []).filter((item) => !isInScope(item, scope));
-    state[collectionName] = kept.concat(normalizedIncoming);
+    const nextItems = [];
+    const seen = new Set();
+    (state[collectionName] || []).forEach((item) => {
+      const key = keyFn(item);
+      if (key && incomingByKey.has(key)) {
+        nextItems.push(incomingByKey.get(key));
+        seen.add(key);
+        return;
+      }
+      nextItems.push(item);
+      if (key) {
+        seen.add(key);
+      }
+    });
+    incomingByKey.forEach((item, key) => {
+      if (!seen.has(key)) {
+        nextItems.push(item);
+      }
+    });
+    state[collectionName] = nextItems;
   }
 
   function applyCloudLeaveStateSnapshot(snapshot, scope = {}) {
@@ -1632,15 +1650,15 @@
     const incomingState = snapshot.state;
     isApplyingCloudSnapshot = true;
     try {
-      replaceScopedStateItems("coaches", incomingState.coaches, isCoachInScope, syncScope, (coach) => normalizeParticipantCode(coach.code || coach.coachCode));
-      replaceScopedStateItems("students", incomingState.students, isStudentInScope, syncScope, (student) => normalizeParticipantCode(student.code || student.studentCode));
-      replaceScopedStateItems("lessons", incomingState.lessons, isLessonInScope, syncScope, (lesson) => String(lesson.id || getLessonCloudMatchKey(lesson)));
-      replaceScopedStateItems("leaveRequests", incomingState.leaveRequests, (leave, targetScope) => (
+      mergeScopedStateItems("coaches", incomingState.coaches, isCoachInScope, syncScope, (coach) => normalizeParticipantCode(coach.code || coach.coachCode));
+      mergeScopedStateItems("students", incomingState.students, isStudentInScope, syncScope, (student) => normalizeParticipantCode(student.code || student.studentCode));
+      mergeScopedStateItems("lessons", incomingState.lessons, isLessonInScope, syncScope, (lesson) => String(lesson.id || getLessonCloudMatchKey(lesson)));
+      mergeScopedStateItems("leaveRequests", incomingState.leaveRequests, (leave, targetScope) => (
         isLeaveInCloudSyncScope(leave, getLessonById(leave.lessonId), targetScope)
       ), syncScope, (leave) => String(leave.id || leave.lessonId || ""));
-      replaceScopedStateItems("makeupRequests", incomingState.makeupRequests, isMakeupRequestInScope, syncScope, (request) => String(request.id || ""));
-      replaceScopedStateItems("coachBlocks", incomingState.coachBlocks, isCoachBlockInScope, syncScope, (block) => String(block.id || `${block.coachCode}|${block.startAt}`));
-      replaceScopedStateItems("compensationTasks", incomingState.compensationTasks || [], isCompensationTaskInScope, syncScope, (task) => String(task.id || ""));
+      mergeScopedStateItems("makeupRequests", incomingState.makeupRequests, isMakeupRequestInScope, syncScope, (request) => String(request.id || ""));
+      mergeScopedStateItems("coachBlocks", incomingState.coachBlocks, isCoachBlockInScope, syncScope, (block) => String(block.id || `${block.coachCode}|${block.startAt}`));
+      mergeScopedStateItems("compensationTasks", incomingState.compensationTasks || [], isCompensationTaskInScope, syncScope, (task) => String(task.id || ""));
       state.cloudSnapshotUpdatedAt = snapshot.updatedAt || new Date().toISOString();
       state.cloudSnapshotUpdatedBy = snapshot.updatedBy || "";
       saveState();
@@ -1801,6 +1819,11 @@
     }
     try {
       notifyUser("正在把這台電腦的請假系統資料同步到雲端...", "info");
+      try {
+        await syncCloudBillingProfiles({ coachCode: activeCoachCode });
+      } catch (error) {
+        console.warn("Cloud billing pre-upload sync failed:", error);
+      }
       const counts = await pushScopedCloudRecords({ coachCode: activeCoachCode });
       const saved = await saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode }, { force: true });
       if (!saved) {
@@ -2234,8 +2257,7 @@
     if (!getAppsScriptUrl()) {
       return false;
     }
-    const profiles = (await listCloudBillingProfiles(scope))
-      .filter((profile) => isAfterTrackingDataReset(getCloudBillingTimestamp(profile)));
+    const profiles = await listCloudBillingProfiles(scope);
     let changed = false;
     profiles.forEach((profile) => {
       if (applyCloudBillingProfile(profile)) {
