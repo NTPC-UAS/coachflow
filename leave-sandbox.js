@@ -994,6 +994,7 @@
       }
       return false;
     }
+    activeStudentCode = "";
     activeCoachCode = coachCode;
     activeCoachReadOnly = isReadOnlyLogin || isReadonlyParamEnabled() || isReadonlyCoachRole(coach);
     focusCoachCalendarOnToday();
@@ -1455,12 +1456,7 @@
     if (!getAppsScriptUrl()) {
       return false;
     }
-    const hasCoachScope = Object.prototype.hasOwnProperty.call(scope, "coachCode");
-    const hasStudentScope = Object.prototype.hasOwnProperty.call(scope, "studentCode");
-    const payload = {
-      coachCode: normalizeParticipantCode(scope.coachCode || (!hasCoachScope ? activeCoachCode : "") || ""),
-      studentCode: normalizeParticipantCode(scope.studentCode || (!hasStudentScope ? activeStudentCode : "") || "")
-    };
+    const payload = getCloudStateScope(scope);
     const result = await callAppsScriptApi("listLeaveRecords", payload, "GET");
     if (result?.ok === false || !Array.isArray(result?.records)) {
       return false;
@@ -1488,9 +1484,12 @@
   }
 
   function getCloudStateScope(scope = {}) {
+    const hasCoachScope = Object.prototype.hasOwnProperty.call(scope, "coachCode");
+    const hasStudentScope = Object.prototype.hasOwnProperty.call(scope, "studentCode");
+    const shouldUseActiveStudent = !hasCoachScope && !hasStudentScope;
     return {
-      coachCode: normalizeParticipantCode(scope.coachCode || activeCoachCode || ""),
-      studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
+      coachCode: normalizeParticipantCode(scope.coachCode || (!hasCoachScope ? activeCoachCode : "") || ""),
+      studentCode: normalizeParticipantCode(scope.studentCode || (shouldUseActiveStudent ? activeStudentCode : "") || "")
     };
   }
 
@@ -1794,7 +1793,13 @@
       alert("請先載入教練資料。");
       return;
     }
-    const snapshot = buildLeaveStateSnapshot({ coachCode: activeCoachCode });
+    try {
+      await syncCloudBillingProfiles({ coachCode: activeCoachCode, studentCode: "" });
+      renderBillingPanels();
+    } catch (error) {
+      console.warn("Cloud billing pre-confirm sync failed:", error);
+    }
+    const snapshot = buildLeaveStateSnapshot({ coachCode: activeCoachCode, studentCode: "" });
     const confirmed = window.confirm(
       [
         "要把這台電腦目前的請假系統資料上傳到雲端嗎？",
@@ -1820,12 +1825,12 @@
     try {
       notifyUser("正在把這台電腦的請假系統資料同步到雲端...", "info");
       try {
-        await syncCloudBillingProfiles({ coachCode: activeCoachCode });
+        await syncCloudBillingProfiles({ coachCode: activeCoachCode, studentCode: "" });
       } catch (error) {
         console.warn("Cloud billing pre-upload sync failed:", error);
       }
-      const counts = await pushScopedCloudRecords({ coachCode: activeCoachCode });
-      const saved = await saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode }, { force: true });
+      const counts = await pushScopedCloudRecords({ coachCode: activeCoachCode, studentCode: "" });
+      const saved = await saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode, studentCode: "" }, { force: true });
       if (!saved) {
         notifyUser("雲端快照端點尚未更新，請先重新部署 Apps Script 後再按一次。", "warning");
         return;
@@ -2061,8 +2066,7 @@
   }
 
   function getScopedBillingStudents(scope = {}) {
-    const coachCode = normalizeParticipantCode(scope.coachCode || activeCoachCode || "");
-    const studentCode = normalizeParticipantCode(scope.studentCode || activeStudentCode || "");
+    const { coachCode, studentCode } = getCloudStateScope(scope);
     return (state.students || []).filter((student) => {
       const currentStudentCode = normalizeParticipantCode(student?.code);
       const currentCoachCode = normalizeParticipantCode(student?.coachCode);
@@ -2162,10 +2166,7 @@
   }
 
   async function listCloudBillingProfiles(scope = {}) {
-    const payload = {
-      coachCode: normalizeParticipantCode(scope.coachCode || activeCoachCode || ""),
-      studentCode: normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
-    };
+    const payload = getCloudStateScope(scope);
     const listFallbackProfiles = async () => {
       const fallbackResult = await callAppsScriptApi("listLeaveRecords", payload, "GET");
       return (Array.isArray(fallbackResult?.records) ? fallbackResult.records : [])
