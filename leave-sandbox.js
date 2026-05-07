@@ -1186,17 +1186,61 @@
 
   function enqueueCompensationTask(type, payload, reason) {
     state.compensationTasks = Array.isArray(state.compensationTasks) ? state.compensationTasks : [];
+    const dedupeKey = getCompensationTaskDedupeKey(type, payload);
+    if (dedupeKey) {
+      const existing = state.compensationTasks.find((task) => (
+        task.status !== "completed" &&
+        (task.dedupeKey || getCompensationTaskDedupeKey(task.type, task.payload)) === dedupeKey
+      ));
+      if (existing) {
+        existing.payload = payload;
+        existing.reason = reason || existing.reason || "";
+        existing.status = existing.status || "pending";
+        existing.updatedAt = new Date().toISOString();
+        addLog(`[補償任務] ${type} 已存在，略過重複建立：${reason}`);
+        saveState();
+        return existing;
+      }
+    }
     state.compensationTasks.unshift({
       id: newId("COMP"),
       type,
       payload,
       reason,
       status: "pending",
+      dedupeKey,
       createdAt: new Date().toISOString()
     });
     state.compensationTasks = state.compensationTasks.slice(0, 80);
     addLog(`[補償任務] ${type} 已建立：${reason}`);
     saveState();
+  }
+
+  function getCompensationTaskDedupeKey(type, payload = {}) {
+    payload = payload || {};
+    const normalizedType = String(type || "").trim();
+    const lessonId = String(payload.lessonId || "").trim();
+    const studentCode = normalizeParticipantCode(payload.studentCode || "");
+    const coachCode = normalizeParticipantCode(payload.coachCode || "");
+    const eventId = normalizeCalendarEventId(payload.eventId || payload.calendarEventId || "");
+    const startAt = String(payload.occurrenceStartAt || payload.lessonStartAt || payload.startAt || "").trim();
+    if (normalizedType === "deleteEvent" || normalizedType === "deleteSingleEvent") {
+      return [normalizedType, lessonId, eventId, startAt].join("|");
+    }
+    if (normalizedType === "createEvent") {
+      return [normalizedType, lessonId, studentCode, coachCode, startAt].join("|");
+    }
+    if (normalizedType === "sendEmail") {
+      return [
+        normalizedType,
+        String(payload.template || "").trim(),
+        studentCode,
+        coachCode,
+        startAt || String(payload.when || "").trim(),
+        String(payload.milestone || payload.totalChargedCount || "").trim()
+      ].join("|");
+    }
+    return "";
   }
 
   function getLessonCloudMatchKey(lesson) {
@@ -2955,19 +2999,18 @@
     };
   }
 
-  async function resolveSingleCalendarEventForLesson(lesson, requestedEventId) {
+  async function listCalendarEventsForLessonDay(lesson) {
     if (!lesson?.startAt || !getAppsScriptUrl()) {
-      return null;
+      return [];
     }
     const startDate = new Date(lesson.startAt);
     if (Number.isNaN(startDate.getTime())) {
-      return null;
+      return [];
     }
     const calendarPayload = getCalendarPayloadForCoach(lesson.coachCode);
     if (!calendarPayload.calendarId && !calendarPayload.coachCalendarId) {
-      return null;
+      return [];
     }
-
     const dateKey = getDateKeyInTaipei(startDate);
     const listResult = await callAppsScriptApi("listEvents", {
       ...getDaySyncRange(dateKey),
@@ -2976,16 +3019,19 @@
       dateKey,
       occurrenceDate: dateKey
     });
-    const candidates = (Array.isArray(listResult?.events) ? listResult.events : [])
+    return (Array.isArray(listResult?.events) ? listResult.events : [])
       .map(normalizeGoogleCalendarEvent)
-      .filter(Boolean)
+      .filter(Boolean);
+  }
+
+  function findSingleCalendarEventForLessonInEvents(events, lesson, requestedEventId) {
+    const candidates = (Array.isArray(events) ? events : [])
       .map((event) => ({
         event,
         match: isCalendarEventLikelySameLesson(event, lesson, requestedEventId)
       }))
       .filter((item) => item.match.matched)
       .sort((a, b) => b.match.score - a.match.score);
-
     if (!candidates.length) {
       return null;
     }
@@ -2993,6 +3039,14 @@
       return null;
     }
     return candidates[0].event;
+  }
+
+  async function resolveSingleCalendarEventForLesson(lesson, requestedEventId) {
+    if (!lesson?.startAt || !getAppsScriptUrl()) {
+      return null;
+    }
+    const events = await listCalendarEventsForLessonDay(lesson);
+    return findSingleCalendarEventForLessonInEvents(events, lesson, requestedEventId);
   }
 
   function pickClosestRegularLessonForStudent(studentCode, coachCode, usedLessonIds, targetStartAt, maxDistanceMs = Infinity) {
@@ -3132,6 +3186,35 @@
     };
   }
 
+  function buildLessonFromDeletePayload(payload = {}) {
+    return {
+      id: String(payload.lessonId || "").trim(),
+      studentCode: normalizeParticipantCode(payload.studentCode || ""),
+      coachCode: normalizeParticipantCode(payload.coachCode || activeCoachCode || ""),
+      startAt: String(payload.occurrenceStartAt || payload.lessonStartAt || payload.startAt || "").trim(),
+      calendarEventId: String(payload.eventId || payload.calendarEventId || "").trim(),
+      sourceType: String(payload.sourceType || "REGULAR").trim() || "REGULAR"
+    };
+  }
+
+  async function isDeleteOccurrenceAlreadyAbsent(payload = {}, lesson = null) {
+    const targetLesson = lesson || getLessonById(payload.lessonId) || buildLessonFromDeletePayload(payload);
+    if (!targetLesson?.startAt || !targetLesson?.coachCode) {
+      return false;
+    }
+    const requestedEventId = String(payload.eventId || payload.calendarEventId || targetLesson.calendarEventId || "").trim();
+    const events = await listCalendarEventsForLessonDay(targetLesson);
+    return !findSingleCalendarEventForLessonInEvents(events, targetLesson, requestedEventId);
+  }
+
+  function markCalendarDeleteAlreadyHandled(lesson, message) {
+    if (lesson) {
+      lesson.calendarEventId = "";
+      saveState();
+    }
+    addLog(`[Google日曆] ${message}`);
+  }
+
   async function tryDeleteCalendarEventForLesson(lesson, reason, strictMode, options = {}) {
     let eventId = String(lesson.calendarEventId || "").trim();
     const shouldResolveMissingEvent = Boolean(options.resolveMissingEventId);
@@ -3167,9 +3250,11 @@
     try {
       const resolvedEvent = await resolveSingleCalendarEventForLesson(lesson, eventId);
       if (!resolvedEvent) {
-        const safeMessage = "無法在 Google 日曆確認這堂課的單一事件，已停止刪除以避免誤刪整個週期課程。請先同步 Google 日曆後再請假。";
-        queueSingleEventDeleteCompensation(lesson, deletePayload, safeMessage);
-        return Boolean(strictMode);
+        markCalendarDeleteAlreadyHandled(
+          lesson,
+          `已確認 ${lesson.id} 在該日期沒有可刪除的單堂事件，視為已同步完成。`
+        );
+        return true;
       }
       deletePayload = buildSingleLessonDeletePayload(lesson, {
         reason,
@@ -3201,6 +3286,17 @@
       }
       if (strictMode && !isDeleteSingleEventEndpointUnsupported(message)) {
         throw new Error(`Google 日曆單堂刪除失敗：${message}`);
+      }
+      try {
+        if (await isDeleteOccurrenceAlreadyAbsent(deletePayload, lesson)) {
+          markCalendarDeleteAlreadyHandled(
+            lesson,
+            `刪除 ${lesson.id} 時 Google 回覆失敗，但該日期已無此單堂事件，視為已同步完成。`
+          );
+          return true;
+        }
+      } catch (verifyError) {
+        addLog(`[Google日曆] 刪除失敗後再次確認單堂事件失敗：${String(verifyError?.message || verifyError)}`);
       }
       queueSingleEventDeleteCompensation(lesson, deletePayload, message);
       return Boolean(strictMode);
@@ -6920,6 +7016,19 @@
       } else if (task.type === "deleteEvent" || task.type === "deleteSingleEvent") {
         Object.assign(finalPayload, addSingleEventDeleteGuards(finalPayload));
         task.payload = finalPayload;
+        if (await isDeleteOccurrenceAlreadyAbsent(finalPayload, getLessonById(finalPayload.lessonId))) {
+          task.status = "completed";
+          task.completedAt = new Date().toISOString();
+          task.lastError = "";
+          const lesson = getLessonById(finalPayload.lessonId);
+          if (lesson) {
+            lesson.calendarEventId = "";
+          }
+          addLog(`[補償重送] ${task.type} 視為成功（該日期已無此單堂事件，${task.id}）。`);
+          saveState();
+          renderAll();
+          return;
+        }
       }
       const result = await callAppsScriptApi(task.type, finalPayload);
       task.status = "completed";
@@ -6991,7 +7100,10 @@
     if (!el.compensationTable) {
       return;
     }
-    const tasks = (state.compensationTasks || []).slice().sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
+    const tasks = (state.compensationTasks || [])
+      .filter((item) => item.status !== "completed")
+      .slice()
+      .sort((a, b) => new Date(b.createdAt || 0) - new Date(a.createdAt || 0));
     const pendingCount = tasks.filter((item) => item.status !== "completed").length;
     if (el.compensationSummary) {
       el.compensationSummary.textContent = `待處理：${pendingCount}`;
