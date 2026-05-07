@@ -4068,13 +4068,36 @@
       addLog(`[Google日曆] 已阻擋正常請假建立事件：${lesson?.id || "-"}`);
       return "";
     }
+    const previousEventId = lesson.calendarEventId || "";
     try {
       const result = await callAppsScriptApi("createEvent", buildLessonEventPayload(lesson, { reason }));
       const createdEventId = String(result?.eventId || result?.calendarEventId || lesson.calendarEventId || newId("GCAL")).trim();
       lesson.calendarEventId = createdEventId;
+      if (!result?.mock) {
+        let verifiedEvent = null;
+        let verificationMessage = "";
+        try {
+          verifiedEvent = await resolveSingleCalendarEventForLesson(lesson, createdEventId);
+        } catch (error) {
+          verificationMessage = String(error?.message || error || "驗證失敗");
+        }
+        if (!verifiedEvent) {
+          lesson.calendarEventId = previousEventId;
+          const message = verificationMessage || "重新讀取 Google 日曆時找不到剛建立的課程事件";
+          addLog(`[Google日曆] 建立事件後驗證失敗：${lesson.id}（${message}）`);
+          if (strictMode) {
+            throw new Error(`Google 日曆建立後驗證失敗：${message}`);
+          }
+          const retryPayload = buildLessonEventPayload({ ...lesson, calendarEventId: "" }, { reason });
+          enqueueCompensationTask("createEvent", retryPayload, `建立後驗證失敗：${message}`);
+          saveState();
+          return "";
+        }
+        lesson.calendarEventId = String(verifiedEvent.eventId || createdEventId).trim();
+      }
       addLog(`[Google日曆] 已建立事件 ${createdEventId}${result.mock ? "（模擬）" : ""}`);
       saveState();
-      return createdEventId;
+      return lesson.calendarEventId;
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
       const unsupported = /unsupported|找不到|停用|invalid action|not found/i.test(message);
