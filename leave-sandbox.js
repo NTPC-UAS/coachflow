@@ -1839,12 +1839,27 @@
     if (!syncScope.coachCode && !syncScope.studentCode) {
       return false;
     }
-    const snapshot = buildLeaveStateSnapshot(syncScope);
+    let snapshot = buildLeaveStateSnapshot(syncScope);
+    if (syncScope.coachCode && !syncScope.studentCode) {
+      let cloudSnapshot = null;
+      try {
+        cloudSnapshot = await fetchLeaveStateSnapshotFromCloud({
+          coachCode: syncScope.coachCode,
+          studentCode: ""
+        });
+      } catch (error) {
+        console.warn("Cloud snapshot fetch before full save failed:", error);
+        return false;
+      }
+      if (cloudSnapshot?.state) {
+        snapshot = mergeLocalScopedStateIntoSnapshot(cloudSnapshot, syncScope);
+      }
+    }
     try {
       const result = await callAppsScriptApi("saveLeaveStateSnapshot", {
         snapshot,
         force: Boolean(options.force),
-        baseUpdatedAt: state.cloudSnapshotUpdatedAt || ""
+        baseUpdatedAt: snapshot.baseUpdatedAt || state.cloudSnapshotUpdatedAt || ""
       });
       if (result?.conflict && result.snapshot) {
         applyCloudLeaveStateSnapshot(result.snapshot, syncScope);
@@ -5306,19 +5321,59 @@
     };
   }
 
+  function isSameMakeupRequest(left, right) {
+    const leftId = String(left?.id || "").trim();
+    const rightId = String(right?.id || "").trim();
+    if (leftId && rightId && leftId === rightId) {
+      return true;
+    }
+    const leftCode = String(left?.code || "").trim();
+    const rightCode = String(right?.code || "").trim();
+    if (leftCode && rightCode && leftCode === rightCode) {
+      return true;
+    }
+    return Boolean(
+      String(left?.leaveId || "").trim() &&
+      String(left?.leaveId || "").trim() === String(right?.leaveId || "").trim() &&
+      normalizeParticipantCode(left?.studentCode) === normalizeParticipantCode(right?.studentCode) &&
+      normalizeParticipantCode(left?.coachCode) === normalizeParticipantCode(right?.coachCode) &&
+      String(left?.startAt || "").trim() === String(right?.startAt || "").trim()
+    );
+  }
+
+  function findMakeupRequestInCollection(requests, targetRequest) {
+    return (Array.isArray(requests) ? requests : []).find((request) => isSameMakeupRequest(request, targetRequest)) || null;
+  }
+
+  async function verifyMakeupRequestSavedToCloud(request) {
+    const snapshot = await fetchLeaveStateSnapshotFromCloud({
+      coachCode: request.coachCode,
+      studentCode: ""
+    });
+    return Boolean(findMakeupRequestInCollection(snapshot?.state?.makeupRequests, request));
+  }
+
   async function saveMakeupRequestToCloud(request, reason) {
     if (!request?.studentCode || !request?.coachCode) {
       return false;
     }
-    for (let attempt = 0; attempt < 2; attempt += 1) {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
       const saved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, reason);
       if (saved) {
-        request.cloudSyncStatus = "synced";
-        request.cloudSyncErrorAt = "";
-        saveState();
-        return true;
+        const verified = await verifyMakeupRequestSavedToCloud(request).catch((error) => {
+          console.warn("Makeup cloud verification failed:", error);
+          return false;
+        });
+        if (verified) {
+          request.cloudSyncStatus = "synced";
+          request.cloudVerifiedAt = new Date().toISOString();
+          request.cloudSyncErrorAt = "";
+          saveState();
+          return true;
+        }
+        addLog(`[雲端同步] ${request.code || request.id} 已送出保存但雲端尚未驗證，準備重試。`);
       }
-      if (attempt === 0) {
+      if (attempt < 2) {
         await pullLeaveStateSnapshotFromCloud({
           coachCode: request.coachCode,
           studentCode: request.studentCode
@@ -5340,6 +5395,17 @@
       !request.emailNoticeSentAt &&
       (!request.emailNoticeStatus || request.emailNoticeStatus === "waiting-cloud")
     );
+  }
+
+  function isMakeupRequestWaitingForCloud(request) {
+    return request?.cloudSyncStatus === "pending" || request?.emailNoticeStatus === "waiting-cloud";
+  }
+
+  function getMakeupRequestStatusPill(request) {
+    if (isMakeupRequestWaitingForCloud(request)) {
+      return "<span class=\"status warn\">同步雲端中</span>";
+    }
+    return getStatusPill(request.status);
   }
 
   async function sendMakeupPendingNotice(request) {
@@ -5946,14 +6012,14 @@
       addLog(`學生 ${leave.studentCode} 送出補課申請：${formatDateTime(startAt)}。`);
       saveState();
       renderAll();
-      notifyUser("補課申請已送出，正在寄送待審通知...", "info");
+      notifyUser("正在把補課申請同步到雲端...", "info");
       const initialCloudSaved = await saveMakeupRequestToCloud(request, "makeup_request_created");
       if (!initialCloudSaved) {
         request.emailNoticeStatus = "waiting-cloud";
         request.emailNoticeQueuedAt = new Date().toISOString();
         saveState();
         renderAll();
-        notifyUser("補課申請已先保留在這台裝置，但雲端尚未成功同步，所以待審 Email 暫不寄出；重新開啟學生端時系統會自動補送。", "warning");
+        notifyUser("補課申請尚未完成：雲端還沒有確認收到，所以待審 Email 不會寄出。請保持網路連線並重新開啟學生端，系統會自動補同步。", "warning");
         return;
       }
       const emailStateChanged = await sendMakeupPendingNotice(request);
@@ -6897,7 +6963,7 @@
     }
     const latest = related[0];
     const timeText = latest.startAt ? ` ${formatDateTime(latest.startAt)}` : "";
-    return `${getStatusPill(latest.status)}${timeText}`;
+    return `${getMakeupRequestStatusPill(latest)}${timeText}`;
   }
 
   function renderCoachStudentLeaveTable() {
@@ -6971,7 +7037,7 @@
       <tr>
         <td>${request.code || request.id}</td>
         <td>${formatDateTime(request.startAt)}</td>
-        <td>${getStatusPill(request.status)}</td>
+        <td>${getMakeupRequestStatusPill(request)}</td>
         <td>${formatDateTime(request.pendingAt)}</td>
         <td>${request.resolvedAt ? formatDateTime(request.resolvedAt) : "-"}</td>
         <td>${request.rejectReason || "-"}</td>
@@ -7003,7 +7069,11 @@
       return;
     }
     const allPendings = state.makeupRequests
-      .filter((request) => request.coachCode === activeCoachCode && request.status === "pending")
+      .filter((request) => (
+        request.coachCode === activeCoachCode &&
+        request.status === "pending" &&
+        !isMakeupRequestWaitingForCloud(request)
+      ))
       .sort((a, b) => new Date(a.pendingAt) - new Date(b.pendingAt));
 
     const urgentCount = allPendings.filter((request) => getPendingHoursLeft(request) <= 6).length;
