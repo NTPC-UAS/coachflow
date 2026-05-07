@@ -731,6 +731,17 @@
       .sort((a, b) => new Date(a.pendingAt) - new Date(b.pendingAt));
   }
 
+  function hasStudentMakeupRequestsForCloudSync(studentCode) {
+    const normalizedStudentCode = normalizeParticipantCode(studentCode || "");
+    return Boolean(
+      normalizedStudentCode &&
+      state.makeupRequests.some((request) => (
+        normalizeParticipantCode(request.studentCode) === normalizedStudentCode &&
+        request.status === "pending"
+      ))
+    );
+  }
+
   function getCoachBlocksForDate(coachCode, dateKey) {
     return (state.coachBlocks || [])
       .filter((block) => block.coachCode === coachCode && getDateKeyInTaipei(new Date(block.startAt)) === dateKey)
@@ -1675,6 +1686,86 @@
     state[collectionName] = nextItems;
   }
 
+  function mergeScopedSnapshotItems(existingItems, incomingItems, isInScope, scope, keyFn) {
+    const incomingByKey = new Map();
+    (Array.isArray(incomingItems) ? incomingItems : []).forEach((item) => {
+      if (!isInScope(item, scope)) {
+        return;
+      }
+      const key = keyFn(item);
+      if (key && !incomingByKey.has(key)) {
+        incomingByKey.set(key, clonePlain(item));
+      }
+    });
+
+    const nextItems = [];
+    const seenKeys = new Set();
+    (Array.isArray(existingItems) ? existingItems : []).forEach((item) => {
+      const key = keyFn(item);
+      if (key && incomingByKey.has(key)) {
+        nextItems.push(incomingByKey.get(key));
+        seenKeys.add(key);
+        return;
+      }
+      nextItems.push(clonePlain(item));
+      if (key) {
+        seenKeys.add(key);
+      }
+    });
+    incomingByKey.forEach((item, key) => {
+      if (!seenKeys.has(key)) {
+        nextItems.push(item);
+      }
+    });
+    return nextItems;
+  }
+
+  function countSnapshotStateItems(snapshotState = {}) {
+    return {
+      students: (snapshotState.students || []).length,
+      coaches: (snapshotState.coaches || []).length,
+      lessons: (snapshotState.lessons || []).length,
+      leaveRequests: (snapshotState.leaveRequests || []).length,
+      makeupRequests: (snapshotState.makeupRequests || []).length,
+      coachBlocks: (snapshotState.coachBlocks || []).length,
+      compensationTasks: (snapshotState.compensationTasks || []).length
+    };
+  }
+
+  function mergeLocalScopedStateIntoSnapshot(cloudSnapshot, scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const localSnapshot = buildLeaveStateSnapshot(syncScope);
+    const baseSnapshot = cloudSnapshot && typeof cloudSnapshot === "object" ? cloudSnapshot : {};
+    const baseState = baseSnapshot.state && typeof baseSnapshot.state === "object" ? baseSnapshot.state : {};
+    const localState = localSnapshot.state || {};
+    const nextState = {
+      ...baseState,
+      students: mergeScopedSnapshotItems(baseState.students, localState.students, isStudentInScope, syncScope, (student) => normalizeParticipantCode(student.code || student.studentCode)),
+      coaches: mergeScopedSnapshotItems(baseState.coaches, localState.coaches, isCoachInScope, syncScope, (coach) => normalizeParticipantCode(coach.code || coach.coachCode)),
+      lessons: mergeScopedSnapshotItems(baseState.lessons, localState.lessons, isLessonInScope, syncScope, (lesson) => String(lesson.id || getLessonCloudMatchKey(lesson))),
+      leaveRequests: mergeScopedSnapshotItems(baseState.leaveRequests, localState.leaveRequests, (leave, targetScope) => (
+        isLeaveInCloudSyncScope(leave, getLessonById(leave.lessonId), targetScope)
+      ), syncScope, (leave) => String(leave.id || leave.lessonId || "")),
+      makeupRequests: mergeScopedSnapshotItems(baseState.makeupRequests, localState.makeupRequests, isMakeupRequestInScope, syncScope, (request) => String(request.id || "")),
+      coachBlocks: mergeScopedSnapshotItems(baseState.coachBlocks, localState.coachBlocks, isCoachBlockInScope, syncScope, (block) => String(block.id || `${block.coachCode}|${block.startAt}`)),
+      compensationTasks: mergeScopedSnapshotItems(baseState.compensationTasks, localState.compensationTasks, isCompensationTaskInScope, syncScope, (task) => String(task.id || ""))
+    };
+    return {
+      ...baseSnapshot,
+      version: "1",
+      schemaVersion: String(SCHEMA_VERSION),
+      coachCode: syncScope.coachCode || baseSnapshot.coachCode || "",
+      studentCode: "",
+      source: "coachflow-leave",
+      sourceVersion: new URLSearchParams(window.location.search).get("v") || "",
+      updatedAt: new Date().toISOString(),
+      updatedBy: syncScope.studentCode || syncScope.coachCode || "SYSTEM",
+      baseUpdatedAt: baseSnapshot.updatedAt || "",
+      counts: countSnapshotStateItems(nextState),
+      state: nextState
+    };
+  }
+
   function applyCloudLeaveStateSnapshot(snapshot, scope = {}) {
     if (!snapshot || !snapshot.state || typeof snapshot.state !== "object") {
       return false;
@@ -1770,6 +1861,83 @@
         return false;
       }
       throw error;
+    }
+  }
+
+  async function saveMergedLeaveStateSnapshotToCloud(scope = {}, options = {}) {
+    if (!getAppsScriptUrl() || leaveStateSnapshotUnsupported) {
+      return false;
+    }
+    const syncScope = getCloudStateScope(scope);
+    if (!syncScope.coachCode) {
+      return saveLeaveStateSnapshotToCloud(scope, options);
+    }
+    if (!syncScope.studentCode) {
+      return saveLeaveStateSnapshotToCloud({ coachCode: syncScope.coachCode, studentCode: "" }, options);
+    }
+
+    let cloudSnapshot = null;
+    let cloudSnapshotFetchFailed = false;
+    try {
+      cloudSnapshot = await fetchLeaveStateSnapshotFromCloud({
+        coachCode: syncScope.coachCode,
+        studentCode: ""
+      });
+    } catch (error) {
+      cloudSnapshotFetchFailed = true;
+      console.warn("Cloud snapshot fetch before scoped save failed:", error);
+    }
+    if (cloudSnapshotFetchFailed) {
+      return false;
+    }
+    let mergedSnapshot = mergeLocalScopedStateIntoSnapshot(cloudSnapshot, syncScope);
+    const savePayload = (snapshot) => ({
+      snapshot,
+      force: Boolean(options.force),
+      baseUpdatedAt: snapshot.baseUpdatedAt || ""
+    });
+
+    try {
+      let result = await callAppsScriptApi("saveLeaveStateSnapshot", savePayload(mergedSnapshot));
+      if (result?.conflict && result.snapshot) {
+        mergedSnapshot = mergeLocalScopedStateIntoSnapshot(result.snapshot, syncScope);
+        result = await callAppsScriptApi("saveLeaveStateSnapshot", savePayload(mergedSnapshot));
+      }
+      if (result?.snapshot?.updatedAt) {
+        state.cloudSnapshotUpdatedAt = result.snapshot.updatedAt;
+        state.cloudSnapshotUpdatedBy = result.snapshot.updatedBy || "";
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
+      }
+      return result?.ok !== false && !result?.conflict;
+    } catch (error) {
+      if (isUnsupportedAppsScriptAction(error, "saveLeaveStateSnapshot")) {
+        leaveStateSnapshotUnsupported = true;
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  async function saveStudentScopedStateToCloud(studentCode, coachCode, reason = "") {
+    const normalizedStudentCode = normalizeParticipantCode(studentCode || activeStudentCode || "");
+    const normalizedCoachCode = normalizeParticipantCode(coachCode || activeCoachCode || "");
+    if (!normalizedStudentCode || !normalizedCoachCode) {
+      return false;
+    }
+    try {
+      const saved = await saveMergedLeaveStateSnapshotToCloud({
+        coachCode: normalizedCoachCode,
+        studentCode: normalizedStudentCode
+      }, { reason });
+      if (saved) {
+        addLog(`[雲端同步] 已同步 ${normalizedStudentCode} 的請假/補課資料。`);
+        saveState();
+      }
+      return saved;
+    } catch (error) {
+      addLog(`[雲端同步] ${normalizedStudentCode} 請假/補課資料同步失敗：${String(error?.message || error)}`);
+      saveState();
+      return false;
     }
   }
 
@@ -5638,6 +5806,7 @@
     saveState();
     renderAll();
     notifyUser("補課申請已送出，正在寄送待審通知...", "info");
+    const initialCloudSaved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, "makeup_request_created");
     const emailPayload = {
       requestId: request.id,
       requestCode: request.code,
@@ -5661,12 +5830,15 @@
       request.emailNoticeQueuedAt = emailAt;
     }
     saveState();
+    const finalCloudSaved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, "makeup_request_email_updated");
     renderAll();
     notifyUser(
-      sent
+      !initialCloudSaved && !finalCloudSaved
+        ? "補課申請已在本機建立且 Email 已處理，但雲端同步尚未成功，請稍後重新開啟學生端讓系統重送。"
+        : sent
         ? `補課申請已送出，待審通知已寄出。`
         : `補課申請已送出，但 Email 尚未成功寄出，請稍後重送補償任務。`,
-      sent ? "success" : "warning"
+      initialCloudSaved || finalCloudSaved ? (sent ? "success" : "warning") : "warning"
     );
   }
 
@@ -5680,6 +5852,7 @@
     request.resolvedAt = new Date().toISOString();
     addLog(`學生 ${request.studentCode} 取消補課申請 ${request.id}。`);
     saveState();
+    await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, "makeup_request_cancelled");
     renderAll();
     notifyUser("補課申請已取消，正在寄送通知...", "info");
     await trySendEmailNotice(
@@ -7527,6 +7700,10 @@
       console.warn("Google calendar session refresh failed:", error);
     }
 
+    if (activeStudentCode && activeCoachCode && hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
+      changed = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_session_makeup_sync") || changed;
+    }
+
     if (changed) {
       renderAll();
     }
@@ -7575,7 +7752,11 @@
           } catch (error) {
             console.warn("Student Google calendar sync failed for student login:", error);
           }
-          if (leaveChanged || billingChanged || calendarChanged) {
+          let makeupCloudSaved = false;
+          if (hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
+            makeupCloudSaved = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_login_makeup_sync");
+          }
+          if (leaveChanged || billingChanged || calendarChanged || makeupCloudSaved) {
             renderAll();
           }
           if (cloudLeaveFailed) {
