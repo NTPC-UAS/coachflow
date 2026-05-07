@@ -136,6 +136,7 @@
   let isApplyingCloudSnapshot = false;
   let isUploadingCloudSnapshot = false;
   let leaveStateSnapshotUnsupported = false;
+  let isSubmittingMakeupRequest = false;
   const sendingChargeReminderKeys = new Set();
   let isCalendarRemovedExpanded = false;
   let studentLoginPromptHidden = false;
@@ -5290,6 +5291,101 @@
     return state.makeupRequests.find((request) => request.leaveId === leave.id && request.status === "approved") || null;
   }
 
+  function buildMakeupPendingEmailPayload(request) {
+    return {
+      requestId: request.id,
+      requestCode: request.code,
+      leaveId: request.leaveId,
+      lessonId: request.lessonId,
+      studentCode: request.studentCode,
+      coachCode: request.coachCode,
+      studentEmail: getStudentNoticeEmail(request.studentCode),
+      coachEmail: getCoachNoticeEmail(request.coachCode),
+      pendingAt: request.pendingAt,
+      startAt: request.startAt
+    };
+  }
+
+  async function saveMakeupRequestToCloud(request, reason) {
+    if (!request?.studentCode || !request?.coachCode) {
+      return false;
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      const saved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, reason);
+      if (saved) {
+        request.cloudSyncStatus = "synced";
+        request.cloudSyncErrorAt = "";
+        saveState();
+        return true;
+      }
+      if (attempt === 0) {
+        await pullLeaveStateSnapshotFromCloud({
+          coachCode: request.coachCode,
+          studentCode: request.studentCode
+        }).catch((error) => {
+          console.warn("Makeup cloud retry refresh failed:", error);
+        });
+      }
+    }
+    request.cloudSyncStatus = "pending";
+    request.cloudSyncErrorAt = new Date().toISOString();
+    saveState();
+    return false;
+  }
+
+  function shouldSendMakeupPendingNotice(request) {
+    return Boolean(
+      request &&
+      request.status === "pending" &&
+      !request.emailNoticeSentAt &&
+      (!request.emailNoticeStatus || request.emailNoticeStatus === "waiting-cloud")
+    );
+  }
+
+  async function sendMakeupPendingNotice(request) {
+    if (!shouldSendMakeupPendingNotice(request)) {
+      return false;
+    }
+    const emailPayload = buildMakeupPendingEmailPayload(request);
+    request.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
+    const sent = await trySendEmailNotice(
+      "makeup_pending",
+      emailPayload,
+      `補課待審通知 ${request.code || request.id}`
+    );
+    const emailAt = new Date().toISOString();
+    request.emailNoticeStatus = sent ? "sent" : "queued-or-skipped";
+    if (sent) {
+      request.emailNoticeSentAt = emailAt;
+      request.emailNoticeQueuedAt = "";
+    } else {
+      request.emailNoticeQueuedAt = emailAt;
+    }
+    saveState();
+    await saveMakeupRequestToCloud(request, "makeup_request_email_updated");
+    return true;
+  }
+
+  async function sendQueuedMakeupPendingNoticesForStudent(studentCode) {
+    const normalizedStudentCode = normalizeParticipantCode(studentCode || "");
+    if (!normalizedStudentCode) {
+      return false;
+    }
+    let changed = false;
+    const requests = state.makeupRequests.filter((request) => (
+      normalizeParticipantCode(request.studentCode) === normalizedStudentCode &&
+      shouldSendMakeupPendingNotice(request)
+    ));
+    for (const request of requests) {
+      const cloudSaved = await saveMakeupRequestToCloud(request, "makeup_request_retry_before_email");
+      if (!cloudSaved) {
+        continue;
+      }
+      changed = await sendMakeupPendingNotice(request) || changed;
+    }
+    return changed;
+  }
+
   function expirePendingRequests() {
     const now = new Date();
     let changed = false;
@@ -5799,82 +5895,84 @@
   }
 
   async function submitMakeupRequest() {
+    if (isSubmittingMakeupRequest) {
+      return;
+    }
     if (!el.makeupLeaveSelect || !el.makeupSlotSelect) {
       return;
     }
-    const leaveId = el.makeupLeaveSelect.value;
-    const startAt = el.makeupSlotSelect.value;
-    if (!leaveId || !startAt) {
-      alert("請先選擇請假單與補課時段。");
-      return;
+    isSubmittingMakeupRequest = true;
+    const submitButtonText = el.submitMakeupBtn?.textContent || "送出補課申請";
+    if (el.submitMakeupBtn) {
+      el.submitMakeupBtn.disabled = true;
+      el.submitMakeupBtn.textContent = "送出中...";
     }
-    const leave = state.leaveRequests.find((item) => item.id === leaveId);
-    if (!leave || !leave.makeupEligible) {
-      alert("這張請假單目前不可補課。");
-      return;
+    try {
+      const leaveId = el.makeupLeaveSelect.value;
+      const startAt = el.makeupSlotSelect.value;
+      if (!leaveId || !startAt) {
+        alert("請先選擇請假單與補課時段。");
+        return;
+      }
+      const leave = state.leaveRequests.find((item) => item.id === leaveId);
+      if (!leave || !leave.makeupEligible) {
+        alert("這張請假單目前不可補課。");
+        return;
+      }
+      if (getMakeupByLeave(leave.id)) {
+        alert("這張請假單已有待審或已核准的補課申請。");
+        return;
+      }
+      if (isSlotOccupied(startAt, leave.coachCode)) {
+        alert("該時段已被佔用，請改選其他時段。");
+        return;
+      }
+      const pendingAt = new Date().toISOString();
+      const request = {
+        id: newId("MAKEUP"),
+        code: buildMakeupCode(pendingAt),
+        leaveId: leave.id,
+        lessonId: leave.lessonId,
+        studentCode: leave.studentCode,
+        coachCode: leave.coachCode,
+        status: "pending",
+        pendingAt,
+        resolvedAt: "",
+        startAt,
+        rejectReason: ""
+      };
+      state.makeupRequests.push(request);
+      ensureMakeupCodes();
+      addLog(`學生 ${leave.studentCode} 送出補課申請：${formatDateTime(startAt)}。`);
+      saveState();
+      renderAll();
+      notifyUser("補課申請已送出，正在寄送待審通知...", "info");
+      const initialCloudSaved = await saveMakeupRequestToCloud(request, "makeup_request_created");
+      if (!initialCloudSaved) {
+        request.emailNoticeStatus = "waiting-cloud";
+        request.emailNoticeQueuedAt = new Date().toISOString();
+        saveState();
+        renderAll();
+        notifyUser("補課申請已先保留在這台裝置，但雲端尚未成功同步，所以待審 Email 暫不寄出；重新開啟學生端時系統會自動補送。", "warning");
+        return;
+      }
+      const emailStateChanged = await sendMakeupPendingNotice(request);
+      renderAll();
+      notifyUser(
+        request.emailNoticeStatus === "sent"
+          ? `補課申請已送出，待審通知已寄出。`
+          : emailStateChanged
+          ? `補課申請已送出，但 Email 尚未成功寄出，請稍後重送補償任務。`
+          : `補課申請已送出，待審資料已同步。`,
+        request.emailNoticeStatus === "sent" ? "success" : "warning"
+      );
+    } finally {
+      isSubmittingMakeupRequest = false;
+      if (el.submitMakeupBtn) {
+        el.submitMakeupBtn.disabled = false;
+        el.submitMakeupBtn.textContent = submitButtonText;
+      }
     }
-    if (getMakeupByLeave(leave.id)) {
-      alert("這張請假單已有待審或已核准的補課申請。");
-      return;
-    }
-    if (isSlotOccupied(startAt, leave.coachCode)) {
-      alert("該時段已被佔用，請改選其他時段。");
-      return;
-    }
-    const pendingAt = new Date().toISOString();
-    const request = {
-      id: newId("MAKEUP"),
-      code: buildMakeupCode(pendingAt),
-      leaveId: leave.id,
-      lessonId: leave.lessonId,
-      studentCode: leave.studentCode,
-      coachCode: leave.coachCode,
-      status: "pending",
-      pendingAt,
-      resolvedAt: "",
-      startAt,
-      rejectReason: ""
-    };
-    state.makeupRequests.push(request);
-    ensureMakeupCodes();
-    addLog(`學生 ${leave.studentCode} 送出補課申請：${formatDateTime(startAt)}。`);
-    saveState();
-    renderAll();
-    notifyUser("補課申請已送出，正在寄送待審通知...", "info");
-    const initialCloudSaved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, "makeup_request_created");
-    const emailPayload = {
-      requestId: request.id,
-      requestCode: request.code,
-      studentCode: request.studentCode,
-      coachCode: request.coachCode,
-      studentEmail: getStudentNoticeEmail(request.studentCode),
-      coachEmail: getCoachNoticeEmail(request.coachCode),
-      startAt: request.startAt
-    };
-    request.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
-    const sent = await trySendEmailNotice(
-      "makeup_pending",
-      emailPayload,
-      `補課待審通知 ${request.code || request.id}`
-    );
-    const emailAt = new Date().toISOString();
-    request.emailNoticeStatus = sent ? "sent" : "queued-or-skipped";
-    if (sent) {
-      request.emailNoticeSentAt = emailAt;
-    } else {
-      request.emailNoticeQueuedAt = emailAt;
-    }
-    saveState();
-    const finalCloudSaved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, "makeup_request_email_updated");
-    renderAll();
-    notifyUser(
-      !initialCloudSaved && !finalCloudSaved
-        ? "補課申請已在本機建立且 Email 已處理，但雲端同步尚未成功，請稍後重新開啟學生端讓系統重送。"
-        : sent
-        ? `補課申請已送出，待審通知已寄出。`
-        : `補課申請已送出，但 Email 尚未成功寄出，請稍後重送補償任務。`,
-      initialCloudSaved || finalCloudSaved ? (sent ? "success" : "warning") : "warning"
-    );
   }
 
   async function cancelPending(requestId) {
@@ -7745,7 +7843,11 @@
     }
 
     if (activeStudentCode && activeCoachCode && hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
-      changed = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_session_makeup_sync") || changed;
+      const makeupCloudSaved = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_session_makeup_sync");
+      changed = makeupCloudSaved || changed;
+      if (makeupCloudSaved) {
+        changed = await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode) || changed;
+      }
     }
 
     if (changed) {
@@ -7800,7 +7902,11 @@
           if (hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
             makeupCloudSaved = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_login_makeup_sync");
           }
-          if (leaveChanged || billingChanged || calendarChanged || makeupCloudSaved) {
+          let makeupNoticeChanged = false;
+          if (makeupCloudSaved) {
+            makeupNoticeChanged = await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode);
+          }
+          if (leaveChanged || billingChanged || calendarChanged || makeupCloudSaved || makeupNoticeChanged) {
             renderAll();
           }
           if (cloudLeaveFailed) {
@@ -8211,7 +8317,16 @@
       });
     }
     if (el.coachReviewRefreshBtn) {
-      el.coachReviewRefreshBtn.addEventListener("click", () => {
+      el.coachReviewRefreshBtn.addEventListener("click", async () => {
+        if (activeCoachCode) {
+          try {
+            await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
+            await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+          } catch (error) {
+            console.warn("Coach pending makeup refresh failed:", error);
+            notifyUser("待審清單雲端重新整理失敗，請稍後再試。", "warning");
+          }
+        }
         renderAll();
       });
     }
