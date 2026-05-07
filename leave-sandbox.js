@@ -3383,6 +3383,41 @@
     addLog(`[Google日曆] ${message}`);
   }
 
+  async function resolvePendingDeleteCompensationTasksFromGoogle(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const tasks = (state.compensationTasks || []).filter((task) => (
+      task.status !== "completed" &&
+      (task.type === "deleteEvent" || task.type === "deleteSingleEvent") &&
+      isCompensationTaskInScope(task, syncScope)
+    ));
+    let changed = false;
+    for (const task of tasks) {
+      const finalPayload = addSingleEventDeleteGuards(task.payload || {});
+      const lesson = getLessonById(finalPayload.lessonId);
+      try {
+        if (await isDeleteOccurrenceAlreadyAbsent(finalPayload, lesson)) {
+          task.payload = finalPayload;
+          task.status = "completed";
+          task.completedAt = new Date().toISOString();
+          task.lastError = "";
+          task.resolvedBy = "google-day-check";
+          task.resolvedReason = "Google day occurrence already absent";
+          if (lesson) {
+            lesson.calendarEventId = "";
+          }
+          addLog(`[補償任務] ${task.type} 視為完成（Google 當天已無此單堂事件，${task.id}）。`);
+          changed = true;
+        }
+      } catch (error) {
+        task.lastError = String(error?.message || error || task.lastError || "");
+      }
+    }
+    if (changed) {
+      saveState();
+    }
+    return changed;
+  }
+
   async function tryDeleteCalendarEventForLesson(lesson, reason, strictMode, options = {}) {
     let eventId = String(lesson.calendarEventId || "").trim();
     const shouldResolveMissingEvent = Boolean(options.resolveMissingEventId);
@@ -7700,6 +7735,15 @@
       console.warn("Google calendar session refresh failed:", error);
     }
 
+    try {
+      changed = await resolvePendingDeleteCompensationTasksFromGoogle({
+        coachCode: activeCoachCode,
+        studentCode: activeStudentCode
+      }) || changed;
+    } catch (error) {
+      console.warn("Delete compensation cleanup failed:", error);
+    }
+
     if (activeStudentCode && activeCoachCode && hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
       changed = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_session_makeup_sync") || changed;
     }
@@ -7821,7 +7865,8 @@
         await syncFromCloud();
         try {
           const calendarChanged = await syncCoachCalendarEventsFromGoogle({ showStatus: true });
-          if (calendarChanged) {
+          const compensationCleaned = await resolvePendingDeleteCompensationTasksFromGoogle({ coachCode: activeCoachCode });
+          if (calendarChanged || compensationCleaned) {
             renderAll();
           }
           notifyUser("教練資料與 Google 日曆同步完成。", "success");
@@ -8172,7 +8217,19 @@
     }
 
     if (el.compensationRefreshBtn) {
-      el.compensationRefreshBtn.addEventListener("click", () => {
+      el.compensationRefreshBtn.addEventListener("click", async () => {
+        try {
+          const changed = await resolvePendingDeleteCompensationTasksFromGoogle({
+            coachCode: activeCoachCode,
+            studentCode: activeStudentCode
+          });
+          if (changed) {
+            renderAll();
+            return;
+          }
+        } catch (error) {
+          console.warn("Delete compensation refresh cleanup failed:", error);
+        }
         renderCompensationPanel();
       });
     }
@@ -8613,6 +8670,13 @@
       if (autoCoachLoaded && !activeCoachReadOnly && activeCoachCode) {
         coachCalendarSynced = await syncCoachCalendarEventsFromGoogle({ showStatus: true });
       }
+      let deleteCompensationCleaned = false;
+      if (autoStudentLoaded || autoCoachLoaded) {
+        deleteCompensationCleaned = await resolvePendingDeleteCompensationTasksFromGoogle({
+          studentCode: activeStudentCode,
+          coachCode: activeCoachCode
+        });
+      }
       if (cloudSyncChanged) {
         if (studentLoginPromptHidden && el.studentCode && activeStudentCode && el.studentCode.value !== activeStudentCode) {
           el.studentCode.value = activeStudentCode;
@@ -8635,6 +8699,9 @@
         renderAll();
       }
       if (coachCalendarSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !cloudBillingSynced && !readOnlyCalendarSynced) {
+        renderAll();
+      }
+      if (deleteCompensationCleaned && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !cloudBillingSynced && !readOnlyCalendarSynced && !coachCalendarSynced) {
         renderAll();
       }
     } catch (error) {
