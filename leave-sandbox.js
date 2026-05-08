@@ -5822,17 +5822,41 @@
     lesson.calendarOccupied = true;
     lesson.charged = false;
     notifyUser("正在取消請假並還原 Google 日曆課程...", "info");
+
+    // 先確認雲端寫入，再做 calendar / email 等不可逆操作。
+    // 否則雲端 push 失敗時，calendar event 已建、email 已寄出，但雲端仍認為 leave 還活著
+    // → 下次 sync 把 lesson 改回 leave-normal，Google 日曆變成 ghost event。
+    let cloudSyncedRevoke = false;
+    try {
+      cloudSyncedRevoke = await pushCloudLeaveRecord(leave, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 取消請假上傳失敗：${String(error?.message || "未知錯誤")}`);
+    }
+    if (!cloudSyncedRevoke) {
+      // 雲端未確認 → 還原本地狀態，請學生重試
+      leave.revokedAt = "";
+      leave.revokedBy = "";
+      leave.makeupEligible = true;
+      lesson.attendanceStatus = "leave-normal";
+      lesson.calendarOccupied = false;
+      state.makeupRequests.forEach((request) => {
+        if (request.leaveId === leave.id && request.resolvedAt === nowIso) {
+          request.status = "pending";
+          request.resolvedAt = "";
+          request.rejectReason = "";
+        }
+      });
+      saveState();
+      renderAll();
+      notifyUser("取消請假未完成：雲端同步失敗，請檢查網路後重試。", "warning");
+      return;
+    }
+
     await tryCreateCalendarEventForLesson(lesson, "student_cancel_leave", false);
 
     addLog(`學生 ${activeStudentCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
-    try {
-      await pushCloudLeaveRecord(leave, lesson);
-    } catch (error) {
-      addLog(`[雲端請假] 上傳取消請假失敗：${String(error?.message || "未知錯誤")}`);
-      saveState();
-    }
     await trySendEmailNotice(
       "leave_cancelled_by_student",
       {
@@ -6222,18 +6246,41 @@
     lesson.attendanceStatus = "scheduled";
     lesson.calendarOccupied = true;
     lesson.charged = false;
+    notifyUser("正在取消請假...", "info");
+
+    // 雲端確認後才做不可逆操作（calendar create + email），否則網路抖留 ghost 資料
+    let cloudSyncedRevoke = false;
+    try {
+      cloudSyncedRevoke = await pushCloudLeaveRecord(leave, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 教練取消請假上傳失敗：${String(error?.message || "未知錯誤")}`);
+    }
+    if (!cloudSyncedRevoke) {
+      // 還原本地，請教練重試
+      leave.revokedAt = "";
+      leave.revokedBy = "";
+      leave.makeupEligible = true;
+      lesson.attendanceStatus = "leave-normal";
+      lesson.calendarOccupied = false;
+      state.makeupRequests.forEach((request) => {
+        if (request.leaveId === leave.id && request.resolvedAt === nowIso) {
+          request.status = "pending";
+          request.resolvedAt = "";
+          request.rejectReason = "";
+        }
+      });
+      saveState();
+      renderAll();
+      notifyUser("取消請假未完成：雲端同步失敗，請檢查網路後重試。", "warning");
+      return;
+    }
+
     await tryCreateCalendarEventForLesson(lesson, "coach_revoke_leave", false);
 
     addLog(`教練 ${activeCoachCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
-    notifyUser("已取消請假，正在還原 Google 日曆並寄送通知...", "info");
-    try {
-      await pushCloudLeaveRecord(leave, lesson);
-    } catch (error) {
-      addLog(`[雲端請假] 上傳教練取消請假失敗：${String(error?.message || "未知錯誤")}`);
-      saveState();
-    }
+    notifyUser("已取消請假，正在寄送通知...", "info");
     await trySendEmailNotice(
       "leave_revoked_by_coach",
       {
@@ -6283,7 +6330,19 @@
     addLog(`教練 ${request.coachCode} 已核准補課申請 ${request.id}。`);
     saveState();
     renderAll();
-    notifyUser("補課申請已核准，正在寄送通知...", "info");
+    notifyUser("補課申請已核准，正在同步雲端...", "info");
+
+    // 雲端確認後再寄信。否則雲端 push 失敗時，學生收到核准信、但其他裝置看不到
+    // 補課事件，重複申請或衝堂的風險會出來。
+    const cloudSyncedApproval = await saveMakeupRequestToCloud(request, "makeup_approved").catch((error) => {
+      addLog(`[雲端同步] 核准補課上傳失敗：${String(error?.message || "未知錯誤")}`);
+      return false;
+    });
+    if (!cloudSyncedApproval) {
+      notifyUser("補課已核准（Google 日曆已建立），但雲端同步未完成。系統會自動重試；學生通知信暫緩寄送。", "warning");
+      return;
+    }
+
     await trySendEmailNotice(
       "makeup_approved",
       {
@@ -6315,7 +6374,18 @@
     addLog(`教練 ${request.coachCode} 已退回補課申請 ${request.id}。`);
     saveState();
     renderAll();
-    notifyUser("補課申請已退回，正在寄送通知...", "info");
+    notifyUser("補課申請已退回，正在同步雲端...", "info");
+
+    // 雲端確認後再寄信，否則退回信寄出但雲端還是 pending → 學生會以為申請被退又看到 pending
+    const cloudSyncedReject = await saveMakeupRequestToCloud(request, "makeup_rejected").catch((error) => {
+      addLog(`[雲端同步] 退回補課上傳失敗：${String(error?.message || "未知錯誤")}`);
+      return false;
+    });
+    if (!cloudSyncedReject) {
+      notifyUser("補課已退回，但雲端同步未完成。系統會自動重試；學生通知信暫緩寄送。", "warning");
+      return;
+    }
+
     await trySendEmailNotice(
       "makeup_rejected",
       {
