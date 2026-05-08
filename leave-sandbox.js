@@ -2399,13 +2399,36 @@
       return false;
     }
 
+    // 用 emailUpdatedAt timestamp 判斷誰新誰舊。雲端新就用雲端、本地新就保留本地。
+    // 之前無條件「雲端非 undefined 就覆蓋」會把使用者剛輸入但 push 失敗的 email
+    // 用雲端舊版（包括空字串、或更早的 default fallback）蓋掉，已上線案例：
+    // 教練幫學生輸入 email 後消失、變回 hsnu115023@gmail.com 或空字串。
+    const cloudEmailRaw = profile.email === undefined ? null : normalizeEmailList(profile.email).join(", ");
+    const cloudEmailTime = new Date(profile.emailUpdatedAt || 0).getTime();
+    const localEmailTime = new Date(student.emailUpdatedAt || 0).getTime();
+    const localEmailNewer = Number.isFinite(localEmailTime) && localEmailTime > 0
+      && (!Number.isFinite(cloudEmailTime) || localEmailTime > cloudEmailTime + 2000);
+    let mergedEmail;
+    let mergedEmailUpdatedAt;
+    let mergedEmailUpdatedBy;
+    if (cloudEmailRaw === null || localEmailNewer) {
+      // 雲端沒帶或本地較新 → 保留本地
+      mergedEmail = String(student.email || "");
+      mergedEmailUpdatedAt = String(student.emailUpdatedAt || profile.emailUpdatedAt || "");
+      mergedEmailUpdatedBy = normalizeParticipantCode(student.emailUpdatedBy || profile.emailUpdatedBy || "");
+    } else {
+      mergedEmail = cloudEmailRaw;
+      mergedEmailUpdatedAt = String(profile.emailUpdatedAt || student.emailUpdatedAt || "");
+      mergedEmailUpdatedBy = normalizeParticipantCode(profile.emailUpdatedBy || student.emailUpdatedBy || "");
+    }
+
     const next = {
       ...student,
       coachCode: coachCode || student.coachCode,
       name: String(profile.studentName || profile.name || "").trim() || student.name,
-      email: profile.email === undefined ? String(student.email || "") : normalizeEmailList(profile.email).join(", "),
-      emailUpdatedAt: String(profile.emailUpdatedAt || student.emailUpdatedAt || ""),
-      emailUpdatedBy: normalizeParticipantCode(profile.emailUpdatedBy || student.emailUpdatedBy || ""),
+      email: mergedEmail,
+      emailUpdatedAt: mergedEmailUpdatedAt,
+      emailUpdatedBy: mergedEmailUpdatedBy,
       chargeStartCount: profile.chargeStartCount === undefined ? toNonNegativeInt(student.chargeStartCount, 0) : toNonNegativeInt(profile.chargeStartCount, 0),
       chargeStartCountUpdatedAt: String(profile.chargeStartCountUpdatedAt || student.chargeStartCountUpdatedAt || ""),
       chargeStartCountUpdatedBy: normalizeParticipantCode(profile.chargeStartCountUpdatedBy || student.chargeStartCountUpdatedBy || ""),
@@ -2715,13 +2738,16 @@
     const normalizedCoachCode = normalizeParticipantCode(coachCode) || "CH001";
     ensureCoachProfile(normalizedCoachCode);
 
-    const fallbackEmail = String(window.APP_CONFIG?.defaultNotifyEmail || "").trim();
     const normalizedEmail = normalizeEmailList(studentEmail).join(", ");
+    // 不再自動把 defaultNotifyEmail（教練自己的 email）填到新學生身上。
+    // 過去會這樣做造成「8 位學生 email 都變成教練的，學生收不到通知」。
+    // 沒填就空著，讓教練在計費面板看到再補。
+    // defaultNotifyEmail 在 resolveNoticeRecipients 仍會作為「沒收件人時的最終備援」。
     const created = {
       code: normalizedStudentCode,
       name: String(studentName || "").trim() || `${normalizedStudentCode} 學生`,
       coachCode: normalizedCoachCode,
-      email: normalizedEmail || fallbackEmail,
+      email: normalizedEmail,
       chargeStartCount: 0,
       chargeStartCountUpdatedAt: "",
       chargeStartCountUpdatedBy: "",
