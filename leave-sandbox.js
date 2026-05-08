@@ -4511,6 +4511,26 @@
           ].join("\n")
         };
       }
+      case "lesson_rescheduled": {
+        const oldText = safeFormatNoticeDateTime(payload.oldStartAt);
+        const newText = safeFormatNoticeDateTime(payload.newStartAt || payload.lessonStartAt || payload.startAt);
+        return {
+          subject: `[CoachFlow] 課程時間調整通知｜${studentText}`,
+          body: [
+            `${studentText} 您好：`,
+            "",
+            "您原本的上課時段已由教練調整：",
+            `學生：${studentText}`,
+            `教練：${coachText}`,
+            `原時段：${oldText}`,
+            `新時段：${newText}`,
+            `課程編號：${payload.lessonId || "-"}`,
+            "",
+            "如時間有疑問請直接聯繫教練。",
+            "此信件由 CoachFlow 請假系統自動發送。"
+          ].join("\n")
+        };
+      }
       default: {
         return {
           subject: `[CoachFlow] 系統通知｜${String(template || "notification")}`,
