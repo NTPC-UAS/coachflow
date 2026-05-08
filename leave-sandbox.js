@@ -12,6 +12,8 @@
   const CLOUD_BILLING_RECORD_PREFIX = "billing-profile:";
   const CLOUD_BILLING_REFRESH_INTERVAL_MS = 45 * 1000;
   const LOCAL_LEAVE_RECONCILE_GRACE_MS = 5 * 60 * 1000;
+  const LEAVE_ACTION_DEDUPE_MS = 4000; // 防雙擊：4 秒內對同 lesson 只受理一次請假/取消
+  const leaveActionInflight = new Map(); // lessonId -> timestamp
   const CALENDAR_REMOVED_PREVIEW_COUNT = 5;
   const RESET_IMPORTED_CHARGED_COUNT_MIGRATION = "reset-imported-charged-count-20260502-0007";
   const RESET_ALL_TRACKING_DATA_MIGRATION = "reset-all-tracking-data-20260503-0908";
@@ -5565,6 +5567,23 @@
   }
 
   async function applyNormalLeave(lessonId) {
+    // 防雙擊：手指連點 / 按鈕送出後沒立刻 disable 都會造成同一筆 lesson 被請假兩次
+    // （已上線案例：ST011 5/31 兩筆相隔 1.7 秒的 leave，明顯是 double-tap）
+    const now = Date.now();
+    const lastInflight = leaveActionInflight.get(lessonId) || 0;
+    if (now - lastInflight < LEAVE_ACTION_DEDUPE_MS) {
+      return; // 直接吞掉，不彈 alert（讓使用者覺得自己只點了一次）
+    }
+    leaveActionInflight.set(lessonId, now);
+    try {
+      await applyNormalLeaveImpl(lessonId);
+    } finally {
+      // 留在 map 直到 dedupe 視窗過完，避免快速重試
+      setTimeout(() => leaveActionInflight.delete(lessonId), LEAVE_ACTION_DEDUPE_MS);
+    }
+  }
+
+  async function applyNormalLeaveImpl(lessonId) {
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.studentCode !== activeStudentCode) {
       alert("找不到課程，或你沒有權限操作。");
@@ -5672,6 +5691,21 @@
   }
 
   async function applyNormalLeaveByCoach(lessonId) {
+    // 防雙擊（同上）
+    const now = Date.now();
+    const lastInflight = leaveActionInflight.get(lessonId) || 0;
+    if (now - lastInflight < LEAVE_ACTION_DEDUPE_MS) {
+      return;
+    }
+    leaveActionInflight.set(lessonId, now);
+    try {
+      await applyNormalLeaveByCoachImpl(lessonId);
+    } finally {
+      setTimeout(() => leaveActionInflight.delete(lessonId), LEAVE_ACTION_DEDUPE_MS);
+    }
+  }
+
+  async function applyNormalLeaveByCoachImpl(lessonId) {
     if (!requireCoachWriteAccess()) {
       return;
     }
