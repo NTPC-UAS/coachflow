@@ -6510,7 +6510,7 @@
     }
   }
 
-  function rescheduleLessonByCoach(lessonId) {
+  async function rescheduleLessonByCoach(lessonId) {
     if (!requireCoachWriteAccess()) {
       return;
     }
@@ -6560,11 +6560,71 @@
       return;
     }
 
+    // 已上線案例：原版只改本地 lesson.startAt 不動 Google 事件，下次 sync 時
+    // alignCoachLessonsWithGoogleEvents 會把 Google 舊時間蓋回 local。
+    // 必須做：刪舊 Google event → 改本地 + 建新 Google event → 寄通知信。
+
     const oldStartAt = lesson.startAt;
+    const oldEventId = lesson.calendarEventId;
+    const oldLessonSnapshot = JSON.parse(JSON.stringify(lesson));
+
+    notifyUser(`正在調整課程時間為 ${formatDateTime(nextStartAt)} ...`, "info");
+
+    // (1) 刪舊 Google event。失敗就 abort 不動本地，避免 Google 留 ghost 事件。
+    let deletedOld = false;
+    try {
+      deletedOld = await tryDeleteCalendarEventForLesson(
+        oldLessonSnapshot,
+        "coach_reschedule_old",
+        false,
+        { resolveMissingEventId: true }
+      );
+    } catch (error) {
+      addLog(`[Google日曆] 調整時間：刪除舊事件失敗 ${lesson.id}：${String(error?.message || error)}`);
+    }
+    if (!deletedOld) {
+      notifyUser("調整時間未完成：無法刪除原 Google 日曆事件，請稍後重試。", "warning");
+      return;
+    }
+
+    // (2) 改本地（雲端 snapshot 會自動把新時間推上去）
     lesson.startAt = nextStartAt;
+    lesson.calendarEventId = "";
     addLog(`教練 ${lesson.coachCode} 將課程 ${lesson.id} 由 ${formatDateTime(oldStartAt)} 調整為 ${formatDateTime(nextStartAt)}。`);
     saveState();
     renderAll();
+
+    // (3) 建新 Google event
+    let createdEventId = "";
+    try {
+      createdEventId = await tryCreateCalendarEventForLesson(lesson, "coach_reschedule_new", false);
+    } catch (error) {
+      addLog(`[Google日曆] 調整時間：建立新事件失敗 ${lesson.id}：${String(error?.message || error)}`);
+    }
+    if (!createdEventId) {
+      notifyUser(
+        `課程時間已改為 ${formatDateTime(nextStartAt)}，但 Google 日曆新事件尚未建立成功；下次同步會自動補上。`,
+        "warning"
+      );
+    }
+
+    // (4) 通知學生（不可逆，但已放在最後一步且雲端應已透過 snapshot 同步）
+    try {
+      await trySendEmailNotice(
+        "lesson_rescheduled",
+        {
+          lessonId: lesson.id,
+          studentCode: lesson.studentCode,
+          coachCode: lesson.coachCode,
+          oldStartAt,
+          newStartAt: nextStartAt
+        },
+        `課程時間調整通知 ${lesson.id}`
+      );
+    } catch (error) {
+      addLog(`[Email] 課程調整通知寄送失敗 ${lesson.id}：${String(error?.message || error)}`);
+    }
+
     notifyUser(`課程時間已調整為 ${formatDateTime(nextStartAt)}。`, "success");
   }
 
