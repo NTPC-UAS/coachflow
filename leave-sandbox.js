@@ -1318,7 +1318,17 @@
       }
     });
 
-    let changed = false;
+    // 找出「本地有但雲端找不到」的請假紀錄，但**不要**自動取消。
+    //
+    // 之前的邏輯會把這類紀錄標 revokedAt + 把 lesson 改回 scheduled。問題是
+    // 「雲端找不到」常常是「本地當初 push 失敗、雲端從沒收過」而不是
+    // 「雲端確實取消了」。已上線案例：學生請假後 email + Google 日曆事件
+    // 都已執行（不可逆），但因 push 失敗 5 分鐘後被誤判取消，造成「系統說
+    // 排課，Google 日曆已刪」資料不一致，等課程當天還會被自動扣堂。
+    //
+    // 改成只記錄並補推；不自動修改本地狀態。雲端真的有取消會走
+    // applyCloudLeaveRecord 的 revokedAt 分支，那條才是合法路徑。
+    const pendingResync = [];
     state.leaveRequests.forEach((leave) => {
       if (!leave || String(leave.type || "normal") !== "normal" || leave.revokedAt) {
         return;
@@ -1342,20 +1352,34 @@
         return;
       }
 
-      leave.revokedAt = new Date().toISOString();
-      leave.revokedBy = "cloud-sync";
-      if (lesson) {
-        if (lesson.attendanceStatus === "leave-normal") {
-          lesson.attendanceStatus = "scheduled";
-        }
-        lesson.calendarOccupied = true;
-        if (!lesson.calendarEventId && leave.calendarEventId) {
-          lesson.calendarEventId = leave.calendarEventId;
-        }
-      }
-      changed = true;
+      pendingResync.push({ leave, lesson });
     });
-    return changed;
+
+    if (!pendingResync.length) {
+      return false;
+    }
+
+    // fire-and-forget 補推；錯誤靠 addLog 留痕，不擋住主流程
+    pendingResync.forEach(({ leave, lesson }) => {
+      addLog(`[雲端對帳] ⚠️ 本地請假 ${leave.id || "(無 ID)"} 雲端查無對應紀錄，嘗試補推到雲端（不取消本地）。`);
+      Promise.resolve()
+        .then(() => pushCloudLeaveRecord(leave, lesson))
+        .then((ok) => {
+          if (ok) {
+            addLog(`[雲端對帳] ✓ 已補推請假 ${leave.id || "(無 ID)"} 至雲端。`);
+            saveState();
+          } else {
+            addLog(`[雲端對帳] ✗ 補推請假 ${leave.id || "(無 ID)"} 雲端回應失敗，下次同步會再試。`);
+          }
+        })
+        .catch((error) => {
+          addLog(`[雲端對帳] ✗ 補推請假 ${leave.id || "(無 ID)"} 拋出例外：${String(error?.message || error)}`);
+        });
+    });
+
+    // 沒有對 state.leaveRequests / state.lessons 做同步寫入，回 false 讓上層
+    // 不要因此覆寫 state（補推由 promise 自己 saveState）
+    return false;
   }
 
   function buildCloudLeaveRecord(leave, lesson) {
@@ -1401,19 +1425,24 @@
         return byEventId;
       }
     }
+    // 使用 student+coach+startAt 嚴格比對。歷史版本曾以 ±2 分鐘模糊比對，
+    // 在跨裝置 lessonId 不一致 + calendarEventId 缺失時，會把雲端某一天的
+    // 請假紀錄誤套到本地另一筆相近時刻的 lesson。改成 ISO 完全一致才算數，
+    // 避免再發生「請 5/10 結果套到 5/31」這種跨日誤配對。
     const studentCode = normalizeParticipantCode(record.studentCode);
     const coachCode = normalizeParticipantCode(record.coachCode);
-    const startTime = new Date(record.lessonStartAt || "").getTime();
-    if (!studentCode || !coachCode || !Number.isFinite(startTime)) {
+    const recordStartIso = (() => {
+      const time = new Date(record.lessonStartAt || "").getTime();
+      return Number.isFinite(time) ? new Date(time).toISOString() : "";
+    })();
+    if (!studentCode || !coachCode || !recordStartIso) {
       return null;
     }
-    return state.lessons
-      .filter((lesson) => (
-        normalizeParticipantCode(lesson.studentCode) === studentCode &&
-        normalizeParticipantCode(lesson.coachCode) === coachCode &&
-        Math.abs(new Date(lesson.startAt).getTime() - startTime) <= 2 * 60 * 1000
-      ))
-      .sort((a, b) => Math.abs(new Date(a.startAt).getTime() - startTime) - Math.abs(new Date(b.startAt).getTime() - startTime))[0] || null;
+    return state.lessons.find((lesson) => (
+      normalizeParticipantCode(lesson.studentCode) === studentCode &&
+      normalizeParticipantCode(lesson.coachCode) === coachCode &&
+      new Date(lesson.startAt || "").toISOString() === recordStartIso
+    )) || null;
   }
 
   function ensureLessonForCloudLeaveRecord(record) {
@@ -1423,6 +1452,18 @@
     if (!studentCode || !coachCode || !hasValidDateValue(startAt)) {
       return null;
     }
+    // 只有在雲端紀錄帶有 lessonId 或 calendarEventId（強識別）時才允許
+    // 自動補課。否則只憑 student+coach+startAt 就建出新 lesson，會在
+    // 跨裝置同步時製造幽靈課程（例如把雲端某筆請假的時間對到另一個
+    // student 的同時段，造成「系統自己跑出 5/31 請假」這種事故）。
+    const hasStrongIdentity = Boolean(
+      String(record?.lessonId || "").trim() ||
+      normalizeCalendarEventId(record?.calendarEventId || "")
+    );
+    if (!hasStrongIdentity) {
+      addLog(`[雲端請假] 跳過自動補課：雲端紀錄缺 lessonId 與 calendarEventId（${studentCode} / ${formatDateTime(startAt)}）。`);
+      return null;
+    }
     ensureCoachProfile(coachCode);
     ensureStudentProfile(studentCode, coachCode, { silentMode: true });
     const dateKey = getDateKeyInTaipei(new Date(startAt));
@@ -1430,7 +1471,7 @@
     const lesson = makeLesson(newId("L"), studentCode, coachCode, dateKey, timeText);
     lesson.sourceType = "GOOGLE_CALENDAR";
     lesson.startAt = new Date(startAt).toISOString();
-    lesson.calendarEventId = "";
+    lesson.calendarEventId = normalizeCalendarEventId(record.calendarEventId || "") || "";
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
     lesson.charged = false;
