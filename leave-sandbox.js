@@ -6153,6 +6153,11 @@
         alert("這張請假單目前不可補課。");
         return;
       }
+      // 防 IDOR：學生只能對自己的請假單送補課，避免拿到別人的 leaveId 也能送出
+      if (leave.studentCode !== activeStudentCode) {
+        alert("這張請假單不是你自己的，無法送出補課申請。");
+        return;
+      }
       if (getMakeupByLeave(leave.id)) {
         alert("這張請假單已有待審或已核准的補課申請。");
         return;
