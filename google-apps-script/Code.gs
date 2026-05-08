@@ -1724,10 +1724,18 @@ function getLeaveStateSnapshot_(payload) {
       snapshot: snapshot
     };
   } catch (error) {
+    // 雲端那份 snapshot 是「狀態快照 cache」，真資料在 LEAVE_RECORDS_V1 / Calendar，
+    // 拿不到 cache 不該擋掉前端的後續流程。改成回傳 found:false（讓前端視同沒 snapshot）
+    // 並在 corrupt 旗標裡告知，前端可以在 saveLeaveStateSnapshot 時強制覆寫掉這份壞掉的 blob。
+    // 過去的 ok:false 設計會讓 callAppsScriptApi 直接 throw，使「儲存前必先 fetch」的流程
+    // 整個放棄，雲端 snapshot 永遠寫不進新資料 → 多裝置同步永遠卡在壞掉那刻。
     return {
-      ok: false,
+      ok: true,
       action: "getLeaveStateSnapshot",
-      message: "Cloud leave snapshot is not readable."
+      found: false,
+      corrupt: true,
+      snapshot: null,
+      message: "Existing snapshot is unreadable; treating as missing so client can overwrite."
     };
   }
 }
@@ -1737,11 +1745,14 @@ function saveLeaveStateSnapshot_(payload) {
   const key = getLeaveStateSnapshotKey_(incoming);
   const existingResult = getLeaveStateSnapshot_(incoming);
   const existing = existingResult.found ? existingResult.snapshot : null;
+  const existingCorrupt = Boolean(existingResult.corrupt);
   const force = payload.force === true || String(payload.force || "").toLowerCase() === "true";
   const baseUpdatedAt = safeString_(payload.baseUpdatedAt || incoming.baseUpdatedAt, "");
   const existingTime = new Date(existing && existing.updatedAt || 0).getTime();
   const baseTime = new Date(baseUpdatedAt || 0).getTime();
-  if (!force && existing && Number.isFinite(existingTime) && (!Number.isFinite(baseTime) || baseTime + 2000 < existingTime)) {
+  // 既有 snapshot 損毀時不該觸發 conflict 檢查（因為「比較舊版」是無意義的），
+  // 直接讓 incoming 寫入覆蓋。否則永遠卡在壞掉那筆。
+  if (!force && existing && !existingCorrupt && Number.isFinite(existingTime) && (!Number.isFinite(baseTime) || baseTime + 2000 < existingTime)) {
     return {
       ok: true,
       action: "saveLeaveStateSnapshot",
@@ -1758,7 +1769,8 @@ function saveLeaveStateSnapshot_(payload) {
     ok: true,
     action: "saveLeaveStateSnapshot",
     snapshot: incoming,
-    replaced: Boolean(existing)
+    replaced: Boolean(existing),
+    recoveredFromCorrupt: existingCorrupt
   };
 }
 

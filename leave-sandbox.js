@@ -1857,6 +1857,11 @@
     return true;
   }
 
+  function isCorruptSnapshotError(error) {
+    const message = String(error?.message || error || "");
+    return /not readable|unreadable|snapshot.*parse|snapshot.*corrupt|cannot parse/i.test(message);
+  }
+
   async function fetchLeaveStateSnapshotFromCloud(scope = {}) {
     if (!getAppsScriptUrl() || leaveStateSnapshotUnsupported) {
       return null;
@@ -1871,6 +1876,12 @@
     } catch (error) {
       if (isUnsupportedAppsScriptAction(error, "getLeaveStateSnapshot")) {
         leaveStateSnapshotUnsupported = true;
+        return null;
+      }
+      // 雲端那筆 snapshot 損毀（JSON.parse 失敗）時，舊版後端會回 ok:false 讓前端 throw。
+      // snapshot 只是狀態 cache，不是真資料 → 視為「沒 snapshot」讓 saveSnapshot 重新覆寫。
+      if (isCorruptSnapshotError(error)) {
+        addLog?.("[雲端 snapshot] 雲端 snapshot 損毀，視為沒 snapshot 處理（之後寫入會覆蓋掉壞的）。");
         return null;
       }
       throw error;
@@ -1896,17 +1907,23 @@
     let snapshot = buildLeaveStateSnapshot(syncScope);
     if (syncScope.coachCode && !syncScope.studentCode) {
       let cloudSnapshot = null;
+      let fetchFailedNonCorrupt = false;
       try {
         cloudSnapshot = await fetchLeaveStateSnapshotFromCloud({
           coachCode: syncScope.coachCode,
           studentCode: ""
         });
       } catch (error) {
-        console.warn("Cloud snapshot fetch before full save failed:", error);
-        return false;
+        // fetchLeaveStateSnapshotFromCloud 內部已對「損毀」吞掉並回 null。
+        // 走到這裡的 throw 是真正的網路錯誤等。為了不再讓壞掉的 snapshot 永遠寫不進新資料，
+        // 改成「fetch 失敗」就跳過 merge、直接寫入本地版。
+        console.warn("Cloud snapshot fetch before full save failed (will save without merge):", error);
+        fetchFailedNonCorrupt = true;
       }
       if (cloudSnapshot?.state) {
         snapshot = mergeLocalScopedStateIntoSnapshot(cloudSnapshot, syncScope);
+      } else if (fetchFailedNonCorrupt) {
+        // 沒 merge 用的 cloud snapshot，但本地 snapshot 仍可寫，下次別人 fetch 就拿得到新版
       }
     }
     try {
@@ -1947,18 +1964,15 @@
     }
 
     let cloudSnapshot = null;
-    let cloudSnapshotFetchFailed = false;
     try {
       cloudSnapshot = await fetchLeaveStateSnapshotFromCloud({
         coachCode: syncScope.coachCode,
         studentCode: ""
       });
     } catch (error) {
-      cloudSnapshotFetchFailed = true;
-      console.warn("Cloud snapshot fetch before scoped save failed:", error);
-    }
-    if (cloudSnapshotFetchFailed) {
-      return false;
+      // 不再因 fetch 失敗就 return false（會讓壞 snapshot 永遠寫不掉）。
+      // cloudSnapshot 維持 null，mergeLocalScopedStateIntoSnapshot 在 null 時應視為從零開始。
+      console.warn("Cloud snapshot fetch before scoped save failed (proceed without merge):", error);
     }
     let mergedSnapshot = mergeLocalScopedStateIntoSnapshot(cloudSnapshot, syncScope);
     const savePayload = (snapshot) => ({
