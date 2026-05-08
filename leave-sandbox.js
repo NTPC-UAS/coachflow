@@ -1499,7 +1499,20 @@
         existing.revokedBy = record.revokedBy || "cloud";
         changed = true;
       }
-      if (lesson.attendanceStatus === "leave-normal") {
+      // 同一個 lesson 上可能存在多筆 leave 紀錄（學生請假 → 取消 → 再請假）。
+      // 不能只因為某一筆 revoked record 就把 lesson 改回 scheduled —— 必須先確認
+      // 沒有「另一筆活著的 leave」也指向這個 lesson。否則會把已成立的請假誤砍。
+      // 已上線案例：ST019 5/10 lesson 同時有 LEAVE_09cwcf（活）和 LEAVE_hox49h（revoked），
+      // 處理到後者時把 lesson 蓋回 scheduled，造成 email 寄出但系統顯示已排課。
+      const recordId = String(record.id || "").trim();
+      const otherActiveLeave = state.leaveRequests.some((other) => (
+        other &&
+        other.lessonId === lesson.id &&
+        String(other.id || "") !== recordId &&
+        !other.revokedAt &&
+        String(other.type || "normal") === "normal"
+      ));
+      if (lesson.attendanceStatus === "leave-normal" && !otherActiveLeave) {
         lesson.attendanceStatus = "scheduled";
         lesson.calendarOccupied = true;
         changed = true;
