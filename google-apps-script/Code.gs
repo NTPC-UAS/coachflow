@@ -1295,7 +1295,13 @@ function deleteCalendarEvent_(payload) {
     return { ok: false, message: "缺少 eventId。" };
   }
 
-  const singleDelete = isSingleEventDeleteRequested_(payload || {});
+  // 安全預設：除非呼叫端明確指定 deleteScope:"series"，否則一律走 single-occurrence 路徑。
+  // 過去 deleteEvent 的非 single 分支會直接呼 event.deleteEvent()，若 eventId 是
+  // recurring master，會把整個系列（包括未來所有實例）一起刪掉，無法復原。
+  // 已知前端只有「刪一堂」需求；series 刪除應該走額外明確的 deleteScope。
+  const explicitSeriesScope = String((payload || {}).deleteScope || "").toLowerCase() === "series";
+  const singleDelete = explicitSeriesScope ? false : true;
+
   const event = singleDelete
     ? findSingleOccurrenceForDelete_(calendar, payload || {}, eventId)
     : findCalendarEventById_(calendar, eventId);
@@ -1312,6 +1318,20 @@ function deleteCalendarEvent_(payload) {
     }
     return { ok: false, message: "找不到指定事件，可能已刪除。", eventId: eventId };
   }
+
+  // 保險：即使 series 模式被明確要求，仍要呼叫端確實知道要刪整個 series 才放行。
+  // 若為 recurring 系列且未明確要求，拒絕。
+  if (event.isRecurringEvent && event.isRecurringEvent() && !explicitSeriesScope) {
+    return {
+      ok: false,
+      action: "deleteEvent",
+      message: "目標是重複事件系列；單堂刪除請改用 deleteSingleEvent action，整個系列刪除請帶 deleteScope:\"series\"。",
+      eventId: eventId,
+      blocked: true,
+      isRecurring: true
+    };
+  }
+
   event.deleteEvent();
   return {
     ok: true,
@@ -1319,6 +1339,7 @@ function deleteCalendarEvent_(payload) {
     requestedEventId: eventId,
     calendarId: calendar.getId(),
     singleEventOnly: singleDelete,
+    seriesScope: explicitSeriesScope,
     message: "deleteEvent 成功"
   };
 }
@@ -1504,33 +1525,39 @@ function saveLeaveRecord_(payload) {
     };
   }
 
-  const records = getLeaveRecords_();
-  const recordKey = getLeaveRecordKey_(record);
-  let replaced = false;
-  const nextRecords = records.map(function(item) {
-    if (getLeaveRecordKey_(item) === recordKey) {
-      replaced = true;
-      return Object.assign({}, item, record, {
+  // 包進 ScriptLock：多裝置同時 saveLeaveRecord 時 read-modify-write 會 lost update。
+  return withScriptLock_(function () {
+    const records = getLeaveRecords_();
+    const recordKey = getLeaveRecordKey_(record);
+    let replaced = false;
+    const nextRecords = records.map(function(item) {
+      if (getLeaveRecordKey_(item) === recordKey) {
+        replaced = true;
+        return Object.assign({}, item, record, {
+          updatedAt: nowIso_()
+        });
+      }
+      return item;
+    });
+
+    if (!replaced) {
+      nextRecords.unshift(Object.assign({}, record, {
+        createdAt: record.createdAt || nowIso_(),
         updatedAt: nowIso_()
-      });
+      }));
     }
-    return item;
+
+    const truncated = nextRecords.length > 500;
+    setLeaveRecords_(nextRecords.slice(0, 500));
+    return {
+      ok: true,
+      action: "saveLeaveRecord",
+      record: record,
+      replaced: replaced,
+      truncated: truncated,
+      droppedCount: truncated ? nextRecords.length - 500 : 0
+    };
   });
-
-  if (!replaced) {
-    nextRecords.unshift(Object.assign({}, record, {
-      createdAt: record.createdAt || nowIso_(),
-      updatedAt: nowIso_()
-    }));
-  }
-
-  setLeaveRecords_(nextRecords.slice(0, 500));
-  return {
-    ok: true,
-    action: "saveLeaveRecord",
-    record: record,
-    replaced: replaced
-  };
 }
 
 function normalizeLeaveRecord_(record) {
@@ -1607,48 +1634,50 @@ function saveBillingProfile_(payload) {
     };
   }
 
-  const now = nowIso_();
-  const profiles = getBillingProfiles_();
-  const profileKey = getBillingProfileKey_(profile);
-  let replaced = false;
-  let ignored = false;
-  const existingIndex = profiles.findIndex(function(item) {
-    return getBillingProfileKey_(item) === profileKey;
-  });
-  if (existingIndex >= 0) {
-    const existing = profiles[existingIndex];
-    const incomingTime = new Date(profile.updatedAt || 0).getTime();
-    const existingTime = new Date(existing.updatedAt || 0).getTime();
-    if (Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime + 2000 < existingTime) {
-      ignored = true;
-      profile.createdAt = existing.createdAt || now;
-      profile.updatedAt = existing.updatedAt || now;
-      setBillingProfiles_(profiles);
-      return {
-        ok: true,
-        action: "saveBillingProfile",
-        profile: existing,
-        replaced: false,
-        ignored: ignored
-      };
+  return withScriptLock_(function () {
+    const now = nowIso_();
+    const profiles = getBillingProfiles_();
+    const profileKey = getBillingProfileKey_(profile);
+    let replaced = false;
+    let ignored = false;
+    const existingIndex = profiles.findIndex(function(item) {
+      return getBillingProfileKey_(item) === profileKey;
+    });
+    if (existingIndex >= 0) {
+      const existing = profiles[existingIndex];
+      const incomingTime = new Date(profile.updatedAt || 0).getTime();
+      const existingTime = new Date(existing.updatedAt || 0).getTime();
+      if (Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime + 2000 < existingTime) {
+        ignored = true;
+        profile.createdAt = existing.createdAt || now;
+        profile.updatedAt = existing.updatedAt || now;
+        setBillingProfiles_(profiles);
+        return {
+          ok: true,
+          action: "saveBillingProfile",
+          profile: existing,
+          replaced: false,
+          ignored: ignored
+        };
+      }
+      profile.createdAt = existing.createdAt || profile.createdAt || now;
+      profile.updatedAt = profile.updatedAt || now;
+      profiles[existingIndex] = profile;
+      replaced = true;
+    } else {
+      profile.createdAt = profile.createdAt || now;
+      profile.updatedAt = profile.updatedAt || now;
+      profiles.push(profile);
     }
-    profile.createdAt = existing.createdAt || profile.createdAt || now;
-    profile.updatedAt = profile.updatedAt || now;
-    profiles[existingIndex] = profile;
-    replaced = true;
-  } else {
-    profile.createdAt = profile.createdAt || now;
-    profile.updatedAt = profile.updatedAt || now;
-    profiles.push(profile);
-  }
-  setBillingProfiles_(profiles);
-  return {
-    ok: true,
-    action: "saveBillingProfile",
-    profile: profile,
-    replaced: replaced,
-    ignored: ignored
-  };
+    setBillingProfiles_(profiles);
+    return {
+      ok: true,
+      action: "saveBillingProfile",
+      profile: profile,
+      replaced: replaced,
+      ignored: ignored
+    };
+  });
 }
 
 function normalizeBillingProfile_(profile) {
@@ -1742,36 +1771,36 @@ function getLeaveStateSnapshot_(payload) {
 
 function saveLeaveStateSnapshot_(payload) {
   const incoming = normalizeLeaveStateSnapshot_(payload.snapshot || payload);
-  const key = getLeaveStateSnapshotKey_(incoming);
-  const existingResult = getLeaveStateSnapshot_(incoming);
-  const existing = existingResult.found ? existingResult.snapshot : null;
-  const existingCorrupt = Boolean(existingResult.corrupt);
-  const force = payload.force === true || String(payload.force || "").toLowerCase() === "true";
-  const baseUpdatedAt = safeString_(payload.baseUpdatedAt || incoming.baseUpdatedAt, "");
-  const existingTime = new Date(existing && existing.updatedAt || 0).getTime();
-  const baseTime = new Date(baseUpdatedAt || 0).getTime();
-  // 既有 snapshot 損毀時不該觸發 conflict 檢查（因為「比較舊版」是無意義的），
-  // 直接讓 incoming 寫入覆蓋。否則永遠卡在壞掉那筆。
-  if (!force && existing && !existingCorrupt && Number.isFinite(existingTime) && (!Number.isFinite(baseTime) || baseTime + 2000 < existingTime)) {
+  return withScriptLock_(function () {
+    const key = getLeaveStateSnapshotKey_(incoming);
+    const existingResult = getLeaveStateSnapshot_(incoming);
+    const existing = existingResult.found ? existingResult.snapshot : null;
+    const existingCorrupt = Boolean(existingResult.corrupt);
+    const force = payload.force === true || String(payload.force || "").toLowerCase() === "true";
+    const baseUpdatedAt = safeString_(payload.baseUpdatedAt || incoming.baseUpdatedAt, "");
+    const existingTime = new Date(existing && existing.updatedAt || 0).getTime();
+    const baseTime = new Date(baseUpdatedAt || 0).getTime();
+    if (!force && existing && !existingCorrupt && Number.isFinite(existingTime) && (!Number.isFinite(baseTime) || baseTime + 2000 < existingTime)) {
+      return {
+        ok: true,
+        action: "saveLeaveStateSnapshot",
+        conflict: true,
+        message: "Cloud leave snapshot is newer than this local copy.",
+        snapshot: existing
+      };
+    }
+
+    incoming.createdAt = safeString_(incoming.createdAt || (existing && existing.createdAt), nowIso_());
+    incoming.updatedAt = nowIso_();
+    writeChunkedProperty_(key, JSON.stringify(incoming));
     return {
       ok: true,
       action: "saveLeaveStateSnapshot",
-      conflict: true,
-      message: "Cloud leave snapshot is newer than this local copy.",
-      snapshot: existing
+      snapshot: incoming,
+      replaced: Boolean(existing),
+      recoveredFromCorrupt: existingCorrupt
     };
-  }
-
-  incoming.createdAt = safeString_(incoming.createdAt || (existing && existing.createdAt), nowIso_());
-  incoming.updatedAt = nowIso_();
-  writeChunkedProperty_(key, JSON.stringify(incoming));
-  return {
-    ok: true,
-    action: "saveLeaveStateSnapshot",
-    snapshot: incoming,
-    replaced: Boolean(existing),
-    recoveredFromCorrupt: existingCorrupt
-  };
+  });
 }
 
 function normalizeLeaveStateSnapshot_(snapshot) {
@@ -1850,11 +1879,24 @@ function hasNumericValue_(value) {
 
 function readChunkedProperty_(baseKey) {
   const props = PropertiesService.getScriptProperties();
+  // 新格式：用 _ACTIVE 指向 A 或 B chunk set，原子切換
+  const activeSuffix = props.getProperty(baseKey + "_ACTIVE") || "";
+  if (activeSuffix) {
+    const chunkCount = Number(props.getProperty(baseKey + "_" + activeSuffix + "_CHUNKS") || 0);
+    if (!chunkCount) {
+      return "";
+    }
+    const chunks = [];
+    for (var i = 0; i < chunkCount; i += 1) {
+      chunks.push(props.getProperty(baseKey + "_" + activeSuffix + "_" + i) || "");
+    }
+    return chunks.join("");
+  }
+  // 舊格式：保留向後相容（讀舊資料用），新版寫入會把它清掉
   const chunkCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
   if (!chunkCount) {
     return props.getProperty(baseKey) || "";
   }
-
   const chunks = [];
   for (var index = 0; index < chunkCount; index += 1) {
     chunks.push(props.getProperty(baseKey + "_" + index) || "");
@@ -1865,18 +1907,66 @@ function readChunkedProperty_(baseKey) {
 function writeChunkedProperty_(baseKey, value) {
   const props = PropertiesService.getScriptProperties();
   const text = String(value || "");
-  const previousCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
-  for (var oldIndex = 0; oldIndex < previousCount; oldIndex += 1) {
-    props.deleteProperty(baseKey + "_" + oldIndex);
-  }
-  props.deleteProperty(baseKey);
-
   const chunkSize = 8000;
   const chunkCount = Math.max(1, Math.ceil(text.length / chunkSize));
-  for (var index = 0; index < chunkCount; index += 1) {
-    props.setProperty(baseKey + "_" + index, text.slice(index * chunkSize, (index + 1) * chunkSize));
+
+  // 500KB 總配額護欄：每筆 value 自己若超過 480KB 就拒絕，
+  // 避免把整份 properties 撐爆而中斷其他寫入。
+  if (text.length > 480000) {
+    throw new Error("writeChunkedProperty_: payload too large (" + text.length + " bytes), refusing to write.");
   }
-  props.setProperty(baseKey + "_CHUNKS", String(chunkCount));
+
+  // Atomic A/B swap：先寫到 standby suffix、最後一步才切 ACTIVE。
+  // 即使 setProperty 中斷，舊 active 資料完整保留，下一次寫入會重試。
+  const activeSuffix = props.getProperty(baseKey + "_ACTIVE") || "A";
+  const standbySuffix = activeSuffix === "A" ? "B" : "A";
+
+  for (var i = 0; i < chunkCount; i += 1) {
+    props.setProperty(baseKey + "_" + standbySuffix + "_" + i, text.slice(i * chunkSize, (i + 1) * chunkSize));
+  }
+  props.setProperty(baseKey + "_" + standbySuffix + "_CHUNKS", String(chunkCount));
+
+  // 原子切換指針
+  props.setProperty(baseKey + "_ACTIVE", standbySuffix);
+
+  // 清舊 active 資料（這之後出問題不影響讀取）
+  const oldActiveCount = Number(props.getProperty(baseKey + "_" + activeSuffix + "_CHUNKS") || 0);
+  for (var j = 0; j < oldActiveCount; j += 1) {
+    try {
+      props.deleteProperty(baseKey + "_" + activeSuffix + "_" + j);
+    } catch (e) {
+      // 失敗忽略，下次 swap 會再清
+    }
+  }
+  try { props.deleteProperty(baseKey + "_" + activeSuffix + "_CHUNKS"); } catch (e) {}
+
+  // 一次性清舊格式（pre-A/B 時代留下的）
+  const legacyCount = Number(props.getProperty(baseKey + "_CHUNKS") || 0);
+  if (legacyCount) {
+    for (var k = 0; k < legacyCount; k += 1) {
+      try { props.deleteProperty(baseKey + "_" + k); } catch (e) {}
+    }
+    try { props.deleteProperty(baseKey + "_CHUNKS"); } catch (e) {}
+  }
+  try { props.deleteProperty(baseKey); } catch (e) {}
+}
+
+/**
+ * 用法：withScriptLock_(function () { ... 寫入動作 ... })
+ * 多裝置同時寫同一份 chunked property 會 lost update。
+ * 包進 ScriptLock 後同一時間只允許一個寫入交易。
+ * 取不到鎖在 5 秒內 throw，呼叫端可決定是否回傳「忙碌請重試」。
+ */
+function withScriptLock_(fn) {
+  const lock = LockService.getScriptLock();
+  if (!lock.tryLock(5000)) {
+    throw new Error("LOCK_TIMEOUT: could not acquire script lock within 5s, please retry.");
+  }
+  try {
+    return fn();
+  } finally {
+    try { lock.releaseLock(); } catch (e) {}
+  }
 }
 
 function normalizeCode_(value) {

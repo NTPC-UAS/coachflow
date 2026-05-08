@@ -289,7 +289,11 @@ function deleteCalendarEvent_(payload) {
     return { ok: false, message: "Missing eventId." };
   }
 
-  const singleDelete = isSingleEventDeleteRequested_(payload);
+  // Default-safe: 除非明確 deleteScope:"series"，一律走 single-occurrence。
+  // 否則 master ID 一傳進來 event.deleteEvent() 會刪整個系列。
+  const explicitSeriesScope = String(payload.deleteScope || "").toLowerCase() === "series";
+  const singleDelete = explicitSeriesScope ? false : true;
+
   const event = singleDelete
     ? findSingleOccurrenceForDelete_(calendar, payload, rawEventId)
     : findEventById_(calendar, rawEventId);
@@ -315,6 +319,19 @@ function deleteCalendarEvent_(payload) {
     };
   }
 
+  // 額外保險：即使要求 series 模式也不能誤刪非預期的 series。
+  if (event.isRecurringEvent && event.isRecurringEvent() && !explicitSeriesScope) {
+    return {
+      ok: false,
+      action: "deleteEvent",
+      eventId: rawEventId,
+      calendarId: calendar.getId(),
+      blocked: true,
+      isRecurring: true,
+      message: "Refusing to delete recurring series without explicit deleteScope:\"series\"."
+    };
+  }
+
   event.deleteEvent();
   return {
     ok: true,
@@ -323,6 +340,7 @@ function deleteCalendarEvent_(payload) {
     requestedEventId: rawEventId,
     calendarId: calendar.getId(),
     singleEventOnly: singleDelete,
+    seriesScope: explicitSeriesScope,
     message: "deleteEvent success"
   };
 }
