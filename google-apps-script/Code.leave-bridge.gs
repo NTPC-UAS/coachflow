@@ -319,8 +319,11 @@ function deleteCalendarEvent_(payload) {
     };
   }
 
-  // 額外保險：即使要求 series 模式也不能誤刪非預期的 series。
-  if (event.isRecurringEvent && event.isRecurringEvent() && !explicitSeriesScope) {
+  // Single-occurrence delete on a recurring instance is safe (only kills that
+  // one occurrence, not the series). Only apply the recurring-series guard
+  // when explicitly NOT in single mode — that's the path that calls
+  // event.deleteEvent() on a master and would wipe the whole series.
+  if (!singleDelete && event.isRecurringEvent && event.isRecurringEvent() && !explicitSeriesScope) {
     return {
       ok: false,
       action: "deleteEvent",

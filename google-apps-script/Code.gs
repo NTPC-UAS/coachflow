@@ -1319,13 +1319,14 @@ function deleteCalendarEvent_(payload) {
     return { ok: false, message: "找不到指定事件，可能已刪除。", eventId: eventId };
   }
 
-  // 保險：即使 series 模式被明確要求，仍要呼叫端確實知道要刪整個 series 才放行。
-  // 若為 recurring 系列且未明確要求，拒絕。
-  if (event.isRecurringEvent && event.isRecurringEvent() && !explicitSeriesScope) {
+  // 保險：只在「非 single delete」路徑（會把整個 series 刪光）才檢查 recurring。
+  // event.isRecurringEvent() 對單一實例也回 true，但對單一實例呼叫 deleteEvent()
+  // 只刪那一筆 instance、不會動到整個系列，所以 single delete 不需要這道 guard。
+  if (!singleDelete && event.isRecurringEvent && event.isRecurringEvent() && !explicitSeriesScope) {
     return {
       ok: false,
       action: "deleteEvent",
-      message: "目標是重複事件系列；單堂刪除請改用 deleteSingleEvent action，整個系列刪除請帶 deleteScope:\"series\"。",
+      message: "目標是重複事件系列；單堂刪除請用 deleteSingleEvent action，整個系列刪除請帶 deleteScope:\"series\"。",
       eventId: eventId,
       blocked: true,
       isRecurring: true
