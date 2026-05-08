@@ -5570,6 +5570,18 @@
       alert("找不到課程，或你沒有權限操作。");
       return;
     }
+    // Telemetry：記錄學生點下去當下的 lesson 內容，下次再出現「請 5/10 結果系統處理 5/31」
+    // 這種怪事，可以從 eventLog 對照學生看到的日期 vs 實際送出的 lesson 是否一致。
+    try {
+      const sameStudentLessons = state.lessons
+        .filter((l) => l.studentCode === activeStudentCode && isGoogleSyncLesson(l) && isLessonAfterTrackingDataReset(l))
+        .sort((a, b) => new Date(a.startAt) - new Date(b.startAt))
+        .map((l) => `${l.id}@${formatDateTime(l.startAt)}[${l.attendanceStatus}]`);
+      addLog(`[請假 telemetry] 學生 ${activeStudentCode} 點請假：lessonId=${lessonId} startAt=${lesson.startAt} eventId=${lesson.calendarEventId || "(空)"} 同學生其他課程=${sameStudentLessons.join(",")}`);
+      saveState();
+    } catch (telemetryError) {
+      console.warn("Leave telemetry failed:", telemetryError);
+    }
     if (!isLeaveOpen(lesson)) {
       alert("已超過請假截止時間（前一天 23:59），不可請假。");
       return;
@@ -5667,6 +5679,13 @@
     if (!lesson || lesson.coachCode !== activeCoachCode) {
       alert("找不到課程。");
       return;
+    }
+    // Telemetry：教練代請假當下的 lesson 內容，便於追「教練幫忙請假後出現幽靈紀錄」之類的問題。
+    try {
+      addLog(`[請假 telemetry] 教練 ${activeCoachCode} 代學生 ${lesson.studentCode} 請假：lessonId=${lessonId} startAt=${lesson.startAt} eventId=${lesson.calendarEventId || "(空)"} status=${lesson.attendanceStatus} occupied=${lesson.calendarOccupied}`);
+      saveState();
+    } catch (telemetryError) {
+      console.warn("Leave telemetry failed:", telemetryError);
     }
     if (!isGoogleSyncLesson(lesson) || !lesson.calendarOccupied || lesson.attendanceStatus !== "scheduled") {
       alert("僅可代學生請假仍排在 Google 日曆上的原課。");
@@ -6330,6 +6349,17 @@
     const target = mapping[statusType];
     if (!target) {
       return;
+    }
+    // 如果這堂課還掛著未撤銷的請假，按「重置」會把 lesson 改回 scheduled 但
+    // leave 紀錄還活著，造成資料不一致（已上線案例：教練端代學生請假後
+    // 不知道是誰按了重置，5/10 lesson 變 scheduled 但 LEAVE_09cwcf 還在，
+    // 後續 sync 也修不回來）。改成擋住，要求先處理請假。
+    if (statusType === "reset") {
+      const activeLeave = getLeaveByLesson(lessonId);
+      if (activeLeave) {
+        alert("這堂課還有未取消的請假，無法重置。\n如要恢復排課，請先點「取消請假」（會同步還原 Google 日曆並通知學生）。");
+        return;
+      }
     }
     const wasCharged = Boolean(lesson.charged);
     lesson.attendanceStatus = target.attendanceStatus;
