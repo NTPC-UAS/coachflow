@@ -2882,17 +2882,34 @@
     if (!getCoachflowAppsScriptUrl()) {
       return false;
     }
+    // 移除 bootstrap POST 嘗試 —— 主後端 Code.gs 的 doPost 沒有 case "bootstrap"，
+    // 只有 bootstrapAdmin / bootstrapStudent。每次同步都印兩條 "Unsupported action"
+    // 警告純屬噪音。GET bootstrap 已涵蓋初始拉取的需求。
+    //
+    // 另外：syncCoachflowRosterFromPayload 即使成功處理 payload 但本地 state 已是
+    // 最新狀態（changed=false），也會回 false 讓 loop 繼續往下。這在「資料早已同
+    // 步」的常見情境會多走幾次無謂的 fallback。先嘗試「把 payload 處理成功就算
+    // 成功」，再沒抓到資料才往下試。
     const attempts = [
       { action: "bootstrap", method: "GET" },
       { action: "bootstrapAdmin", method: "GET" },
-      { action: "bootstrap", method: "POST" },
       { action: "bootstrapAdmin", method: "POST" }
     ];
     for (const attempt of attempts) {
       try {
         const payload = await callCoachflowApi(attempt.action, {}, attempt.method);
-        if (syncCoachflowRosterFromPayload(payload, "雲端 CoachFlow")) {
-          return true;
+        // payload 帶到實際的 students/coaches 就視為成功（即使本地沒變更）
+        const hasRoster = (
+          (Array.isArray(payload?.students) && payload.students.length > 0) ||
+          (Array.isArray(payload?.coaches) && payload.coaches.length > 0) ||
+          (payload?.data && (
+            (Array.isArray(payload.data.students) && payload.data.students.length > 0) ||
+            (Array.isArray(payload.data.coaches) && payload.data.coaches.length > 0)
+          ))
+        );
+        const changed = syncCoachflowRosterFromPayload(payload, "雲端 CoachFlow");
+        if (changed || hasRoster) {
+          return changed;
         }
       } catch (error) {
         console.warn(`CoachFlow roster sync failed via ${attempt.action}:`, error);
