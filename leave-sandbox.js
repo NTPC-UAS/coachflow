@@ -2761,7 +2761,6 @@
       billingUpdatedBy: ""
     };
     state.students.push(created);
-    seedWeeklyLessonsForStudent(created.code, created.coachCode);
     ensureLessonCalendarEventIds();
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
