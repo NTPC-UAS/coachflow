@@ -3,32 +3,32 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#5A8A6D">
+  <meta name="theme-color" content="#8B5E3C">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260509-0011">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260509-0012">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
   <style>
     :root {
       /* Palette A — 苔綠 + 暖灰 */
-      --bg: #FAFAF7;
+      --bg: #FAF6F0;
       --card: #FFFFFF;
-      --line: #E5E5E0;
-      --line-soft: #EFEFEA;
-      --text: #1F2937;
-      --muted: #6B7280;
-      --brand: #5A8A6D;
-      --brand-deep: #4A7459;
-      --brand-soft: #E3EDE7;
-      --accent: #C9B286;
+      --line: #E5DCC9;
+      --line-soft: #EDE5D5;
+      --text: #2D241A;
+      --muted: #76685A;
+      --brand: #8B5E3C;
+      --brand-deep: #6B4524;
+      --brand-soft: #F0E5D5;
+      --accent: #B89070;
       --accent-soft: #F2EBDC;
-      --success: #67A37D;
-      --success-soft: #DEEEDF;
-      --warning: #DA8B4F;
-      --warning-soft: #FBE9D7;
+      --success: #6E9F73;
+      --success-soft: #E0EBE2;
+      --warning: #D89855;
+      --warning-soft: #FCEFD9;
       --danger: #B85959;
       --danger-soft: #F4DCDC;
     }
@@ -541,7 +541,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260509-0011&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260509-0012&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -749,10 +749,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260509-0011"></script>
-  <script src="leave-sandbox.js?v=20260509-0011"></script>
+  <script src="config.js?v=20260509-0012"></script>
+  <script src="leave-sandbox.js?v=20260509-0012"></script>
   <script>
-    const coachPwaVersion = "20260509-0011";
+    const coachPwaVersion = "20260509-0012";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");

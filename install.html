@@ -3,24 +3,24 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-  <meta name="theme-color" content="#5A8A6D">
+  <meta name="theme-color" content="#8B5E3C">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>安裝 CoachFlow</title>
-  <link rel="manifest" href="coachflow.webmanifest?v=20260509-0011">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260509-0012">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <style>
     :root {
-      --brand: #5A8A6D;
-      --brand-dark: #4A7459;
-      --ink: #1F2937;
-      --muted: #6B7280;
-      --line: #E5E5E0;
-      --warm: #E3EDE7;
-      --soft: #FAFAF7;
+      --brand: #8B5E3C;
+      --brand-dark: #6B4524;
+      --ink: #2D241A;
+      --muted: #76685A;
+      --line: #E5DCC9;
+      --warm: #F0E5D5;
+      --soft: #FAF6F0;
       --card: #ffffff;
     }
 
@@ -33,7 +33,7 @@
       min-height: 100vh;
       font-family: "Noto Sans TC", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
       color: var(--ink);
-      background: linear-gradient(145deg, #E3EDE7 0%, #ffffff 46%, #eff6ff 100%);
+      background: linear-gradient(145deg, #F0E5D5 0%, #ffffff 46%, #eff6ff 100%);
     }
 
     main {
@@ -99,7 +99,7 @@
     .button {
       width: 100%;
       min-height: 52px;
-      border: 1px solid #D4D4CC;
+      border: 1px solid #D4C8B3;
       border-radius: 8px;
       padding: 12px 16px;
       background: #fff;
@@ -135,7 +135,7 @@
       border-radius: 8px;
       background: var(--warm);
       padding: 14px 16px;
-      color: #4A7459;
+      color: #6B4524;
       line-height: 1.7;
     }
 
@@ -199,13 +199,13 @@
 
       <div class="actions">
         <button class="primary" id="install-btn" type="button" hidden>安裝到手機</button>
-        <a class="button" href="index.html?v=20260509-0011&source=install">開啟 CoachFlow</a>
+        <a class="button" href="index.html?v=20260509-0012&source=install">開啟 CoachFlow</a>
       </div>
 
       <div class="role-grid" aria-label="快速開啟">
-        <a class="button" href="student.html?v=20260509-0011&source=install">學生入口</a>
-        <a class="button" href="coach.html?v=20260509-0011&source=install">教練入口</a>
-        <a class="button" href="admin.html?v=20260509-0011&source=install">管理入口</a>
+        <a class="button" href="student.html?v=20260509-0012&source=install">學生入口</a>
+        <a class="button" href="coach.html?v=20260509-0012&source=install">教練入口</a>
+        <a class="button" href="admin.html?v=20260509-0012&source=install">管理入口</a>
       </div>
     </section>
 
@@ -221,7 +221,7 @@
   </main>
 
   <script>
-    const version = "20260509-0011";
+    const version = "20260509-0012";
     let deferredPrompt = null;
     const installBtn = document.getElementById("install-btn");
     const installStatus = document.getElementById("install-status");

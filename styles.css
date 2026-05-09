@@ -1,26 +1,26 @@
 :root {
   /* Palette A — 苔綠 + 暖灰 */
-  --bg: #FAFAF7;
-  --bg-accent: #F0EFEA;
+  --bg: #FAF6F0;
+  --bg-accent: #F0E8DA;
   --surface: #FFFFFF;
   --surface-strong: #FFFFFF;
-  --line: #E5E5E0;
-  --line-strong: #D4D4CC;
-  --line-soft: #EFEFEA;
-  --text: #1F2937;
-  --ink: #1F2937;
-  --ink-soft: #374151;
-  --muted: #6B7280;
-  --muted-soft: #9CA3AF;
-  --brand: #5A8A6D;
-  --brand-deep: #4A7459;
-  --brand-soft: #E3EDE7;
-  --accent: #C9B286;
+  --line: #E5DCC9;
+  --line-strong: #D4C8B3;
+  --line-soft: #EDE5D5;
+  --text: #2D241A;
+  --ink: #2D241A;
+  --ink-soft: #4A3D2E;
+  --muted: #76685A;
+  --muted-soft: #A0907D;
+  --brand: #8B5E3C;
+  --brand-deep: #6B4524;
+  --brand-soft: #F0E5D5;
+  --accent: #B89070;
   --accent-soft: #F2EBDC;
-  --success: #67A37D;
-  --success-soft: #DEEEDF;
-  --warning: #DA8B4F;
-  --warning-soft: #FBE9D7;
+  --success: #6E9F73;
+  --success-soft: #E0EBE2;
+  --warning: #D89855;
+  --warning-soft: #FCEFD9;
   --danger: #B85959;
   --danger-soft: #F4DCDC;
   --shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
@@ -39,7 +39,7 @@ body {
   font-family: "Noto Sans TC", sans-serif;
   background:
     radial-gradient(circle at top left, rgba(255, 255, 255, 0.7), transparent 24%),
-    linear-gradient(160deg, #FAFAF7 0%, #F0EFEA 100%);
+    linear-gradient(160deg, #FAF6F0 0%, #F0E8DA 100%);
 }
 
 button,
