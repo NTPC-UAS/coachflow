@@ -2907,10 +2907,48 @@
     const startAt = lesson.startAt;
     const endAt = new Date(new Date(startAt).getTime() + 60 * 60 * 1000).toISOString();
     const calendarPayload = getCalendarPayloadForCoach(lesson.coachCode);
+
+    // 自動為補課 lesson 產生 description（含原請假課程時間、補課單號），讓教練在
+    // Google 日曆事件詳情頁能直接看到「這堂是補哪一筆請假」。
+    // 重排 lesson 的 description 由呼叫端透過 extra.description 帶入。
+    let autoDescription = "";
+    if (lesson.sourceType === "MAKEUP") {
+      const makeupReq = (state.makeupRequests || []).find((req) => (
+        req &&
+        req.studentCode === lesson.studentCode &&
+        req.coachCode === lesson.coachCode &&
+        String(req.startAt) === String(startAt) &&
+        (req.status === "approved" || req.lessonId === lesson.id)
+      ));
+      const studentLabel = `${student?.name || lesson.studentCode}（${lesson.studentCode}）`;
+      const coachLabel = `${coach?.name || lesson.coachCode}（${lesson.coachCode}）`;
+      let originalLessonTimeText = "(未知)";
+      let leaveCode = "-";
+      let makeupCode = "-";
+      if (makeupReq) {
+        const originalLeaveLesson = getLessonById(makeupReq.lessonId);
+        if (originalLeaveLesson?.startAt) {
+          originalLessonTimeText = formatDateTime(originalLeaveLesson.startAt);
+        }
+        leaveCode = String(makeupReq.leaveId || "-").trim() || "-";
+        makeupCode = String(makeupReq.code || makeupReq.id || "-").trim() || "-";
+      }
+      autoDescription = [
+        "【補課】",
+        `學生：${studentLabel}`,
+        `教練：${coachLabel}`,
+        `原請假時段：${originalLessonTimeText}`,
+        `對應請假單號：${leaveCode}`,
+        `補課申請編號：${makeupCode}`,
+        `補課課程編號：${lesson.id}`
+      ].join("\n");
+    }
+
     return {
       lessonId: lesson.id,
       eventId: lesson.calendarEventId || "",
       title: `${lesson.sourceType === "MAKEUP" ? "補課" : "課程"} ${student?.name || lesson.studentCode} / ${coach?.name || lesson.coachCode}`,
+      description: autoDescription,
       startAt,
       endAt,
       studentCode: lesson.studentCode,
@@ -4185,7 +4223,7 @@
     addLog(`[日曆同步] 已依 Google 日曆移除課程 ${lesson.id}（${formatDateTime(lesson.startAt)}）。`);
   }
 
-  async function tryCreateCalendarEventForLesson(lesson, reason, strictMode) {
+  async function tryCreateCalendarEventForLesson(lesson, reason, strictMode, extras = {}) {
     if (isNormalLeaveCalendarCreateBlocked({
       reason,
       attendanceStatus: lesson?.attendanceStatus,
@@ -4196,7 +4234,7 @@
     }
     const previousEventId = lesson.calendarEventId || "";
     try {
-      const result = await callAppsScriptApi("createEvent", buildLessonEventPayload(lesson, { reason }));
+      const result = await callAppsScriptApi("createEvent", buildLessonEventPayload(lesson, { reason, ...extras }));
       const createdEventId = String(result?.eventId || result?.calendarEventId || lesson.calendarEventId || newId("GCAL")).trim();
       lesson.calendarEventId = createdEventId;
       if (!result?.mock) {
@@ -6644,10 +6682,21 @@
     saveState();
     renderAll();
 
-    // (3) 建新 Google event
+    // (3) 建新 Google event，附上「原時段 → 新時段」的 description 寫進 event 詳情
+    const rescheduleDescription = [
+      "【課程時間調整】",
+      `學生：${getStudentDisplayName(lesson.studentCode)}（${lesson.studentCode}）`,
+      `教練：${getCoachByCode(lesson.coachCode)?.name || lesson.coachCode}（${lesson.coachCode}）`,
+      `原時段：${formatDateTime(oldStartAt)}`,
+      `新時段：${formatDateTime(nextStartAt)}`,
+      `課程編號：${lesson.id}`,
+      `調整時間：${formatDateTime(new Date().toISOString())}`
+    ].join("\n");
     let createdEventId = "";
     try {
-      createdEventId = await tryCreateCalendarEventForLesson(lesson, "coach_reschedule_new", false);
+      createdEventId = await tryCreateCalendarEventForLesson(lesson, "coach_reschedule_new", false, {
+        description: rescheduleDescription
+      });
     } catch (error) {
       addLog(`[Google日曆] 調整時間：建立新事件失敗 ${lesson.id}：${String(error?.message || error)}`);
     }
