@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260509-0009";
+const PUBLIC_APP_VERSION = "20260509-0010";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -4692,8 +4692,8 @@ function syncCoachAccessUI() {
   }
 
   coachPanelsWrap.forEach((panel) => {
-    panel.style.display = hasCoach && panel.classList.contains("is-active") ? "" : "none";
-    panel.hidden = !hasCoach || !panel.classList.contains("is-active");
+    panel.style.display = hasCoach ? "" : "none";
+    panel.hidden = !hasCoach;
   });
 }
 
