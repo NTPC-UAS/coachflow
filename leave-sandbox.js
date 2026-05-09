@@ -2845,10 +2845,6 @@
       if (before !== after) {
         changed = true;
       }
-      if (!state.lessons.some((lesson) => lesson.studentCode === studentCode && lesson.sourceType === "REGULAR")) {
-        seedWeeklyLessonsForStudent(studentCode, fallbackCoachCode);
-        changed = true;
-      }
     });
 
     if (changed) {
