@@ -3352,6 +3352,25 @@
   function alignCoachLessonsWithGoogleEvents(coachCode, events) {
     const usedLessonIds = new Set();
     const eventIdToLessons = new Map();
+    // Build a separate index of MAKEUP lessons' Google event IDs. These
+    // events are tracked by their own MAKEUP lesson record (which is NOT a
+    // Google-sync lesson); align logic must NOT let those events fall back
+    // to "closest regular lesson for student" — it stole leave-normal
+    // lesson startAt and triggered downstream compensation tasks that
+    // ended up deleting the makeup event itself.
+    // 上線案例：ZO006 5/9 補課 event 把 leave 原 lesson 的 startAt 從
+    // 14:00 拉到 11:00，後續 compensation task retry 用 11:00 找到補課
+    // event 並刪掉它，coach 才看不到補課。
+    const makeupEventIds = new Set();
+    state.lessons.forEach((lesson) => {
+      if (lesson.coachCode !== coachCode || !isLessonAfterTrackingDataReset(lesson)) {
+        return;
+      }
+      if (lesson.sourceType === "MAKEUP") {
+        const mk = normalizeCalendarEventId(lesson.calendarEventId);
+        if (mk) makeupEventIds.add(mk);
+      }
+    });
     state.lessons.forEach((lesson) => {
       if (lesson.coachCode !== coachCode || !isGoogleSyncLesson(lesson) || !isLessonAfterTrackingDataReset(lesson)) {
         return;
@@ -3372,6 +3391,7 @@
     let createdGoogleStudents = 0;
     let skippedUnmatchedStudent = 0;
     let skippedNonLessonEvent = 0;
+    let skippedMakeupClaimed = 0;
 
     const maxRelinkDistanceMs = Math.max(1, Number(window.APP_CONFIG?.googleRelinkMaxHours || 12)) * 60 * 60 * 1000;
     const sortedEvents = [...events]
@@ -3392,6 +3412,15 @@
       const durationMs = new Date(String(event?.endAt || "")).getTime() - new Date(startAt).getTime();
       if (!Number.isFinite(durationMs) || durationMs <= 0 || durationMs > 4 * 60 * 60 * 1000) {
         skippedNonLessonEvent += 1;
+        return;
+      }
+      // 若這個 event 已經被某個 MAKEUP lesson 認領，不要讓它再去 fallback
+      // 拉「最接近的常規 lesson」。否則補課事件會把 leave/regular lesson 的
+      // startAt 拉到補課時間，連帶讓後續 compensation task 用錯時間刪掉
+      // 補課事件本身。
+      const eventIdNorm = normalizeCalendarEventId(eventId);
+      if (makeupEventIds.has(eventIdNorm)) {
+        skippedMakeupClaimed += 1;
         return;
       }
 
@@ -3462,6 +3491,7 @@
       createdGoogleStudents,
       skippedUnmatchedStudent,
       skippedNonLessonEvent,
+      skippedMakeupClaimed,
       matchedLessonIds: Array.from(usedLessonIds)
     };
   }
