@@ -6751,7 +6751,7 @@
       lesson &&
       lesson.attendanceStatus === "scheduled" &&
       lesson.calendarOccupied &&
-      isGoogleSyncLesson(lesson) &&
+      (isGoogleSyncLesson(lesson) || lesson?.sourceType === "MAKEUP") &&
       isLessonPastForStudent(lesson)
     );
   }
