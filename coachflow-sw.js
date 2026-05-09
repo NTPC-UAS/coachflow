@@ -1,4 +1,4 @@
-const COACHFLOW_PWA_VERSION = "20260507-0006";
+const COACHFLOW_PWA_VERSION = "20260509-0005";
 const CACHE_NAME = `coachflow-system-${COACHFLOW_PWA_VERSION}`;
 const CORE_ASSETS = [
   "./",
@@ -7,9 +7,12 @@ const CORE_ASSETS = [
   `./coach.html?v=${COACHFLOW_PWA_VERSION}`,
   `./student.html?v=${COACHFLOW_PWA_VERSION}`,
   `./install.html?v=${COACHFLOW_PWA_VERSION}`,
+  `./leave-coach-sandbox.html?v=${COACHFLOW_PWA_VERSION}`,
+  `./leave-student-sandbox.html?v=${COACHFLOW_PWA_VERSION}`,
   `./styles.css?v=${COACHFLOW_PWA_VERSION}`,
   `./config.js?v=${COACHFLOW_PWA_VERSION}`,
   `./app.js?v=${COACHFLOW_PWA_VERSION}`,
+  `./leave-sandbox.js?v=${COACHFLOW_PWA_VERSION}`,
   `./coachflow.webmanifest?v=${COACHFLOW_PWA_VERSION}`,
   "./coachflow-coach-icon-192.png",
   "./coachflow-coach-icon-512.png",
