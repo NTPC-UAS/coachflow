@@ -7214,9 +7214,19 @@
         ? (readOnly ? "" : renderCalendarItem(`教練請假 ${blocks.length}`))
         : "";
 
+      let mobileSummary = "";
+      if (!readOnly) {
+        const summaryParts = [];
+        summaryParts.push(lessons.length > 0 ? `${lessons.length} 堂` : "無課");
+        if (pendings.length) summaryParts.push(`待審 ${pendings.length}`);
+        if (blocks.length) summaryParts.push("教練請假");
+        mobileSummary = `<div class="cal-mobile-summary">${summaryParts.join(" · ")}</div>`;
+      }
+
       html += `
           <div class="${classNames}" data-coach-cal-date="${dateKey}" style="${gridPlacement}">
             <div class="cal-date-row"><div class="cal-date">${dayNumber}</div>${todayBadge}</div>
+          ${mobileSummary}
           ${lessonSnippets || (readOnly ? "" : renderCalendarItem("無課程"))}
           ${lessonMoreSnippet}
           ${pendingSnippet}

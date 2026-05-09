@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260509-0007">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260509-0008">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -309,6 +309,7 @@
       background: #fff7ed;
       font-weight: 800;
     }
+    .cal-mobile-summary { display: none; }
     .day-detail { margin-top: 10px; border: 1px solid #f2c9a5; border-radius: 10px; padding: 10px; background: #fffdfa; }
     .day-detail h3 { margin: 0 0 8px; font-size: 16px; color: #9a3412; }
     .modal {
@@ -476,6 +477,42 @@
       body.coach-readonly-mode .readonly-period-label {
         font-size: 9px;
       }
+      body:not(.coach-readonly-mode) .cal-cell {
+        min-height: 64px;
+        padding: 5px 4px;
+        gap: 4px;
+      }
+      body:not(.coach-readonly-mode) .cal-cell > .cal-item {
+        display: none;
+      }
+      body:not(.coach-readonly-mode) .cal-cell > .cal-mobile-summary {
+        display: block;
+        font-size: 11px;
+        line-height: 1.3;
+        color: #9a3412;
+        padding: 4px 5px;
+        text-align: center;
+        background: #fff7ed;
+        border: 1px solid #fdba74;
+        border-radius: 7px;
+        font-weight: 700;
+        overflow: hidden;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      body:not(.coach-readonly-mode) .cal-cell.no-lessons > .cal-mobile-summary {
+        background: transparent;
+        border-color: #f3e2d0;
+        color: #94a3b8;
+        font-weight: 500;
+      }
+      body:not(.coach-readonly-mode) .cal-date {
+        font-size: 12px;
+      }
+      body:not(.coach-readonly-mode) .today-badge {
+        font-size: 9px;
+        padding: 1px 5px;
+      }
     }
   </style>
 </head>
@@ -492,7 +529,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260509-0007&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260509-0008&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -700,10 +737,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260509-0007"></script>
-  <script src="leave-sandbox.js?v=20260509-0007"></script>
+  <script src="config.js?v=20260509-0008"></script>
+  <script src="leave-sandbox.js?v=20260509-0008"></script>
   <script>
-    const coachPwaVersion = "20260509-0007";
+    const coachPwaVersion = "20260509-0008";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");
