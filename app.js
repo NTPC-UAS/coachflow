@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260509-0013";
+const PUBLIC_APP_VERSION = "20260509-0014";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -1723,6 +1723,7 @@ async function init() {
     cleanupRedundantBlankPrograms();
   }
   bindEvents();
+  setupCoachSubTabDropdown();
 
   if (APP_MODE === "admin") {
     refreshAdminWorkspace();
@@ -2875,6 +2876,7 @@ function switchCoachPanel(panelId) {
   if (APP_MODE === "student" && currentStudentId) {
     loadStudentProgram({ silent: true });
   }
+  syncCoachSubTabDropdown();
 }
 
 async function syncCloudWorkspaceOnActivate() {
@@ -5797,6 +5799,89 @@ function applyCoachViewMode() {
   els.coachGlobalViewMobileButton?.classList.toggle("is-active", isMobile);
   syncForcedMobileLayoutControls();
   applyCoachHistoryVisibility();
+  syncCoachSubTabDropdown();
+}
+
+function setupCoachSubTabDropdown() {
+  const subTabs = document.querySelector("#coach-panel .sub-tabs");
+  if (!subTabs) return;
+  if (subTabs.parentNode.querySelector(".sub-tab-dropdown")) return;
+  const buttons = Array.from(subTabs.querySelectorAll("button"));
+  if (!buttons.length) return;
+
+  const dropdown = document.createElement("div");
+  dropdown.className = "sub-tab-dropdown";
+
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "sub-tab-dropdown-trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  trigger.innerHTML = '<span><span class="label">目前在：</span><span class="value">建立課表</span></span><span class="chevron">▾</span>';
+
+  const list = document.createElement("div");
+  list.className = "sub-tab-dropdown-list";
+  list.setAttribute("role", "listbox");
+
+  buttons.forEach((btn) => {
+    if (btn.id === "open-coach-leave-system-tab") {
+      const divider = document.createElement("div");
+      divider.className = "sub-tab-dropdown-divider";
+      list.appendChild(divider);
+    }
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "sub-tab-dropdown-item";
+    item.dataset.targetTab = btn.dataset.coachTab || btn.id || "";
+    item.textContent = btn.textContent.trim();
+    item.addEventListener("click", () => {
+      dropdown.classList.remove("is-open");
+      trigger.setAttribute("aria-expanded", "false");
+      btn.click();
+    });
+    list.appendChild(item);
+  });
+
+  trigger.addEventListener("click", (e) => {
+    e.stopPropagation();
+    const isOpen = dropdown.classList.toggle("is-open");
+    trigger.setAttribute("aria-expanded", isOpen ? "true" : "false");
+  });
+
+  document.addEventListener("click", (e) => {
+    if (!dropdown.contains(e.target)) {
+      dropdown.classList.remove("is-open");
+      trigger.setAttribute("aria-expanded", "false");
+    }
+  });
+
+  dropdown.appendChild(trigger);
+  dropdown.appendChild(list);
+  subTabs.parentNode.insertBefore(dropdown, subTabs);
+
+  syncCoachSubTabDropdown();
+}
+
+function syncCoachSubTabDropdown() {
+  const subTabs = document.querySelector("#coach-panel .sub-tabs");
+  const dropdown = document.querySelector("#coach-panel .sub-tab-dropdown")
+    || document.querySelector(".sub-tab-dropdown");
+  if (!subTabs || !dropdown) return;
+  const buttons = Array.from(subTabs.querySelectorAll("button"));
+  const items = Array.from(dropdown.querySelectorAll(".sub-tab-dropdown-item"));
+  const valueEl = dropdown.querySelector(".value");
+  const activeBtn = buttons.find((btn) => btn.classList.contains("is-active"))
+    || buttons.find((btn) => !btn.hidden && btn.style.display !== "none");
+  if (valueEl && activeBtn) {
+    valueEl.textContent = activeBtn.textContent.trim();
+  }
+  buttons.forEach((btn, i) => {
+    const item = items[i];
+    if (!item) return;
+    item.classList.toggle("is-active", btn.classList.contains("is-active"));
+    const hidden = btn.hidden || btn.style.display === "none";
+    item.style.display = hidden ? "none" : "";
+  });
 }
 
 function toggleCoachHistoryResults() {
