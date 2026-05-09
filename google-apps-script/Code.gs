@@ -1454,6 +1454,12 @@ function findSingleOccurrenceForDelete_(calendar, payload, rawEventId) {
   let bestScore = -1;
   let tied = false;
 
+  // 若呼叫端提供了 requestedId（leave 紀錄裡的 calendarEventId），就嚴格只接受
+  // ID 相符的 event。學生姓名 + 時間 fallback 在這個情境下會誤殺別的事件 ——
+  // 已上線案例：ZO006 leave 的舊 lesson eventId 已不存在於 Google，但同一天
+  // 11:00 有補課事件，sync 嘗試刪 leave 的 event 時，學生姓名匹配成功、時間
+  // 也對得上 (因為 lesson.startAt 被 align 拉到補課時間)，就把補課事件刪掉了。
+  const hasRequestedId = Boolean(requestedId);
   for (var i = 0; i < events.length; i += 1) {
     const event = events[i];
     const eventId = normalizeCalendarEventId_(event.getId());
@@ -1466,7 +1472,9 @@ function findSingleOccurrenceForDelete_(calendar, payload, rawEventId) {
     );
     const timeMatched = startDiff <= 2 * 60 * 1000;
     const looseTimeMatched = startDiff <= 15 * 60 * 1000;
-    const accepted = (idMatched && looseTimeMatched) || (studentMatched && timeMatched);
+    const accepted = hasRequestedId
+      ? (idMatched && looseTimeMatched)
+      : (studentMatched && timeMatched);
     if (!accepted) {
       continue;
     }

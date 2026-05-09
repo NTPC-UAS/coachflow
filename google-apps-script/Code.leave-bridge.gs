@@ -519,6 +519,11 @@ function findSingleOccurrenceForDelete_(calendar, payload, rawEventId) {
   let bestScore = -1;
   let tied = false;
 
+  // When the caller provided an explicit eventId, require it to match.
+  // Falling back to "student name + time" alone has caused makeup events
+  // to be deleted when a stale leave-event delete attempt landed on them
+  // by name + time coincidence. ID match stays the source of truth.
+  const hasRequestedId = Boolean(requestedId);
   for (var i = 0; i < events.length; i += 1) {
     const event = events[i];
     const eventId = normalizeCalendarEventId_(event.getId());
@@ -531,7 +536,9 @@ function findSingleOccurrenceForDelete_(calendar, payload, rawEventId) {
     );
     const timeMatched = startDiff <= 2 * 60 * 1000;
     const looseTimeMatched = startDiff <= 15 * 60 * 1000;
-    const accepted = (idMatched && looseTimeMatched) || (studentMatched && timeMatched);
+    const accepted = hasRequestedId
+      ? (idMatched && looseTimeMatched)
+      : (studentMatched && timeMatched);
     if (!accepted) {
       continue;
     }
