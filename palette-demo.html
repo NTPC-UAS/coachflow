@@ -1,0 +1,579 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+  <title>CoachFlow 設計試色 — Palette A 苔綠</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      /* palette A — 苔綠 + 暖灰 */
+      --bg: #FAFAF7;
+      --surface: #FFFFFF;
+      --border: #E5E5E0;
+      --border-soft: #EFEFEA;
+      --primary: #5A8A6D;
+      --primary-hover: #4A7459;
+      --primary-soft: #E3EDE7;
+      --accent: #C9B286;
+      --accent-soft: #F2EBDC;
+      --success: #67A37D;
+      --success-soft: #DEEEDF;
+      --warning: #DA8B4F;
+      --warning-soft: #FBE9D7;
+      --danger: #B85959;
+      --danger-soft: #F4DCDC;
+      --ink: #1F2937;
+      --ink-soft: #374151;
+      --muted: #6B7280;
+      --muted-soft: #9CA3AF;
+
+      /* spacing */
+      --space-1: 4px;
+      --space-2: 8px;
+      --space-3: 12px;
+      --space-4: 16px;
+      --space-5: 24px;
+      --space-6: 32px;
+      --space-7: 48px;
+
+      /* radius */
+      --radius-sm: 6px;
+      --radius-md: 12px;
+      --radius-lg: 20px;
+      --radius-pill: 999px;
+
+      /* shadow */
+      --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+      --shadow-md: 0 2px 10px rgba(15, 23, 42, 0.06);
+      --shadow-lg: 0 6px 24px rgba(15, 23, 42, 0.08);
+
+      /* font */
+      --font-xs: 11px;
+      --font-sm: 13px;
+      --font-md: 15px;
+      --font-lg: 18px;
+      --font-xl: 22px;
+      --font-2xl: 28px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: "Noto Sans TC", -apple-system, BlinkMacSystemFont, sans-serif;
+      background: var(--bg);
+      color: var(--ink);
+      font-size: var(--font-md);
+      line-height: 1.55;
+      padding: var(--space-5) var(--space-4);
+    }
+
+    .shell {
+      max-width: 920px;
+      margin: 0 auto;
+      display: grid;
+      gap: var(--space-6);
+    }
+
+    .page-head {
+      text-align: center;
+      padding: var(--space-5) 0 var(--space-2);
+    }
+    .page-head h1 {
+      font-size: var(--font-2xl);
+      font-weight: 800;
+      color: var(--ink);
+      letter-spacing: 0.5px;
+    }
+    .page-head p {
+      color: var(--muted);
+      font-size: var(--font-sm);
+      margin-top: var(--space-2);
+    }
+
+    section.demo {
+      display: grid;
+      gap: var(--space-4);
+    }
+    .section-title {
+      font-size: var(--font-lg);
+      font-weight: 700;
+      color: var(--ink);
+      padding-bottom: var(--space-2);
+      border-bottom: 2px solid var(--primary-soft);
+    }
+    .section-note {
+      font-size: var(--font-sm);
+      color: var(--muted);
+    }
+
+    /* ===== 色票 ===== */
+    .swatches {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+      gap: var(--space-3);
+    }
+    .swatch {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      overflow: hidden;
+      box-shadow: var(--shadow-sm);
+    }
+    .swatch-color {
+      height: 80px;
+    }
+    .swatch-meta {
+      padding: var(--space-2) var(--space-3);
+      font-size: var(--font-xs);
+    }
+    .swatch-name { font-weight: 700; color: var(--ink); }
+    .swatch-hex { color: var(--muted); margin-top: 2px; font-family: monospace; }
+
+    /* ===== Card / Component ===== */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-4);
+      box-shadow: var(--shadow-sm);
+    }
+    .card-stack { display: grid; gap: var(--space-3); }
+    .card-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: var(--space-3);
+      margin-bottom: var(--space-3);
+    }
+    .card-title { font-size: var(--font-lg); font-weight: 700; }
+    .card-kicker { font-size: var(--font-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+
+    /* ===== 按鈕 ===== */
+    .btn-group { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    button, .btn {
+      font-family: inherit;
+      font-size: var(--font-md);
+      font-weight: 600;
+      padding: 10px 18px;
+      border-radius: var(--radius-sm);
+      border: 1px solid transparent;
+      cursor: pointer;
+      transition: all 0.15s ease;
+    }
+    .btn-primary {
+      background: var(--primary);
+      color: #fff;
+      border-color: var(--primary);
+    }
+    .btn-primary:hover { background: var(--primary-hover); border-color: var(--primary-hover); }
+    .btn-secondary {
+      background: transparent;
+      color: var(--primary);
+      border-color: var(--primary);
+    }
+    .btn-secondary:hover { background: var(--primary-soft); }
+    .btn-ghost {
+      background: transparent;
+      color: var(--ink-soft);
+      border-color: transparent;
+    }
+    .btn-ghost:hover { background: var(--border-soft); }
+    .btn-danger {
+      background: var(--danger);
+      color: #fff;
+      border-color: var(--danger);
+    }
+
+    /* ===== Status chips ===== */
+    .chips { display: flex; flex-wrap: wrap; gap: var(--space-2); }
+    .chip {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 4px 12px;
+      border-radius: var(--radius-pill);
+      font-size: var(--font-xs);
+      font-weight: 600;
+      border: 1px solid transparent;
+    }
+    .chip::before { content: ""; width: 6px; height: 6px; border-radius: 50%; background: currentColor; }
+    .chip.scheduled { background: var(--primary-soft); color: var(--primary-hover); }
+    .chip.makeup    { background: var(--success-soft); color: var(--success); }
+    .chip.pending   { background: var(--accent-soft); color: #8C7740; }
+    .chip.unpaid    { background: var(--warning-soft); color: #A85F23; }
+    .chip.danger    { background: var(--danger-soft); color: var(--danger); }
+    .chip.muted     { background: var(--border-soft); color: var(--muted); }
+
+    /* ===== 表單 ===== */
+    .form-grid { display: grid; gap: var(--space-3); }
+    label.field { display: grid; gap: 6px; font-size: var(--font-sm); font-weight: 500; color: var(--ink-soft); }
+    input, select, textarea {
+      font-family: inherit;
+      font-size: var(--font-md);
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      background: var(--surface);
+      color: var(--ink);
+      transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    }
+    input:focus, select:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+      box-shadow: 0 0 0 3px var(--primary-soft);
+    }
+
+    /* ===== Dashboard 範例 ===== */
+    .dashboard {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+      gap: var(--space-3);
+    }
+    .stat {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      padding: var(--space-4);
+      display: grid;
+      gap: 6px;
+    }
+    .stat-label { font-size: var(--font-xs); color: var(--muted); text-transform: uppercase; letter-spacing: 1px; }
+    .stat-value { font-size: var(--font-2xl); font-weight: 800; color: var(--ink); }
+    .stat-hint { font-size: var(--font-sm); color: var(--muted); }
+    .stat.is-warning { border-left: 4px solid var(--warning); }
+    .stat.is-success { border-left: 4px solid var(--success); }
+    .stat.is-primary { border-left: 4px solid var(--primary); }
+
+    /* ===== 學生 row ===== */
+    .student-list { display: grid; gap: var(--space-2); }
+    .student-row {
+      display: grid;
+      grid-template-columns: auto 1fr auto;
+      gap: var(--space-3);
+      align-items: center;
+      padding: var(--space-3);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+    }
+    .avatar {
+      width: 40px; height: 40px;
+      border-radius: 50%;
+      background: var(--primary-soft);
+      color: var(--primary-hover);
+      display: grid;
+      place-items: center;
+      font-weight: 700;
+      font-size: var(--font-sm);
+    }
+    .student-info { display: grid; gap: 2px; }
+    .student-name { font-weight: 700; }
+    .student-meta { font-size: var(--font-xs); color: var(--muted); display: flex; gap: 8px; flex-wrap: wrap; }
+
+    /* ===== Sub-tab dropdown ===== */
+    .subtab-mobile {
+      position: relative;
+      max-width: 360px;
+    }
+    .subtab-trigger {
+      width: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 14px 16px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      font-size: var(--font-md);
+      font-weight: 600;
+      color: var(--ink);
+      cursor: pointer;
+    }
+    .subtab-trigger .label { color: var(--muted); font-weight: 500; font-size: var(--font-sm); margin-right: 8px; }
+    .subtab-trigger .chevron { color: var(--primary); font-weight: 700; }
+    .subtab-list {
+      position: absolute;
+      left: 0; right: 0; top: calc(100% + 4px);
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-md);
+      overflow: hidden;
+      z-index: 5;
+    }
+    .subtab-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 12px 16px;
+      cursor: pointer;
+      font-size: var(--font-md);
+      color: var(--ink-soft);
+      border-bottom: 1px solid var(--border-soft);
+    }
+    .subtab-item:last-child { border-bottom: 0; }
+    .subtab-item:hover { background: var(--primary-soft); color: var(--primary-hover); }
+    .subtab-item.is-active { color: var(--primary); font-weight: 700; background: var(--primary-soft); }
+    .subtab-item .check { width: 14px; color: var(--primary); }
+    .subtab-item.divider { padding: 0; height: 1px; background: var(--border); pointer-events: none; }
+
+    /* ===== Calendar cell mobile ===== */
+    .calendar-preview {
+      display: grid;
+      grid-template-columns: repeat(7, 1fr);
+      gap: 1px;
+      background: var(--border);
+      border: 1px solid var(--border);
+      border-radius: var(--radius-sm);
+      overflow: hidden;
+      max-width: 360px;
+    }
+    .calendar-preview .head {
+      background: var(--bg);
+      text-align: center;
+      padding: 6px 0;
+      font-size: var(--font-xs);
+      font-weight: 700;
+      color: var(--muted);
+    }
+    .calendar-preview .cell {
+      background: var(--surface);
+      min-height: 64px;
+      padding: 5px;
+      font-size: var(--font-xs);
+      display: grid;
+      gap: 4px;
+      align-content: start;
+    }
+    .calendar-preview .cell.dim { background: var(--bg); color: var(--muted-soft); }
+    .calendar-preview .cell.today { box-shadow: inset 0 0 0 2px var(--primary); }
+    .calendar-preview .date { font-weight: 700; }
+    .calendar-preview .summary {
+      font-size: 11px;
+      padding: 4px 5px;
+      text-align: center;
+      background: var(--primary-soft);
+      border-radius: 6px;
+      color: var(--primary-hover);
+      font-weight: 600;
+    }
+    .calendar-preview .cell.no-lessons .summary { background: transparent; color: var(--muted); font-weight: 400; }
+    .calendar-preview .cell.has-pending .summary { background: var(--accent-soft); color: #8C7740; }
+
+    @media (max-width: 600px) {
+      :root { --font-2xl: 24px; }
+      body { padding: var(--space-3); }
+      .shell { gap: var(--space-5); }
+    }
+  </style>
+</head>
+<body>
+  <div class="shell">
+
+    <header class="page-head">
+      <h1>CoachFlow 設計試色</h1>
+      <p>Palette A — 苔綠 + 暖灰｜<a href="https://ntpc-uas.github.io/coachflow/" style="color: var(--primary);">回主系統</a></p>
+    </header>
+
+    <!-- 色票 -->
+    <section class="demo">
+      <h2 class="section-title">色票</h2>
+      <div class="swatches">
+        <div class="swatch"><div class="swatch-color" style="background:#FAFAF7"></div><div class="swatch-meta"><div class="swatch-name">底色 bg</div><div class="swatch-hex">#FAFAF7</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#FFFFFF"></div><div class="swatch-meta"><div class="swatch-name">純白 surface</div><div class="swatch-hex">#FFFFFF</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#5A8A6D"></div><div class="swatch-meta"><div class="swatch-name">主色 primary</div><div class="swatch-hex">#5A8A6D</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#C9B286"></div><div class="swatch-meta"><div class="swatch-name">次色 accent</div><div class="swatch-hex">#C9B286</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#67A37D"></div><div class="swatch-meta"><div class="swatch-name">成功 success</div><div class="swatch-hex">#67A37D</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#DA8B4F"></div><div class="swatch-meta"><div class="swatch-name">警告 warning</div><div class="swatch-hex">#DA8B4F</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#B85959"></div><div class="swatch-meta"><div class="swatch-name">危險 danger</div><div class="swatch-hex">#B85959</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#1F2937"></div><div class="swatch-meta"><div class="swatch-name">主文字 ink</div><div class="swatch-hex">#1F2937</div></div></div>
+        <div class="swatch"><div class="swatch-color" style="background:#6B7280"></div><div class="swatch-meta"><div class="swatch-name">輔文字 muted</div><div class="swatch-hex">#6B7280</div></div></div>
+      </div>
+    </section>
+
+    <!-- Dashboard 範例 -->
+    <section class="demo">
+      <h2 class="section-title">Dashboard 概況卡（首頁設計）</h2>
+      <div class="dashboard">
+        <div class="stat is-primary"><div class="stat-label">今日課程</div><div class="stat-value">3</div><div class="stat-hint">下一堂 14:00 朱朱</div></div>
+        <div class="stat is-warning"><div class="stat-label">待處理</div><div class="stat-value">2</div><div class="stat-hint">補課申請待核准</div></div>
+        <div class="stat is-success"><div class="stat-label">本週完成</div><div class="stat-value">8</div><div class="stat-hint">扣堂 8 / 排定 10</div></div>
+      </div>
+    </section>
+
+    <!-- 學生 row -->
+    <section class="demo">
+      <h2 class="section-title">學生 row（學生管理）</h2>
+      <div class="student-list">
+        <div class="student-row">
+          <div class="avatar">張</div>
+          <div class="student-info">
+            <div class="student-name">張昀</div>
+            <div class="student-meta"><span>每週一 10:00</span><span>•</span><span>累計 4 堂</span></div>
+          </div>
+          <span class="chip scheduled">已排定</span>
+        </div>
+        <div class="student-row">
+          <div class="avatar">Z</div>
+          <div class="student-info">
+            <div class="student-name">Zoe</div>
+            <div class="student-meta"><span>每週一 19:30</span><span>•</span><span>累計 3 堂</span></div>
+          </div>
+          <span class="chip makeup">補課完成</span>
+        </div>
+        <div class="student-row">
+          <div class="avatar">朱</div>
+          <div class="student-info">
+            <div class="student-name">朱朱</div>
+            <div class="student-meta"><span>每週六 14:00</span><span>•</span><span>累計 4 堂</span></div>
+          </div>
+          <span class="chip unpaid">待繳費</span>
+        </div>
+        <div class="student-row">
+          <div class="avatar">建</div>
+          <div class="student-info">
+            <div class="student-name">建名</div>
+            <div class="student-meta"><span>每週日 13:00</span><span>•</span><span>累計 2 堂</span></div>
+          </div>
+          <span class="chip pending">補課待審</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- 按鈕 -->
+    <section class="demo">
+      <h2 class="section-title">按鈕</h2>
+      <div class="card">
+        <div class="btn-group">
+          <button class="btn btn-primary">主要動作</button>
+          <button class="btn btn-secondary">次要動作</button>
+          <button class="btn btn-ghost">取消</button>
+          <button class="btn btn-danger">刪除</button>
+        </div>
+      </div>
+    </section>
+
+    <!-- 狀態 chips -->
+    <section class="demo">
+      <h2 class="section-title">狀態標籤</h2>
+      <div class="card">
+        <div class="chips">
+          <span class="chip scheduled">已排定</span>
+          <span class="chip makeup">補課完成</span>
+          <span class="chip pending">待審</span>
+          <span class="chip unpaid">待繳費</span>
+          <span class="chip danger">逾期</span>
+          <span class="chip muted">已取消</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Sub-tab dropdown 預覽 -->
+    <section class="demo">
+      <h2 class="section-title">Sub-tab Dropdown（手機版）</h2>
+      <p class="section-note">點下方按鈕展開選單。實際版本桌機保留橫排 6 個 tab。</p>
+      <div class="subtab-mobile" id="subtab">
+        <button class="subtab-trigger" id="trigger">
+          <span><span class="label">目前在：</span><span id="trigger-text">教練管理</span></span>
+          <span class="chevron">▼</span>
+        </button>
+        <div class="subtab-list" id="list" style="display: none;">
+          <div class="subtab-item" data-name="建立課表">建立課表</div>
+          <div class="subtab-item is-active" data-name="教練管理"><span class="check">✓</span>教練管理</div>
+          <div class="subtab-item" data-name="學生管理">學生管理</div>
+          <div class="subtab-item" data-name="本週紀錄">本週紀錄</div>
+          <div class="subtab-item" data-name="歷史查詢">歷史查詢</div>
+          <div class="subtab-item divider"></div>
+          <div class="subtab-item" data-name="請假系統 →">請假系統 →</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- 表單 -->
+    <section class="demo">
+      <h2 class="section-title">表單</h2>
+      <div class="card">
+        <div class="form-grid">
+          <label class="field">學生姓名<input type="text" placeholder="例如：王小明" value="張昀"></label>
+          <label class="field">課表日期<input type="date" value="2026-05-15"></label>
+          <label class="field">付款狀態
+            <select>
+              <option>已繳費</option>
+              <option selected>待繳費</option>
+              <option>未確認</option>
+            </select>
+          </label>
+          <label class="field">備註<textarea rows="2" placeholder="輸入備註"></textarea></label>
+        </div>
+      </div>
+    </section>
+
+    <!-- 月曆 cell 預覽 -->
+    <section class="demo">
+      <h2 class="section-title">月曆儲存格（手機版）</h2>
+      <p class="section-note">每格只顯示「N 堂」精簡 chip，點某天用月曆下方 detail panel 看完整資訊。</p>
+      <div class="calendar-preview">
+        <div class="head">日</div><div class="head">一</div><div class="head">二</div><div class="head">三</div><div class="head">四</div><div class="head">五</div><div class="head">六</div>
+
+        <div class="cell dim"><div class="date">26</div></div>
+        <div class="cell"><div class="date">27</div><div class="summary">2 堂</div></div>
+        <div class="cell no-lessons"><div class="date">28</div><div class="summary">無課</div></div>
+        <div class="cell"><div class="date">29</div><div class="summary">3 堂</div></div>
+        <div class="cell"><div class="date">30</div><div class="summary">2 堂</div></div>
+        <div class="cell no-lessons"><div class="date">1</div><div class="summary">無課</div></div>
+        <div class="cell"><div class="date">2</div><div class="summary">5 堂</div></div>
+
+        <div class="cell"><div class="date">3</div><div class="summary">3 堂</div></div>
+        <div class="cell today"><div class="date">4</div><div class="summary">3 堂</div></div>
+        <div class="cell no-lessons"><div class="date">5</div><div class="summary">無課</div></div>
+        <div class="cell has-pending"><div class="date">6</div><div class="summary">2 堂 · 待審</div></div>
+        <div class="cell"><div class="date">7</div><div class="summary">3 堂</div></div>
+        <div class="cell no-lessons"><div class="date">8</div><div class="summary">無課</div></div>
+        <div class="cell"><div class="date">9</div><div class="summary">5 堂</div></div>
+      </div>
+    </section>
+
+    <footer class="page-head" style="padding-top: var(--space-4);">
+      <p>覺得這個方向 OK 就回我「<strong>套用 Palette A</strong>」，我會把它套到主系統 + 請假系統</p>
+    </footer>
+  </div>
+
+  <script>
+    const trigger = document.getElementById("trigger");
+    const list = document.getElementById("list");
+    const triggerText = document.getElementById("trigger-text");
+    let open = false;
+
+    trigger.addEventListener("click", () => {
+      open = !open;
+      list.style.display = open ? "block" : "none";
+    });
+
+    list.addEventListener("click", (e) => {
+      const item = e.target.closest(".subtab-item");
+      if (!item || item.classList.contains("divider")) return;
+      list.querySelectorAll(".subtab-item").forEach(el => el.classList.remove("is-active"));
+      item.classList.add("is-active");
+      triggerText.textContent = item.dataset.name;
+      // re-render check icon
+      list.querySelectorAll(".subtab-item .check").forEach(el => el.remove());
+      const check = document.createElement("span");
+      check.className = "check";
+      check.textContent = "✓";
+      item.prepend(check);
+      open = false;
+      list.style.display = "none";
+    });
+
+    document.addEventListener("click", (e) => {
+      if (!document.getElementById("subtab").contains(e.target)) {
+        open = false;
+        list.style.display = "none";
+      }
+    });
+  </script>
+</body>
+</html>
