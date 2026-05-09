@@ -1,17 +1,31 @@
 :root {
-  --bg: #f3efe8;
-  --bg-accent: #e7dfd1;
-  --surface: rgba(255, 252, 247, 0.94);
-  --surface-strong: #fffdfa;
-  --line: rgba(58, 46, 34, 0.12);
-  --line-strong: rgba(58, 46, 34, 0.24);
-  --text: #29231c;
-  --ink: #2f241c;
-  --ink-soft: #6e604f;
-  --muted: #706253;
-  --brand: #b0612c;
-  --brand-deep: #8a4316;
-  --shadow: 0 22px 70px rgba(71, 52, 29, 0.12);
+  /* Palette A — 苔綠 + 暖灰 */
+  --bg: #FAFAF7;
+  --bg-accent: #F0EFEA;
+  --surface: #FFFFFF;
+  --surface-strong: #FFFFFF;
+  --line: #E5E5E0;
+  --line-strong: #D4D4CC;
+  --line-soft: #EFEFEA;
+  --text: #1F2937;
+  --ink: #1F2937;
+  --ink-soft: #374151;
+  --muted: #6B7280;
+  --muted-soft: #9CA3AF;
+  --brand: #5A8A6D;
+  --brand-deep: #4A7459;
+  --brand-soft: #E3EDE7;
+  --accent: #C9B286;
+  --accent-soft: #F2EBDC;
+  --success: #67A37D;
+  --success-soft: #DEEEDF;
+  --warning: #DA8B4F;
+  --warning-soft: #FBE9D7;
+  --danger: #B85959;
+  --danger-soft: #F4DCDC;
+  --shadow: 0 6px 24px rgba(15, 23, 42, 0.06);
+  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.04);
+  --shadow-md: 0 2px 10px rgba(15, 23, 42, 0.06);
 }
 
 * {
@@ -24,8 +38,8 @@ body {
   color: var(--text);
   font-family: "Noto Sans TC", sans-serif;
   background:
-    radial-gradient(circle at top left, rgba(255, 255, 255, 0.9), transparent 24%),
-    linear-gradient(160deg, #f7f1e8 0%, #ece2d4 100%);
+    radial-gradient(circle at top left, rgba(255, 255, 255, 0.7), transparent 24%),
+    linear-gradient(160deg, #FAFAF7 0%, #F0EFEA 100%);
 }
 
 button,
@@ -1074,7 +1088,7 @@ tr.is-selected-log td {
   border: 1px solid rgba(176, 97, 44, 0.18);
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.62);
-  color: #7c2d12;
+  color: var(--brand-deep);
   font-size: 0.9rem;
   font-weight: 800;
   white-space: nowrap;
@@ -1641,7 +1655,7 @@ tr.is-selected-log td {
 
 #coach-panel.coach-mobile-preview .sub-tab.is-active {
   background: var(--brand);
-  color: #fffaf5;
+  color: var(--bg);
   border-color: transparent;
   box-shadow: none;
 }
