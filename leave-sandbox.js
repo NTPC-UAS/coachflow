@@ -8058,7 +8058,7 @@
         <tr>
           <td>${student.name || student.code}</td>
           <td>${lastLesson ? formatDateTime(lastLesson.startAt) : "尚未上課"}</td>
-          <td>${stats.totalChargedCount}</td>
+          <td>${billingCycle.currentCycleChargedCount}</td>
           <td><span class="status ${paymentClass}">${getPaymentStatusLabel(billingCycle.effectivePaymentStatus)}</span></td>
         </tr>
       `;
