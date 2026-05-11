@@ -3304,11 +3304,35 @@
     const looseSearchable = normalizeLooseText(searchable);
     const studentCode = normalizeLooseText(lesson.studentCode);
     const studentName = normalizeLooseText(student?.name || "");
-    const hasStudentText = Boolean(
-      (studentCode && looseSearchable.includes(studentCode)) ||
-      (studentName && looseSearchable.includes(studentName)) ||
-      (student?.name && scoreLooseNameMatch(event?.title || "", student.name) > 0)
-    );
+    const hasStudentCodeInTitle = Boolean(studentCode && looseSearchable.includes(studentCode));
+    const hasStudentNameInTitle = Boolean(studentName && looseSearchable.includes(studentName));
+    const hasStudentNameLooseMatch = Boolean(student?.name && scoreLooseNameMatch(event?.title || "", student.name) > 0);
+    const hasStudentText = hasStudentCodeInTitle || hasStudentNameInTitle || hasStudentNameLooseMatch;
+
+    // Substring 防呆：若教練底下另一位學生名「包含」當前學生名（例：「朱朱媽媽」包「朱朱」），
+    // 且事件標題中出現該更長名字，這個事件其實屬於那位學生，不應算作當前學生的事件。
+    // 否則當前學生的 lesson 還沒綁 eventId 時，resolveMissingEventId 會誤把對方的事件
+    // 綁過來，後續刪除就會把對方的 Google 事件刪掉（上線案例：朱朱請假，誤刪朱朱媽媽事件）。
+    // 例外：studentCode 完整出現在標題時，視為強訊號，不套用此防呆。
+    let ambiguousWithLongerName = false;
+    if (hasStudentText && !hasStudentCodeInTitle && studentName && lesson?.coachCode) {
+      const otherStudents = (state.students || []).filter((s) => (
+        s && s.coachCode === lesson.coachCode && s.code !== lesson.studentCode
+      ));
+      for (let i = 0; i < otherStudents.length; i += 1) {
+        const otherName = normalizeLooseText(otherStudents[i]?.name || "");
+        if (
+          otherName &&
+          otherName.length > studentName.length &&
+          otherName.includes(studentName) &&
+          looseSearchable.includes(otherName)
+        ) {
+          ambiguousWithLongerName = true;
+          break;
+        }
+      }
+    }
+    const reliableStudentText = hasStudentText && !ambiguousWithLongerName;
 
     let score = 0;
     if (sameEventId) {
@@ -3319,12 +3343,12 @@
     } else if (diffMs <= 15 * 60 * 1000) {
       score += 4;
     }
-    if (hasStudentText) {
+    if (reliableStudentText) {
       score += 4;
     }
 
     return {
-      matched: (sameEventId && diffMs <= 15 * 60 * 1000) || (hasStudentText && diffMs <= 2 * 60 * 1000),
+      matched: (sameEventId && diffMs <= 15 * 60 * 1000) || (reliableStudentText && diffMs <= 2 * 60 * 1000),
       score
     };
   }
