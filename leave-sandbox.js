@@ -115,7 +115,10 @@
     studentOverviewTable: document.getElementById("student-overview-table"),
     coachCloudUploadBtn: document.getElementById("coach-cloud-upload-btn"),
     coachCloudDownloadBtn: document.getElementById("coach-cloud-download-btn"),
-    coachCloudSyncText: document.getElementById("coach-cloud-sync-text")
+    coachCloudSyncText: document.getElementById("coach-cloud-sync-text"),
+    pendingLeaveBanner: document.getElementById("pending-leave-banner"),
+    pendingLeaveText: document.getElementById("pending-leave-text"),
+    pendingLeaveRetryBtn: document.getElementById("pending-leave-retry-btn")
   };
 
   let state = loadState();
@@ -1565,10 +1568,22 @@
   // 把本機 state.leaveRequests 中還沒有 cloudSyncedAt 旗標的請假（或上次推送失敗的）
   // 重新推上雲端。用於救援：當時 saveLeaveRecord 因為 Apps Script 配額失敗、本機已有
   // 紀錄但雲端沒有的情況。saveLeaveRecord 端是 upsert，重複呼叫安全。
-  async function retryUnsyncedLocalLeaves() {
+  //
+  // 兩種 unsynced 來源：
+  // 1. pendingCloudSync = true（新版 atomic flow）：雲端首發失敗，當時還沒動 GCal /
+  //    寄信。雲端 push 成功後要把 lesson 狀態改成 leave-normal、刪 GCal、寄信、
+  //    再 push 一次帶 email 狀態的雲端紀錄。
+  // 2. cloudSyncedAt missing 但沒 pendingCloudSync 旗標（舊版資料）：當時本機已
+  //    改 lesson、已刪 GCal、已寄信，只差雲端紀錄。補推一次就好。
+  //
+  // silent=true：背景補救（focus/visibility）用，不彈 notifyUser，依賴 banner 持續顯示。
+  async function retryUnsyncedLocalLeaves(options = {}) {
+    const silent = Boolean(options && options.silent);
     if (!getAppsScriptUrl()) {
-      addLog("[雲端請假補救] 未設定 Apps Script URL，跳過。");
-      return { tried: 0, succeeded: 0, failed: 0 };
+      if (!silent) {
+        addLog("[雲端請假補救] 未設定 Apps Script URL，跳過。");
+      }
+      return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
     }
     const candidates = (state.leaveRequests || []).filter((leave) => (
       leave &&
@@ -1577,19 +1592,33 @@
       !leave.cloudSyncedAt
     ));
     if (!candidates.length) {
-      addLog("[雲端請假補救] 沒有需要補推的請假紀錄。");
-      return { tried: 0, succeeded: 0, failed: 0 };
+      if (!silent) {
+        addLog("[雲端請假補救] 沒有需要補推的請假紀錄。");
+      }
+      return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
     }
     let succeeded = 0;
     let failed = 0;
+    let completedPending = 0;
     for (const leave of candidates) {
       const lesson = getLessonById(leave.lessonId);
+      const wasPending = Boolean(leave.pendingCloudSync);
       try {
         const ok = await pushCloudLeaveRecord(leave, lesson);
         if (ok) {
           leave.cloudSyncedAt = new Date().toISOString();
+          if (wasPending) {
+            // 新版 pending leave 推上去後，把當時被擋掉的 lesson 狀態 / GCal / Email 補完
+            delete leave.pendingCloudSync;
+            if (lesson) {
+              lesson.calendarOccupied = false;
+              lesson.attendanceStatus = "leave-normal";
+            }
+            await completePendingLeaveSideEffects(leave, lesson);
+            completedPending += 1;
+          }
           succeeded += 1;
-          addLog(`[雲端請假補救] 已補推 ${leave.id}（${leave.studentCode} / ${lesson ? formatDateTime(lesson.startAt) : leave.lessonId}）。`);
+          addLog(`[雲端請假補救] 已補推 ${leave.id}（${leave.studentCode} / ${lesson ? formatDateTime(lesson.startAt) : leave.lessonId}）${wasPending ? "（pending → 補完 GCal+Email）" : ""}。`);
         } else {
           failed += 1;
           addLog(`[雲端請假補救] 補推回應 ok=false：${leave.id}`);
@@ -1599,13 +1628,82 @@
         addLog(`[雲端請假補救] 補推失敗：${leave.id} / ${String(error?.message || error)}`);
       }
     }
-    if (succeeded > 0) {
+    if (succeeded > 0 || failed > 0) {
       saveState();
-      notifyUser(`已補推 ${succeeded} 筆請假紀錄到雲端。${failed ? `（${failed} 筆失敗）` : ""}`, succeeded ? "success" : "warning");
-    } else if (failed > 0) {
-      notifyUser(`本機請假紀錄補推全部失敗（${failed} 筆），請查 console。`, "warning");
     }
-    return { tried: candidates.length, succeeded, failed };
+    if (!silent) {
+      if (succeeded > 0) {
+        notifyUser(
+          `已補推 ${succeeded} 筆請假紀錄到雲端${completedPending ? `（其中 ${completedPending} 筆同時補完 Google 日曆與通知信）` : ""}。${failed ? `（${failed} 筆失敗）` : ""}`,
+          succeeded ? "success" : "warning"
+        );
+      } else if (failed > 0) {
+        notifyUser(`本機請假紀錄補推失敗（${failed} 筆），請查 console。`, "warning");
+      }
+    }
+    return { tried: candidates.length, succeeded, failed, completedPending };
+  }
+
+  // pendingCloudSync 的請假在雲端 push 成功後，把當時 atomic flow 沒做的 GCal 刪除
+  // 與 email 通知補上。為了 retry 安全，所有動作都 try/catch，個別失敗只記 log，不影響
+  // 已經寫到雲端的 leave record（畢竟雲端是 source of truth）。
+  async function completePendingLeaveSideEffects(leave, lesson) {
+    if (!lesson) {
+      addLog(`[雲端請假補救] 找不到 lesson ${leave.lessonId}，跳過 GCal/Email 完成。`);
+      return;
+    }
+    try {
+      const ok = await tryDeleteCalendarEventForLesson(lesson, "retry_apply_normal_leave", false, {
+        resolveMissingEventId: true
+      });
+      if (!ok) {
+        addLog(`[Google日曆] 補推請假 ${leave.id} 後刪 GCal 事件未成功，留待下次同步處理。`);
+      }
+    } catch (error) {
+      addLog(`[Google日曆] 補推請假 ${leave.id} 後刪 GCal 出錯：${String(error?.message || error)}`);
+    }
+
+    const isCoachLeave = String(leave.submittedByRole || "") === "coach";
+    const studentEmail = getStudentNoticeEmail(leave.studentCode);
+    if (!studentEmail) {
+      addLog(`[Email] ${leave.studentCode} 未設定學生 Email，補寄請假通知信時將略過學生收件人。`);
+    }
+    const emailPayload = {
+      studentCode: leave.studentCode,
+      coachCode: leave.coachCode,
+      studentEmail,
+      coachEmail: getCoachNoticeEmail(leave.coachCode),
+      lessonId: lesson.id,
+      lessonStartAt: lesson.startAt,
+      leaveId: leave.id,
+      submittedBy: leave.submittedBy || "",
+      submittedByRole: leave.submittedByRole || ""
+    };
+    leave.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
+    let sent = false;
+    try {
+      sent = await trySendEmailNotice(
+        isCoachLeave ? "leave_submitted_by_coach" : "leave_submitted",
+        emailPayload,
+        isCoachLeave
+          ? `教練代請假通知 ${leave.studentCode} / ${lesson.id}`
+          : `學生 ${leave.studentCode} 請假通知`
+      );
+    } catch (error) {
+      addLog(`[Email] 補推請假 ${leave.id} 寄信失敗：${String(error?.message || error)}`);
+    }
+    const emailAt = new Date().toISOString();
+    leave.emailNoticeStatus = sent ? "sent" : "queued-or-skipped";
+    if (sent) {
+      leave.emailNoticeSentAt = emailAt;
+    } else {
+      leave.emailNoticeQueuedAt = emailAt;
+    }
+    try {
+      await pushCloudLeaveRecord(leave, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 補推請假 ${leave.id} 之 Email 狀態同步失敗：${String(error?.message || error)}`);
+    }
   }
 
   // 暴露到 window 讓 console 可手動呼叫：retryUnsyncedLocalLeaves()
@@ -2165,6 +2263,39 @@
         : "尚未把這台電腦的請假系統資料上傳到雲端。";
       el.coachCloudSyncText.textContent = hasCoach ? updatedText : "請先登入教練代碼。";
     }
+  }
+
+  // 列出本機所有 pendingCloudSync 的請假，組成持續可見的紅色 banner。
+  // 學生請假時若雲端失敗會留下 pendingCloudSync，banner 提醒並提供「立即重試」按鈕；
+  // 背景的 retryUnsyncedLocalLeaves 也會在 focus/visibility 時自動跑一次（silent）。
+  function renderPendingSyncBanner() {
+    if (!el.pendingLeaveBanner) {
+      return;
+    }
+    const all = (state.leaveRequests || []).filter((leave) => (
+      leave && !leave.revokedAt && leave.pendingCloudSync && !leave.cloudSyncedAt
+    ));
+    const visible = (activeStudentCode || activeCoachCode)
+      ? all.filter((leave) => (
+        (activeStudentCode && leave.studentCode === activeStudentCode) ||
+        (activeCoachCode && leave.coachCode === activeCoachCode)
+      ))
+      : all;
+    if (!visible.length) {
+      el.pendingLeaveBanner.hidden = true;
+      return;
+    }
+    const lessonsText = visible
+      .map((leave) => {
+        const lesson = getLessonById(leave.lessonId);
+        const when = lesson ? formatDateTime(lesson.startAt) : "(找不到課程)";
+        return `${leave.studentCode}@${when}`;
+      })
+      .join("、");
+    if (el.pendingLeaveText) {
+      el.pendingLeaveText.textContent = `有 ${visible.length} 筆請假尚未同步到雲端：${lessonsText}。系統會在頁面聚焦/重新整理時自動重試；要立刻試的話按右邊按鈕。`;
+    }
+    el.pendingLeaveBanner.hidden = false;
   }
 
   async function uploadLocalLeaveStateToCloud() {
@@ -5632,7 +5763,14 @@
   }
 
   function getLeaveByLesson(lessonId) {
-    return state.leaveRequests.find((leave) => leave.lessonId === lessonId && !leave.revokedAt);
+    // pendingCloudSync 的請假還沒被雲端確認，視為「尚未成立」，所有
+    // UI / 重複檢查 / 取消請假等流程都不應該看到它。retry 機制（讀 state
+    // 直接掃 pendingCloudSync）會把它推上雲端再轉成正式請假。
+    return state.leaveRequests.find((leave) => (
+      leave.lessonId === lessonId &&
+      !leave.revokedAt &&
+      !leave.pendingCloudSync
+    ));
   }
 
   function getMakeupByLeave(leaveId) {
@@ -5858,38 +5996,74 @@
       return;
     }
 
-    const leaveId = newId("LEAVE");
-    const leaveRecord = {
-      id: leaveId,
-      lessonId,
-      studentCode: lesson.studentCode,
-      coachCode: lesson.coachCode,
-      calendarEventId: lesson.calendarEventId || "",
-      type: "normal",
-      submittedAt: new Date().toISOString(),
-      submittedBy: activeStudentCode,
-      submittedByRole: "student",
-      makeupEligible: true
-    };
-    state.leaveRequests.push(leaveRecord);
-    lesson.calendarOccupied = false;
-    lesson.attendanceStatus = "leave-normal";
-    addLog(`學生 ${lesson.studentCode} 送出請假（課程 ${lesson.id}）。`);
+    // 找有沒有先前因雲端 push 失敗暫存的 pending leave，有就重用做 retry。
+    // 沒有就建一筆新的 pendingCloudSync leave。重用同一個 id 可避免在 Sheet 留下
+    // 不同 id 的多筆重複紀錄。
+    let leaveRecord = state.leaveRequests.find((leave) => (
+      leave &&
+      leave.lessonId === lessonId &&
+      !leave.revokedAt &&
+      leave.pendingCloudSync &&
+      String(leave.type || "normal") === "normal"
+    ));
+    const isRetryAttempt = Boolean(leaveRecord);
+    if (!leaveRecord) {
+      leaveRecord = {
+        id: newId("LEAVE"),
+        lessonId,
+        studentCode: lesson.studentCode,
+        coachCode: lesson.coachCode,
+        calendarEventId: lesson.calendarEventId || "",
+        type: "normal",
+        submittedAt: new Date().toISOString(),
+        submittedBy: activeStudentCode,
+        submittedByRole: "student",
+        makeupEligible: true,
+        pendingCloudSync: true
+      };
+      state.leaveRequests.push(leaveRecord);
+    }
+    addLog(
+      isRetryAttempt
+        ? `學生 ${lesson.studentCode} 重試 pending 請假（${leaveRecord.id}，課程 ${lesson.id}）。`
+        : `學生 ${lesson.studentCode} 送出請假（課程 ${lesson.id}，等待雲端確認）。`
+    );
     saveState();
     renderAll();
-    notifyUser("請假紀錄已建立，正在同步教練端與 Google 日曆...", "info");
+    notifyUser("正在送出請假給雲端，請稍候...", "info");
+
+    // === 雲端 push 必須先成功，才會去動 Google 日曆與寄信 ===
+    // 否則失敗時會出現「GCal 已刪 + 學生信箱有確認信 + 教練端永遠看不到請假」這
+    // 種 5/16 上線事故的悲劇組合。Cloud 是 source of truth；cloud 沒收到就什麼
+    // 都不算數，學生看到 warning 紅字後可以重試或聯絡教練。
+    let cloudOk = false;
+    let cloudErrorMessage = "";
     try {
-      const ok = await pushCloudLeaveRecord(leaveRecord, lesson);
-      if (ok) {
-        leaveRecord.cloudSyncedAt = new Date().toISOString();
-      }
-      addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
-      saveState();
+      cloudOk = await pushCloudLeaveRecord(leaveRecord, lesson);
     } catch (error) {
-      const message = String(error?.message || "未知錯誤");
-      addLog(`[雲端請假] 上傳請假紀錄失敗：${message}（之後再 retry 會自動補推）`);
-      saveState();
+      cloudErrorMessage = String(error?.message || error || "");
     }
+
+    if (!cloudOk) {
+      addLog(`[雲端請假] 上傳失敗，本機已暫存 pending 待重試：${leaveRecord.id}${cloudErrorMessage ? ` / ${cloudErrorMessage}` : "（Apps Script 回應 ok=false）"}`);
+      saveState();
+      renderAll();
+      notifyUser(
+        `請假尚未成立：雲端同步失敗${cloudErrorMessage ? `（${cloudErrorMessage}）` : ""}。系統會在你下次打開請假系統或重新整理時自動重試；如急著請假，請聯絡教練協助代為請假。`,
+        "warning"
+      );
+      return;
+    }
+
+    // === 雲端確認收到，現在才正式套用到課程狀態 / 動 Google 日曆 / 寄信 ===
+    leaveRecord.cloudSyncedAt = new Date().toISOString();
+    delete leaveRecord.pendingCloudSync;
+    lesson.calendarOccupied = false;
+    lesson.attendanceStatus = "leave-normal";
+    addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
+    saveState();
+    renderAll();
+    notifyUser("請假紀錄已建立，正在同步 Google 日曆與寄出確認信...", "info");
     const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "student_normal_leave", false, {
       resolveMissingEventId: true
     });
@@ -5910,7 +6084,7 @@
       coachEmail,
       lessonId: lesson.id,
       lessonStartAt: lesson.startAt,
-      leaveId
+      leaveId: leaveRecord.id
     };
     leaveRecord.emailNoticeTo = resolveNoticeRecipients(emailPayload).join(", ");
     const emailSent = await trySendEmailNotice(
@@ -5988,37 +6162,71 @@
       return;
     }
 
-    const leaveId = newId("LEAVE");
-    const submittedAt = new Date().toISOString();
-    const leaveRecord = {
-      id: leaveId,
-      lessonId,
-      studentCode: lesson.studentCode,
-      coachCode: lesson.coachCode,
-      calendarEventId: lesson.calendarEventId || "",
-      type: "normal",
-      submittedAt,
-      submittedBy: activeCoachCode,
-      submittedByRole: "coach",
-      makeupEligible: true
-    };
-    state.leaveRequests.push(leaveRecord);
+    // 同 applyNormalLeaveImpl：找有沒有先前因雲端 push 失敗暫存的 pending 請假，
+    // 有就重用做 retry；沒有就建一筆新的 pendingCloudSync leave。
+    let leaveRecord = state.leaveRequests.find((leave) => (
+      leave &&
+      leave.lessonId === lessonId &&
+      !leave.revokedAt &&
+      leave.pendingCloudSync &&
+      String(leave.type || "normal") === "normal"
+    ));
+    const isRetryAttempt = Boolean(leaveRecord);
+    if (!leaveRecord) {
+      leaveRecord = {
+        id: newId("LEAVE"),
+        lessonId,
+        studentCode: lesson.studentCode,
+        coachCode: lesson.coachCode,
+        calendarEventId: lesson.calendarEventId || "",
+        type: "normal",
+        submittedAt: new Date().toISOString(),
+        submittedBy: activeCoachCode,
+        submittedByRole: "coach",
+        makeupEligible: true,
+        pendingCloudSync: true
+      };
+      state.leaveRequests.push(leaveRecord);
+    }
+    addLog(
+      isRetryAttempt
+        ? `教練 ${activeCoachCode} 重試代學生 ${lesson.studentCode} 之 pending 請假（${leaveRecord.id}）。`
+        : `教練 ${activeCoachCode} 代學生 ${lesson.studentCode} 送出請假（課程 ${lesson.id}，等待雲端確認）。`
+    );
+    saveState();
+    renderAll();
+    notifyUser(`正在把 ${studentName} 的請假送到雲端，請稍候...`, "info");
+
+    // === 雲端 push 必須先成功才動 GCal / 寄信，避免「GCal 刪了 + 雲端沒紀錄」事故 ===
+    let cloudOk = false;
+    let cloudErrorMessage = "";
+    try {
+      cloudOk = await pushCloudLeaveRecord(leaveRecord, lesson);
+    } catch (error) {
+      cloudErrorMessage = String(error?.message || error || "");
+    }
+
+    if (!cloudOk) {
+      addLog(`[雲端請假] 教練代請假上傳失敗，本機已暫存 pending 待重試：${leaveRecord.id}${cloudErrorMessage ? ` / ${cloudErrorMessage}` : "（Apps Script 回應 ok=false）"}`);
+      saveState();
+      renderAll();
+      notifyUser(
+        `代 ${studentName} 請假尚未成立：雲端同步失敗${cloudErrorMessage ? `（${cloudErrorMessage}）` : ""}。系統會在下次刷新或聚焦時自動重試，或可手動點頂部紅 banner 立即重試。`,
+        "warning"
+      );
+      return;
+    }
+
+    // === 雲端確認後才正式生效 ===
+    leaveRecord.cloudSyncedAt = new Date().toISOString();
+    delete leaveRecord.pendingCloudSync;
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
-    addLog(`教練 ${activeCoachCode} 已代學生 ${lesson.studentCode} 請假：課程 ${lesson.id}。`);
+    addLog(`[雲端請假] 已同步教練代請假 ${leaveRecord.id}。`);
     saveState();
     renderAll();
     notifyUser(`已代 ${studentName} 建立請假紀錄，正在同步 Google 日曆...`, "info");
 
-    try {
-      await pushCloudLeaveRecord(leaveRecord, lesson);
-      addLog(`[雲端請假] 已同步教練代請假 ${leaveRecord.id}。`);
-      saveState();
-    } catch (error) {
-      const message = String(error?.message || "未知錯誤");
-      addLog(`[雲端請假] 教練代請假同步失敗：${message}`);
-      saveState();
-    }
     const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "coach_student_normal_leave", false, {
       resolveMissingEventId: true
     });
@@ -6034,7 +6242,7 @@
       coachEmail: getCoachNoticeEmail(lesson.coachCode),
       lessonId: lesson.id,
       lessonStartAt: lesson.startAt,
-      leaveId,
+      leaveId: leaveRecord.id,
       submittedBy: activeCoachCode,
       submittedByRole: "coach"
     };
@@ -6052,6 +6260,12 @@
       leaveRecord.emailNoticeQueuedAt = emailAt;
     }
     saveState();
+    try {
+      await pushCloudLeaveRecord(leaveRecord, lesson);
+    } catch (error) {
+      addLog(`[雲端請假] 上傳代請假 Email 狀態失敗：${String(error?.message || "未知錯誤")}`);
+      saveState();
+    }
     renderAll();
     notifyUser(
       sent
@@ -8377,6 +8591,7 @@
     renderChargePanel();
     renderCloudSnapshotControls();
     updateCoachReadOnlyUi();
+    renderPendingSyncBanner();
   }
 
   function loadSlotsForSelectedLeave() {
@@ -8433,6 +8648,17 @@
     lastCloudSessionRefreshAt = now;
 
     let changed = false;
+    // 先補推任何 pending 請假，確保後續 cloud read 看到的是最新狀態，也讓 banner
+    // 在使用者切回分頁時就能消掉。silent 模式不彈 notifyUser，避免每 45 秒打擾使用者；
+    // banner 持續可見已足以提示。
+    try {
+      const retryResult = await retryUnsyncedLocalLeaves({ silent: true });
+      if (retryResult && retryResult.succeeded > 0) {
+        changed = true;
+      }
+    } catch (error) {
+      console.warn("Pending leave retry on session refresh failed:", error);
+    }
     try {
       changed = await pullLeaveStateSnapshotFromCloud({
         coachCode: activeCoachCode,
@@ -8507,6 +8733,25 @@
         console.warn("Cloud session visibility refresh failed:", error);
       });
     });
+    if (el.pendingLeaveRetryBtn) {
+      el.pendingLeaveRetryBtn.addEventListener("click", async () => {
+        if (el.pendingLeaveRetryBtn.disabled) {
+          return;
+        }
+        const originalText = el.pendingLeaveRetryBtn.textContent;
+        el.pendingLeaveRetryBtn.disabled = true;
+        el.pendingLeaveRetryBtn.textContent = "重試中...";
+        try {
+          await retryUnsyncedLocalLeaves();
+        } catch (error) {
+          notifyUser(`重試失敗：${String(error?.message || error)}`, "warning");
+        } finally {
+          el.pendingLeaveRetryBtn.disabled = false;
+          el.pendingLeaveRetryBtn.textContent = originalText || "立即重試";
+          renderAll();
+        }
+      });
+    }
     if (el.studentLoginBtn) {
       el.studentLoginBtn.addEventListener("click", async () => {
         await syncCoachflowRosterFromCloud();
