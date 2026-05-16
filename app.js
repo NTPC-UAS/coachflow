@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260516-0002";
+const PUBLIC_APP_VERSION = "20260516-0003";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -4055,26 +4055,13 @@ function getLocalLeaveBillingSummary(student, assignedCoach) {
 }
 
 function chooseStudentLeaveBillingSummary(localSummary, cloudSummary) {
-  if (!localSummary) {
-    return cloudSummary || null;
-  }
-  if (!cloudSummary) {
-    return localSummary;
-  }
-  const localTime = Number(localSummary.updatedTime || 0);
-  const cloudTime = Number(cloudSummary.updatedTime || 0);
-  if (cloudTime > localTime + LEAVE_BILLING_SUMMARY_TIME_TOLERANCE_MS) {
+  // 教練 / 管理員透過請假系統維護的 cloud profile 是計費權威來源。
+  // 學生端本機 leave state 可能是舊快照（學生只讀），不應蓋掉雲端值。
+  // 只有當雲端完全沒資料時，才退回本機作為最後 fallback。
+  if (cloudSummary) {
     return cloudSummary;
   }
-  if (localTime > cloudTime + LEAVE_BILLING_SUMMARY_TIME_TOLERANCE_MS) {
-    return localSummary;
-  }
-  const localTotal = hasNumericValue(localSummary.totalChargedCount) ? toNonNegativeInteger(localSummary.totalChargedCount, 0) : -1;
-  const cloudTotal = hasNumericValue(cloudSummary.totalChargedCount) ? toNonNegativeInteger(cloudSummary.totalChargedCount, 0) : -1;
-  if (localTotal >= 0 && cloudTotal >= 0 && localTotal !== cloudTotal) {
-    return localTotal > cloudTotal ? localSummary : cloudSummary;
-  }
-  return localSummary;
+  return localSummary || null;
 }
 
 function normalizeLeaveBillingProfile(profile = {}) {
