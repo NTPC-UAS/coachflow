@@ -1562,6 +1562,57 @@
     return changed;
   }
 
+  // 把本機 state.leaveRequests 中還沒有 cloudSyncedAt 旗標的請假（或上次推送失敗的）
+  // 重新推上雲端。用於救援：當時 saveLeaveRecord 因為 Apps Script 配額失敗、本機已有
+  // 紀錄但雲端沒有的情況。saveLeaveRecord 端是 upsert，重複呼叫安全。
+  async function retryUnsyncedLocalLeaves() {
+    if (!getAppsScriptUrl()) {
+      addLog("[雲端請假補救] 未設定 Apps Script URL，跳過。");
+      return { tried: 0, succeeded: 0, failed: 0 };
+    }
+    const candidates = (state.leaveRequests || []).filter((leave) => (
+      leave &&
+      !leave.revokedAt &&
+      String(leave.type || "normal") === "normal" &&
+      !leave.cloudSyncedAt
+    ));
+    if (!candidates.length) {
+      addLog("[雲端請假補救] 沒有需要補推的請假紀錄。");
+      return { tried: 0, succeeded: 0, failed: 0 };
+    }
+    let succeeded = 0;
+    let failed = 0;
+    for (const leave of candidates) {
+      const lesson = getLessonById(leave.lessonId);
+      try {
+        const ok = await pushCloudLeaveRecord(leave, lesson);
+        if (ok) {
+          leave.cloudSyncedAt = new Date().toISOString();
+          succeeded += 1;
+          addLog(`[雲端請假補救] 已補推 ${leave.id}（${leave.studentCode} / ${lesson ? formatDateTime(lesson.startAt) : leave.lessonId}）。`);
+        } else {
+          failed += 1;
+          addLog(`[雲端請假補救] 補推回應 ok=false：${leave.id}`);
+        }
+      } catch (error) {
+        failed += 1;
+        addLog(`[雲端請假補救] 補推失敗：${leave.id} / ${String(error?.message || error)}`);
+      }
+    }
+    if (succeeded > 0) {
+      saveState();
+      notifyUser(`已補推 ${succeeded} 筆請假紀錄到雲端。${failed ? `（${failed} 筆失敗）` : ""}`, succeeded ? "success" : "warning");
+    } else if (failed > 0) {
+      notifyUser(`本機請假紀錄補推全部失敗（${failed} 筆），請查 console。`, "warning");
+    }
+    return { tried: candidates.length, succeeded, failed };
+  }
+
+  // 暴露到 window 讓 console 可手動呼叫：retryUnsyncedLocalLeaves()
+  if (typeof window !== "undefined") {
+    window.retryUnsyncedLocalLeaves = retryUnsyncedLocalLeaves;
+  }
+
   async function pushCloudLeaveRecord(leave, lesson) {
     if (!getAppsScriptUrl()) {
       return false;
@@ -5798,12 +5849,15 @@
     renderAll();
     notifyUser("請假紀錄已建立，正在同步教練端與 Google 日曆...", "info");
     try {
-      await pushCloudLeaveRecord(leaveRecord, lesson);
+      const ok = await pushCloudLeaveRecord(leaveRecord, lesson);
+      if (ok) {
+        leaveRecord.cloudSyncedAt = new Date().toISOString();
+      }
       addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
       saveState();
     } catch (error) {
       const message = String(error?.message || "未知錯誤");
-      addLog(`[雲端請假] 上傳請假紀錄失敗：${message}`);
+      addLog(`[雲端請假] 上傳請假紀錄失敗：${message}（之後再 retry 會自動補推）`);
       saveState();
     }
     const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "student_normal_leave", false, {
@@ -8429,6 +8483,13 @@
         const loaded = activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
         if (loaded) {
           notifyUser("學生資料已載入，正在同步 Google 日曆與請假紀錄...", "info");
+          // 救援：把本機已有但雲端可能因配額失敗而沒收到的請假紀錄重新推一次。
+          // saveLeaveRecord 端是 upsert by id，安全可重跑。
+          try {
+            await retryUnsyncedLocalLeaves();
+          } catch (error) {
+            console.warn("Retry unsynced leaves failed on student login:", error);
+          }
           let leaveChanged = false;
           let cloudLeaveFailed = false;
           try {
