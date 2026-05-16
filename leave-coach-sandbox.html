@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260516-0003">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260516-0004">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -541,7 +541,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260516-0003&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260516-0004&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -636,6 +636,9 @@
         <span class="role">教練端</span>
         <h2>學生請假紀錄</h2>
         <p class="hint">依請假送出時間由新到舊排列，快速查看誰在什麼時候請假、原本是哪一堂課。</p>
+        <div style="margin-bottom: 12px;">
+          <button id="coach-student-leave-refresh-btn" class="ghost" type="button">重新整理</button>
+        </div>
         <div class="table-wrap">
           <table id="coach-student-leave-table"></table>
         </div>
@@ -749,10 +752,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260516-0003"></script>
-  <script src="leave-sandbox.js?v=20260516-0003"></script>
+  <script src="config.js?v=20260516-0004"></script>
+  <script src="leave-sandbox.js?v=20260516-0004"></script>
   <script>
-    const coachPwaVersion = "20260516-0003";
+    const coachPwaVersion = "20260516-0004";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");

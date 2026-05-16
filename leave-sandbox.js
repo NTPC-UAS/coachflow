@@ -83,6 +83,7 @@
     coachReviewStudentFilter: document.getElementById("coach-review-student-filter"),
     coachReviewRefreshBtn: document.getElementById("coach-review-refresh-btn"),
     coachStudentLeaveTable: document.getElementById("coach-student-leave-table"),
+    coachStudentLeaveRefreshBtn: document.getElementById("coach-student-leave-refresh-btn"),
     coachReviewModal: document.getElementById("coach-review-modal"),
     coachReviewModalTitle: document.getElementById("coach-review-modal-title"),
     coachReviewModalMessage: document.getElementById("coach-review-modal-message"),
@@ -7436,15 +7437,19 @@
       return;
     }
 
-    const nowTime = Date.now();
+    // 顯示今天 00:00 起的請假紀錄，避免「今天但課時已過」被誤過濾。
+    const startOfToday = new Date();
+    startOfToday.setHours(0, 0, 0, 0);
+    const cutoffTime = startOfToday.getTime();
+    const normalizedActiveCoach = normalizeParticipantCode(activeCoachCode);
     const leaves = state.leaveRequests
       .filter((leave) => {
-        if (leave.coachCode !== activeCoachCode || leave.revokedAt) {
+        if (normalizeParticipantCode(leave.coachCode) !== normalizedActiveCoach || leave.revokedAt) {
           return false;
         }
         const lesson = getLessonById(leave.lessonId);
         const lessonTime = new Date(lesson?.startAt || "").getTime();
-        return !Number.isFinite(lessonTime) || lessonTime >= nowTime;
+        return !Number.isFinite(lessonTime) || lessonTime >= cutoffTime;
       })
       .sort((a, b) => new Date(b.submittedAt || 0) - new Date(a.submittedAt || 0));
 
@@ -7465,7 +7470,7 @@
 
     el.coachStudentLeaveTable.innerHTML = `
       <thead><tr><th>學生</th><th>原課程時間</th><th>請假時間</th><th>送出方式</th><th>請假狀態</th><th>補課狀態</th></tr></thead>
-      <tbody>${rows || "<tr><td colspan=\"6\">目前沒有尚未發生的學生請假紀錄</td></tr>"}</tbody>
+      <tbody>${rows || "<tr><td colspan=\"6\">今天起目前沒有學生請假紀錄</td></tr>"}</tbody>
     `;
   }
 
@@ -8859,6 +8864,29 @@
           }
         }
         renderAll();
+      });
+    }
+
+    if (el.coachStudentLeaveRefreshBtn) {
+      el.coachStudentLeaveRefreshBtn.addEventListener("click", async () => {
+        if (!activeCoachCode) {
+          notifyUser("請先登入教練。", "warning");
+          return;
+        }
+        el.coachStudentLeaveRefreshBtn.disabled = true;
+        el.coachStudentLeaveRefreshBtn.textContent = "同步中…";
+        try {
+          await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
+          await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+          renderAll();
+          notifyUser("學生請假紀錄已從雲端重新整理。", "success");
+        } catch (error) {
+          console.warn("Coach student leave refresh failed:", error);
+          notifyUser("雲端重新整理失敗，請稍後再試。", "warning");
+        } finally {
+          el.coachStudentLeaveRefreshBtn.disabled = false;
+          el.coachStudentLeaveRefreshBtn.textContent = "重新整理";
+        }
       });
     }
 
