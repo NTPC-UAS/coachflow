@@ -2320,8 +2320,20 @@
       return true;
     }
     const lessonTime = new Date(lesson?.startAt || "").getTime();
+    if (!Number.isFinite(lessonTime)) {
+      return false;
+    }
     const baselineTime = new Date(baselineAt).getTime();
-    return Number.isFinite(lessonTime) && (!Number.isFinite(baselineTime) || lessonTime > baselineTime);
+    if (!Number.isFinite(baselineTime)) {
+      return true;
+    }
+    // 以「日」為粒度比較：baseline 當天或之後的課都算系統內扣堂。
+    // 過去用嚴格時刻比較，會造成「教練在當天 10:02 設 baseline，但學生 09:00 的課
+    // 被當成在 baseline 之前」→ 系統內扣堂少算 1。教練設定 baseline 的意圖通常是
+    // 「從今天起系統開始計算」，同一天的課應該算進來。
+    const baselineDayStart = new Date(baselineTime);
+    baselineDayStart.setHours(0, 0, 0, 0);
+    return lessonTime >= baselineDayStart.getTime();
   }
 
   function isUnsupportedAppsScriptAction(error, action) {
@@ -8272,6 +8284,7 @@
 
     el.chargeMetricsBox.innerHTML = `
       <div class="metric"><div class="k">導入前已扣堂</div><div class="v">${stats.startCount}</div></div>
+      <div class="metric"><div class="k">系統內已扣堂</div><div class="v">${stats.chargedLessons.length}</div></div>
       <div class="metric"><div class="k">累計已扣堂</div><div class="v">${stats.totalChargedCount}</div></div>
       <div class="metric"><div class="k">本期已扣</div><div class="v">${billingCycle.currentCycleChargedCount}/${CHARGE_REMINDER_STEP}</div></div>
       <div class="metric"><div class="k">距下次繳費</div><div class="v">${billingCycle.remainingToNextPayment}</div></div>
