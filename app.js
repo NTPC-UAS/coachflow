@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260516-0001";
+const PUBLIC_APP_VERSION = "20260516-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -1399,6 +1399,7 @@ const els = {
   studentActiveBar: document.querySelector("#student-active-bar"),
   studentActiveCopy: document.querySelector("#student-active-copy"),
   studentActiveBilling: document.querySelector("#student-active-billing"),
+  studentMobileBilling: document.querySelector("#student-mobile-billing"),
   studentRecordedBanner: document.querySelector("#student-recorded-banner"),
   studentProgramStatus: document.querySelector("#student-program-status"),
   studentProgramCard: document.querySelector("#student-program-card"),
@@ -4144,27 +4145,40 @@ function getLeaveBillingSummaryFromProfile(rawProfile) {
   });
 }
 
+function getStudentBillingTagElements() {
+  return [els.studentActiveBilling, els.studentMobileBilling].filter(Boolean);
+}
+
 function hideStudentLeaveBillingTag() {
-  if (!els.studentActiveBilling) {
+  const targets = getStudentBillingTagElements();
+  if (!targets.length) {
     return;
   }
-  els.studentActiveBilling.hidden = true;
-  els.studentActiveBilling.textContent = "";
-  els.studentActiveBilling.classList.remove("is-loading", "is-muted");
+  targets.forEach((el) => {
+    el.hidden = true;
+    el.textContent = "";
+    el.classList.remove("is-loading", "is-muted");
+  });
 }
 
 function showStudentLeaveBillingTag(summary, isLoading = false) {
-  if (!els.studentActiveBilling) {
+  const targets = getStudentBillingTagElements();
+  if (!targets.length) {
     return;
   }
   if (!summary && !isLoading) {
     hideStudentLeaveBillingTag();
     return;
   }
-  els.studentActiveBilling.hidden = false;
-  els.studentActiveBilling.textContent = summary?.label || "本期已扣 讀取中";
-  els.studentActiveBilling.classList.toggle("is-loading", Boolean(isLoading && !summary));
-  els.studentActiveBilling.classList.toggle("is-muted", Boolean(!summary && !isLoading));
+  const label = summary?.label || "本期已扣 讀取中";
+  const loadingClass = Boolean(isLoading && !summary);
+  const mutedClass = Boolean(!summary && !isLoading);
+  targets.forEach((el) => {
+    el.hidden = false;
+    el.textContent = label;
+    el.classList.toggle("is-loading", loadingClass);
+    el.classList.toggle("is-muted", mutedClass);
+  });
 }
 
 async function callLeaveSystemApi(action, payload = {}, method = "GET") {
