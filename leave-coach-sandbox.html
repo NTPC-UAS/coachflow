@@ -7,10 +7,22 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260516-0004">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260516-0005">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
+  <script>
+    // 加 ?debug=1 到網址啟用手機 console（Eruda）。
+    (function () {
+      try {
+        if (!new URLSearchParams(location.search).has("debug")) return;
+        var s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/eruda";
+        s.onload = function () { if (window.eruda) window.eruda.init(); };
+        document.head.appendChild(s);
+      } catch (e) {}
+    })();
+  </script>
   <style>
     :root {
       /* Palette A — 苔綠 + 暖灰 */
@@ -541,7 +553,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260516-0004&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260516-0005&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -752,10 +764,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260516-0004"></script>
-  <script src="leave-sandbox.js?v=20260516-0004"></script>
+  <script src="config.js?v=20260516-0005"></script>
+  <script src="leave-sandbox.js?v=20260516-0005"></script>
   <script>
-    const coachPwaVersion = "20260516-0004";
+    const coachPwaVersion = "20260516-0005";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");

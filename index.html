@@ -9,13 +9,25 @@
   <meta name="apple-mobile-web-app-title" content="CoachFlow">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
   <title>CoachFlow 重訓課表與紀錄系統</title>
-  <link rel="manifest" href="coachflow.webmanifest?v=20260516-0004">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260516-0005">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;800&display=swap" rel="stylesheet">
-  <link rel="stylesheet" href="styles.css?v=20260516-0004">
+  <link rel="stylesheet" href="styles.css?v=20260516-0005">
+  <script>
+    // 加 ?debug=1 到網址啟用手機 console（Eruda），用於 debug 雲端同步等問題。
+    (function () {
+      try {
+        if (!new URLSearchParams(location.search).has("debug")) return;
+        var s = document.createElement("script");
+        s.src = "https://cdn.jsdelivr.net/npm/eruda";
+        s.onload = function () { if (window.eruda) window.eruda.init(); };
+        document.head.appendChild(s);
+      } catch (e) {}
+    })();
+  </script>
 </head>
 <body>
   <div class="app-shell">
@@ -861,7 +873,7 @@
     </div>
   </div>
 
-  <script charset="UTF-8" src="config.js?v=20260516-0004"></script>
-  <script charset="UTF-8" src="app.js?v=20260516-0004"></script>
+  <script charset="UTF-8" src="config.js?v=20260516-0005"></script>
+  <script charset="UTF-8" src="app.js?v=20260516-0005"></script>
 </body>
 </html>
