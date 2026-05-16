@@ -63,6 +63,33 @@
     }
     .operation-status[data-tone="success"] { border-color: var(--success); background: var(--success-soft); color: var(--brand-deep); }
     .operation-status[data-tone="warning"] { border-color: var(--warning); background: var(--warning-soft); color: var(--warning); }
+    .pending-leave-banner {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      border: 1px solid var(--danger, #B85959);
+      background: var(--danger-soft, #F4DCDC);
+      color: var(--danger, #B85959);
+      border-radius: 12px;
+      padding: 10px 14px;
+      margin: 0 0 14px;
+      font-size: 13px;
+      font-weight: 700;
+    }
+    .pending-leave-banner button {
+      flex: 0 0 auto;
+      border: 1px solid var(--danger, #B85959);
+      background: var(--danger, #B85959);
+      color: #fff;
+      border-radius: 8px;
+      padding: 6px 14px;
+      font-size: 13px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .pending-leave-banner button:disabled { opacity: 0.6; cursor: not-allowed; }
+    .pending-leave-text { flex: 1; line-height: 1.4; }
     .card {
       border: 1px solid var(--line);
       border-radius: 14px;
@@ -408,6 +435,10 @@
     <h1>請假 / 補課測試頁（學生）</h1>
     <p class="sub">可登入學生帳號、在月曆選日期送出請假，並提出補課申請。</p>
     <div class="operation-status" id="ui-status-text" role="status" aria-live="polite">系統待命，登入後會自動同步 Google 日曆。</div>
+    <div class="pending-leave-banner" id="pending-leave-banner" role="alert" aria-live="assertive" hidden>
+      <span class="pending-leave-text" id="pending-leave-text"></span>
+      <button type="button" id="pending-leave-retry-btn">立即重試</button>
+    </div>
 
     <section class="card">
       <span class="role">學生端</span>
@@ -481,8 +512,8 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260516-0009"></script>
-  <script src="leave-sandbox.js?v=20260516-0009"></script>
+  <script src="config.js?v=20260516-0010"></script>
+  <script src="leave-sandbox.js?v=20260516-0010"></script>
 </body>
 </html>
 
