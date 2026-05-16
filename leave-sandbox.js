@@ -83,6 +83,7 @@
     coachReviewStudentFilter: document.getElementById("coach-review-student-filter"),
     coachReviewRefreshBtn: document.getElementById("coach-review-refresh-btn"),
     coachStudentLeaveTable: document.getElementById("coach-student-leave-table"),
+    coachStudentLeaveRefreshBtn: document.getElementById("coach-student-leave-refresh-btn"),
     coachReviewModal: document.getElementById("coach-review-modal"),
     coachReviewModalTitle: document.getElementById("coach-review-modal-title"),
     coachReviewModalMessage: document.getElementById("coach-review-modal-message"),
@@ -7440,9 +7441,10 @@
     const startOfToday = new Date();
     startOfToday.setHours(0, 0, 0, 0);
     const cutoffTime = startOfToday.getTime();
+    const normalizedActiveCoach = normalizeParticipantCode(activeCoachCode);
     const leaves = state.leaveRequests
       .filter((leave) => {
-        if (leave.coachCode !== activeCoachCode || leave.revokedAt) {
+        if (normalizeParticipantCode(leave.coachCode) !== normalizedActiveCoach || leave.revokedAt) {
           return false;
         }
         const lesson = getLessonById(leave.lessonId);
@@ -8862,6 +8864,29 @@
           }
         }
         renderAll();
+      });
+    }
+
+    if (el.coachStudentLeaveRefreshBtn) {
+      el.coachStudentLeaveRefreshBtn.addEventListener("click", async () => {
+        if (!activeCoachCode) {
+          notifyUser("請先登入教練。", "warning");
+          return;
+        }
+        el.coachStudentLeaveRefreshBtn.disabled = true;
+        el.coachStudentLeaveRefreshBtn.textContent = "同步中…";
+        try {
+          await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
+          await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+          renderAll();
+          notifyUser("學生請假紀錄已從雲端重新整理。", "success");
+        } catch (error) {
+          console.warn("Coach student leave refresh failed:", error);
+          notifyUser("雲端重新整理失敗，請稍後再試。", "warning");
+        } finally {
+          el.coachStudentLeaveRefreshBtn.disabled = false;
+          el.coachStudentLeaveRefreshBtn.textContent = "重新整理";
+        }
       });
     }
 
