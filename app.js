@@ -2442,7 +2442,7 @@ function sanitizeStudentDraftEntries(entries = []) {
       exercise: String(entry.exercise || "").trim(),
       targetSets: Number(entry.targetSets || 0),
       targetType: entry.targetType === "time" || entry.targetType === "rm" ? entry.targetType : "reps",
-      targetValue: Number(entry.targetType === "rm" ? 0 : (entry.targetValue || 0)),
+      targetValue: Number(entry.targetValue || 0),
       itemNote: String(entry.itemNote || ""),
       actualWeight: String(entry.actualWeight || ""),
       actualSets: String(entry.actualSets || ""),
@@ -3133,7 +3133,9 @@ function addProgramItemRow(item = {}) {
   exercise.value = item.exercise || "";
   sets.value = item.targetSets || 4;
   type.value = item.targetType || "reps";
-  value.value = item.targetType === "rm" ? "" : (item.targetValue || 8);
+  value.value = item.targetType === "rm"
+    ? (item.targetValue || "")
+    : (item.targetValue || 8);
   note.value = item.itemNote || "";
   sort.value = item.sortOrder || els.programItemsBody.children.length + 1;
 
@@ -3170,9 +3172,8 @@ function syncProgramItemRowState(row) {
   const valueInput = row.querySelector(".value-input");
 
   if (typeInput.value === "rm") {
-    valueInput.value = "";
-    valueInput.disabled = true;
-    valueInput.placeholder = "RM";
+    valueInput.disabled = false;
+    valueInput.placeholder = "RM \u6b21\u6578\uff08\u9078\u586b\uff0c\u4f8b\uff1a3\uff09";
     return;
   }
 
@@ -3238,13 +3239,14 @@ function addStudentProgramEditRow(item = {}, sourceIndex = -1) {
     exercise.value = item.exercise || "";
     sets.value = item.targetSets || 4;
     type.value = item.targetType || "reps";
-    value.value = item.targetType === "rm" ? "" : (item.targetValue || 8);
+    value.value = item.targetType === "rm"
+      ? (item.targetValue || "")
+      : (item.targetValue || 8);
 
     const sync = () => {
       if (type.value === "rm") {
-        value.value = "";
-        value.disabled = true;
-        value.placeholder = "RM";
+        value.disabled = false;
+        value.placeholder = "RM \u6b21\u6578\uff08\u9078\u586b\uff0c\u4f8b\uff1a3\uff09";
         return;
       }
       value.disabled = false;
@@ -3286,13 +3288,14 @@ function addStudentProgramEditRow(item = {}, sourceIndex = -1) {
   exercise.value = item.exercise || "";
   sets.value = item.targetSets || 4;
   type.value = item.targetType || "reps";
-  value.value = item.targetType === "rm" ? "" : (item.targetValue || 8);
+  value.value = item.targetType === "rm"
+    ? (item.targetValue || "")
+    : (item.targetValue || 8);
 
   const sync = () => {
     if (type.value === "rm") {
-      value.value = "";
-      value.disabled = true;
-      value.placeholder = "RM";
+      value.disabled = false;
+      value.placeholder = "RM \u6b21\u6578\uff08\u9078\u586b\uff0c\u4f8b\uff1a3\uff09";
       return;
     }
 
@@ -3368,9 +3371,7 @@ function collectProgramPayload(options = {}) {
       exercise: row.querySelector(".exercise-input").value.trim(),
       targetSets: Number(row.querySelector(".sets-input").value || 0),
       targetType: row.querySelector(".type-input").value,
-      targetValue: row.querySelector(".type-input").value === "rm"
-        ? 0
-        : Number(row.querySelector(".value-input").value || 0),
+      targetValue: Number(row.querySelector(".value-input").value || 0),
       itemNote: row.querySelector(".item-note-input").value.trim()
     }))
     .filter((item) => item.exercise && item.targetSets > 0 && (item.targetType === "rm" || item.targetValue > 0))
@@ -5721,7 +5722,7 @@ function saveStudentProgramEdits() {
         exercise: row.querySelector(".student-edit-exercise").value.trim(),
         targetSets: Number(row.querySelector(".student-edit-sets").value || 0),
         targetType: type,
-        targetValue: type === "rm" ? 0 : Number(row.querySelector(".student-edit-value").value || 0),
+        targetValue: Number(row.querySelector(".student-edit-value").value || 0),
         itemNote: sourceEntry?.itemNote || "",
         actualWeight: sourceEntry?.actualWeight || "",
         actualSets: sourceEntry?.actualSets || "",
