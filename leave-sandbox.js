@@ -2010,6 +2010,11 @@
         leaveStateSnapshotUnsupported = true;
         return false;
       }
+      if (isStorageQuotaError(error)) {
+        leaveStateSnapshotUnsupported = true;
+        addLog("[雲端同步] Apps Script Properties 儲存配額爆滿，停用本次 session 的 snapshot 上傳。");
+        return false;
+      }
       throw error;
     }
   }
@@ -2114,6 +2119,14 @@
           };
           console.warn("Cloud leave snapshot auto upload failed:", detail);
           addLog(`[雲端同步] 自動上傳 snapshot 失敗：${detail.name} / ${detail.message}`);
+          // 一旦遇到配額爆滿，本 session 不再嘗試 snapshot 上傳（避免一直重撞）。
+          // 單筆 saveLeaveRecord / saveBillingProfile 路徑不受影響。教練可在 Apps
+          // Script 編輯器清理 LEAVE_STATE_SNAPSHOT_V1_* 後重新整理頁面恢復。
+          if (isStorageQuotaError(error)) {
+            leaveStateSnapshotUnsupported = true;
+            addLog("[雲端同步] 偵測到 Apps Script 儲存配額爆滿，本次 session 不再嘗試 snapshot 上傳。請至 Apps Script 編輯器清理屬性後刷新頁面。");
+            notifyUser("雲端 snapshot 儲存空間不足，自動同步已停用。請聯絡管理員清理 Apps Script Properties。", "warning");
+          }
         });
     }, 1800);
   }
@@ -2334,6 +2347,11 @@
     const baselineDayStart = new Date(baselineTime);
     baselineDayStart.setHours(0, 0, 0, 0);
     return lessonTime >= baselineDayStart.getTime();
+  }
+
+  function isStorageQuotaError(error) {
+    const message = String(error?.message || error || "");
+    return /超出.*資源.*配額|配額上限|storage.*quota|exceeded.*quota|quota.*exceeded/i.test(message);
   }
 
   function isUnsupportedAppsScriptAction(error, action) {
