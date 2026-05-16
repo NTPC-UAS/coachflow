@@ -1489,6 +1489,15 @@
     }
     const lesson = findLessonForCloudLeaveRecord(record) || ensureLessonForCloudLeaveRecord(record);
     if (!lesson) {
+      console.warn("[雲端請假] applyCloudLeaveRecord 找不到對應課程：", {
+        recordId: record.id,
+        studentCode: record.studentCode,
+        coachCode: record.coachCode,
+        lessonId: record.lessonId,
+        calendarEventId: record.calendarEventId,
+        lessonStartAt: record.lessonStartAt
+      });
+      addLog(`[雲端請假] 找不到對應課程，跳過 record ${record.id}（${record.studentCode} / ${formatDateTime(record.lessonStartAt)}）。lessonId=${record.lessonId || "(空)"} eventId=${record.calendarEventId || "(空)"}`);
       return false;
     }
     const existing = state.leaveRequests.find((leave) => leave.id === record.id) ||
@@ -2046,7 +2055,14 @@
     cloudSnapshotUploadTimer = window.setTimeout(() => {
       saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode }, { reason })
         .catch((error) => {
-          console.warn("Cloud leave snapshot auto upload failed:", error);
+          // 把 Error 內容明確攤開，避免 console 只印出 Error {} 看不出原因。
+          const detail = {
+            name: error?.name || "(unknown)",
+            message: error?.message || String(error),
+            stack: error?.stack || "(no stack)"
+          };
+          console.warn("Cloud leave snapshot auto upload failed:", detail);
+          addLog(`[雲端同步] 自動上傳 snapshot 失敗：${detail.name} / ${detail.message}`);
         });
     }, 1800);
   }
