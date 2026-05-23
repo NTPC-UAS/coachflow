@@ -3,7 +3,9 @@ const SHEETS = {
   students: "Students",
   programs: "Programs",
   programItems: "ProgramItems",
-  workoutLogs: "WorkoutLogs"
+  workoutLogs: "WorkoutLogs",
+  leaveRecords: "LeaveRecords",
+  billingProfiles: "BillingProfiles"
 };
 const APP_TIME_ZONE = "Asia/Taipei";
 
@@ -76,6 +78,58 @@ const SCHEMA = {
     "student_note",
     "submitted_at",
     "updated_at"
+  ],
+  // 請假紀錄表：從 PropertiesService.LEAVE_RECORDS_V1 遷移過來。
+  // 欄位對齊 normalizeLeaveRecord_，每筆 leave 一列。
+  LeaveRecords: [
+    "id",
+    "lessonId",
+    "lessonKey",
+    "calendarEventId",
+    "studentCode",
+    "coachCode",
+    "lessonStartAt",
+    "type",
+    "submittedAt",
+    "submittedBy",
+    "submittedByRole",
+    "makeupEligible",
+    "emailNoticeStatus",
+    "emailNoticeAt",
+    "revokedAt",
+    "revokedBy",
+    "createdAt",
+    "updatedAt"
+  ],
+  // 學生扣費 profile：從 PropertiesService.BILLING_PROFILES_V1 遷移過來。
+  // chargeReminderLogs 原本是物件陣列，cell 存不下 → 序列化成 JSON 存在
+  // chargeReminderLogsJson，讀回時 parse。
+  BillingProfiles: [
+    "studentCode",
+    "coachCode",
+    "studentName",
+    "email",
+    "emailUpdatedAt",
+    "emailUpdatedBy",
+    "chargeStartCount",
+    "chargeStartCountUpdatedAt",
+    "chargeStartCountUpdatedBy",
+    "paidThroughCount",
+    "paymentStatus",
+    "paymentNote",
+    "paymentConfirmedAt",
+    "paymentConfirmedBy",
+    "chargeReminderLogsJson",
+    "chargeReminderStep",
+    "systemChargedCount",
+    "totalChargedCount",
+    "currentCycleChargedCount",
+    "remainingToNextPayment",
+    "nextPaymentDueCount",
+    "effectivePaymentStatus",
+    "updatedAt",
+    "updatedBy",
+    "createdAt"
   ]
 };
 
@@ -296,7 +350,12 @@ function shouldEnsureSheetsForAction_(action) {
     "submitWorkoutLogs",
     "importWorkoutLogs",
     "touchCoach",
-    "touchStudent"
+    "touchStudent",
+    // 遷移後請假/扣費也走 Sheet，確保分頁存在再操作
+    "listLeaveRecords",
+    "saveLeaveRecord",
+    "listBillingProfiles",
+    "saveBillingProfile"
   ];
   return sheetActions.indexOf(normalized) !== -1;
 }
@@ -1596,22 +1655,27 @@ function getLeaveRecordKey_(record) {
   return safeString_(record.id, "") || safeString_(record.lessonKey, "");
 }
 
+// 已從 PropertiesService.LEAVE_RECORDS_V1 遷移到 Sheet（一筆一列）。
+// PropertiesService 整個 script 上限 500KB，請假紀錄會持續累積撞牆；Sheet 容量
+// 實質沒有上限，也不會跟其他 properties 互相排擠。
 function getLeaveRecords_() {
-  const raw = readChunkedProperty_("LEAVE_RECORDS_V1");
-  if (!raw) {
-    return [];
-  }
-
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(normalizeLeaveRecord_) : [];
-  } catch (error) {
-    return [];
-  }
+  const rows = readTable_(SHEETS.leaveRecords);
+  return rows.map(normalizeLeaveRecord_);
 }
 
+// 整批覆寫：清掉資料區（保留 header）再 bulk write。
+// saveLeaveRecord_ 仍是 read-modify-write 整包；寫入量低（請假頻率不高），Sheet
+// 寫 500 列約一秒可接受，且語意最直接、不會留半成品。
 function setLeaveRecords_(records) {
-  writeChunkedProperty_("LEAVE_RECORDS_V1", JSON.stringify(records || []));
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(SHEETS.leaveRecords);
+  const headers = SCHEMA.LeaveRecords;
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+  }
+  if (records && records.length) {
+    appendRows_(SHEETS.leaveRecords, records.map(normalizeLeaveRecord_));
+  }
 }
 
 function listBillingProfiles_(payload) {
@@ -1724,92 +1788,75 @@ function getBillingProfileKey_(profile) {
   return normalizeCode_(profile.studentCode);
 }
 
+// 已從 PropertiesService.BILLING_PROFILES_V1 遷移到 Sheet。
+// chargeReminderLogs 是物件陣列，cell 存不下 → 序列化進 chargeReminderLogsJson 欄位。
 function getBillingProfiles_() {
-  const raw = readChunkedProperty_("BILLING_PROFILES_V1");
-  if (!raw) {
-    return [];
-  }
-  try {
-    const parsed = JSON.parse(raw);
-    return Array.isArray(parsed) ? parsed.map(normalizeBillingProfile_) : [];
-  } catch (error) {
-    return [];
-  }
+  const rows = readTable_(SHEETS.billingProfiles);
+  return rows.map(function(row) {
+    var logs;
+    try {
+      const raw = String(row.chargeReminderLogsJson || "").trim();
+      logs = raw ? JSON.parse(raw) : [];
+      if (!Array.isArray(logs)) {
+        logs = [];
+      }
+    } catch (error) {
+      logs = [];
+    }
+    row.chargeReminderLogs = logs;
+    return normalizeBillingProfile_(row);
+  });
 }
 
 function setBillingProfiles_(profiles) {
-  writeChunkedProperty_("BILLING_PROFILES_V1", JSON.stringify(profiles || []));
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(SHEETS.billingProfiles);
+  const headers = SCHEMA.BillingProfiles;
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+  }
+  if (profiles && profiles.length) {
+    const rowsToWrite = profiles.map(function(profile) {
+      const normalized = normalizeBillingProfile_(profile);
+      const row = Object.assign({}, normalized);
+      row.chargeReminderLogsJson = JSON.stringify(normalized.chargeReminderLogs || []);
+      delete row.chargeReminderLogs;
+      return row;
+    });
+    appendRows_(SHEETS.billingProfiles, rowsToWrite);
+  }
 }
 
+// === Snapshot 端點停用 ===
+// 過去 snapshot 把整份 coach state（lessons / leaves / makeups / billing）序列化
+// 進 PropertiesService，是 500KB 配額爆炸的主要元兇。原始資料現在都在 Sheet
+// 與 Google Calendar，snapshot 只是個 cache 層，可以直接拿掉：
+//
+// - getLeaveStateSnapshot_ 一律回 found:false，前端會 fallback 走
+//   listLeaveRecords + listBillingProfiles + listEvents 重建狀態。
+// - saveLeaveStateSnapshot_ 直接 no-op，回 ok:true 避免前端 retry。
+//
+// 老 client 仍會 call 這兩支，所以保留 action handler，只是 body 改空殼。
+// 待所有 PWA 都更新到新版後可考慮整個 case 區段刪除。
 function getLeaveStateSnapshot_(payload) {
-  const key = getLeaveStateSnapshotKey_(payload);
-  const raw = readChunkedProperty_(key);
-  if (!raw) {
-    return {
-      ok: true,
-      action: "getLeaveStateSnapshot",
-      found: false,
-      snapshot: null
-    };
-  }
-
-  try {
-    const snapshot = JSON.parse(raw);
-    return {
-      ok: true,
-      action: "getLeaveStateSnapshot",
-      found: true,
-      snapshot: snapshot
-    };
-  } catch (error) {
-    // 雲端那份 snapshot 是「狀態快照 cache」，真資料在 LEAVE_RECORDS_V1 / Calendar，
-    // 拿不到 cache 不該擋掉前端的後續流程。改成回傳 found:false（讓前端視同沒 snapshot）
-    // 並在 corrupt 旗標裡告知，前端可以在 saveLeaveStateSnapshot 時強制覆寫掉這份壞掉的 blob。
-    // 過去的 ok:false 設計會讓 callAppsScriptApi 直接 throw，使「儲存前必先 fetch」的流程
-    // 整個放棄，雲端 snapshot 永遠寫不進新資料 → 多裝置同步永遠卡在壞掉那刻。
-    return {
-      ok: true,
-      action: "getLeaveStateSnapshot",
-      found: false,
-      corrupt: true,
-      snapshot: null,
-      message: "Existing snapshot is unreadable; treating as missing so client can overwrite."
-    };
-  }
+  return {
+    ok: true,
+    action: "getLeaveStateSnapshot",
+    found: false,
+    snapshot: null,
+    migrated: true,
+    message: "Snapshot storage discontinued; client should fall back to listLeaveRecords + listBillingProfiles + listEvents."
+  };
 }
 
 function saveLeaveStateSnapshot_(payload) {
-  const incoming = normalizeLeaveStateSnapshot_(payload.snapshot || payload);
-  return withScriptLock_(function () {
-    const key = getLeaveStateSnapshotKey_(incoming);
-    const existingResult = getLeaveStateSnapshot_(incoming);
-    const existing = existingResult.found ? existingResult.snapshot : null;
-    const existingCorrupt = Boolean(existingResult.corrupt);
-    const force = payload.force === true || String(payload.force || "").toLowerCase() === "true";
-    const baseUpdatedAt = safeString_(payload.baseUpdatedAt || incoming.baseUpdatedAt, "");
-    const existingTime = new Date(existing && existing.updatedAt || 0).getTime();
-    const baseTime = new Date(baseUpdatedAt || 0).getTime();
-    if (!force && existing && !existingCorrupt && Number.isFinite(existingTime) && (!Number.isFinite(baseTime) || baseTime + 2000 < existingTime)) {
-      return {
-        ok: true,
-        action: "saveLeaveStateSnapshot",
-        conflict: true,
-        message: "Cloud leave snapshot is newer than this local copy.",
-        snapshot: existing
-      };
-    }
-
-    incoming.createdAt = safeString_(incoming.createdAt || (existing && existing.createdAt), nowIso_());
-    incoming.updatedAt = nowIso_();
-    writeChunkedProperty_(key, JSON.stringify(incoming));
-    return {
-      ok: true,
-      action: "saveLeaveStateSnapshot",
-      snapshot: incoming,
-      replaced: Boolean(existing),
-      recoveredFromCorrupt: existingCorrupt
-    };
-  });
+  return {
+    ok: true,
+    action: "saveLeaveStateSnapshot",
+    saved: false,
+    migrated: true,
+    message: "Snapshot storage discontinued; saveLeaveRecord / saveBillingProfile is now the canonical persistence."
+  };
 }
 
 function normalizeLeaveStateSnapshot_(snapshot) {
@@ -1958,6 +2005,121 @@ function writeChunkedProperty_(baseKey, value) {
     try { props.deleteProperty(baseKey + "_CHUNKS"); } catch (e) {}
   }
   try { props.deleteProperty(baseKey); } catch (e) {}
+}
+
+// ====================================================================
+// 一次性遷移：把 PropertiesService 的 LEAVE_RECORDS_V1 / BILLING_PROFILES_V1
+// 倒進 LeaveRecords / BillingProfiles 兩張 Sheet，然後清掉舊 properties 與
+// snapshot blob，釋放配額空間。
+//
+// 部署流程：
+//   1. 部署這版 Code.gs 到 Apps Script Editor
+//   2. 在 Editor 手動執行 migrateLeaveAndBillingToSheets
+//      （Run 選單 → 選函式 → Run；看 Log 確認筆數正確）
+//   3. 開 Sheet 肉眼確認 LeaveRecords / BillingProfiles 內容無誤
+//   4. 再執行 cleanupLegacyLeaveProperties 清掉 Properties
+//   5. 在 Editor「部署 → 管理部署 → 新版本」更新 URL 部署版
+//
+// 兩個函式都是 idempotent，多執行幾次不會壞資料。
+// ====================================================================
+
+function migrateLeaveAndBillingToSheets() {
+  ensureSheets_();
+
+  // ---- LEAVE_RECORDS_V1 → LeaveRecords ----
+  const leaveRaw = readChunkedProperty_("LEAVE_RECORDS_V1");
+  if (leaveRaw) {
+    try {
+      const parsed = JSON.parse(leaveRaw);
+      if (Array.isArray(parsed) && parsed.length) {
+        const existing = readTable_(SHEETS.leaveRecords);
+        if (existing.length === 0) {
+          setLeaveRecords_(parsed);
+          Logger.log("[migrate] LeaveRecords 從 properties 寫入 " + parsed.length + " 筆。");
+        } else {
+          Logger.log("[migrate] LeaveRecords Sheet 已有 " + existing.length + " 筆，跳過寫入避免覆蓋。");
+        }
+      } else {
+        Logger.log("[migrate] LEAVE_RECORDS_V1 內容為空或非陣列，跳過。");
+      }
+    } catch (error) {
+      Logger.log("[migrate] LEAVE_RECORDS_V1 parse 失敗：" + error);
+    }
+  } else {
+    Logger.log("[migrate] PropertiesService 沒有 LEAVE_RECORDS_V1，跳過。");
+  }
+
+  // ---- BILLING_PROFILES_V1 → BillingProfiles ----
+  const billingRaw = readChunkedProperty_("BILLING_PROFILES_V1");
+  if (billingRaw) {
+    try {
+      const parsed = JSON.parse(billingRaw);
+      if (Array.isArray(parsed) && parsed.length) {
+        const existing = readTable_(SHEETS.billingProfiles);
+        if (existing.length === 0) {
+          setBillingProfiles_(parsed);
+          Logger.log("[migrate] BillingProfiles 從 properties 寫入 " + parsed.length + " 筆。");
+        } else {
+          Logger.log("[migrate] BillingProfiles Sheet 已有 " + existing.length + " 筆，跳過寫入避免覆蓋。");
+        }
+      } else {
+        Logger.log("[migrate] BILLING_PROFILES_V1 內容為空或非陣列，跳過。");
+      }
+    } catch (error) {
+      Logger.log("[migrate] BILLING_PROFILES_V1 parse 失敗：" + error);
+    }
+  } else {
+    Logger.log("[migrate] PropertiesService 沒有 BILLING_PROFILES_V1，跳過。");
+  }
+
+  Logger.log("[migrate] 完成。請肉眼檢查 Sheet 兩張分頁的資料筆數與內容，再執行 cleanupLegacyLeaveProperties() 清掉 Properties。");
+}
+
+function cleanupLegacyLeaveProperties() {
+  const props = PropertiesService.getScriptProperties();
+  const allKeys = props.getKeys();
+  const LEGACY_BASE_KEYS = ["LEAVE_RECORDS_V1", "BILLING_PROFILES_V1"];
+  const SNAPSHOT_PREFIX = "LEAVE_STATE_SNAPSHOT_V1_";
+
+  let deletedCount = 0;
+  let snapshotDeleted = 0;
+  let legacyDeleted = 0;
+
+  allKeys.forEach(function(key) {
+    let shouldDelete = false;
+    let isSnapshot = false;
+
+    // base 與其 chunked 子鍵（_ACTIVE, _A_CHUNKS, _A_0, _B_CHUNKS, _B_0...; 舊格式 _CHUNKS, _0...）
+    for (var i = 0; i < LEGACY_BASE_KEYS.length; i += 1) {
+      var base = LEGACY_BASE_KEYS[i];
+      if (key === base || key.indexOf(base + "_") === 0) {
+        shouldDelete = true;
+        break;
+      }
+    }
+    // snapshot 系列
+    if (!shouldDelete && key.indexOf(SNAPSHOT_PREFIX) === 0) {
+      shouldDelete = true;
+      isSnapshot = true;
+    }
+
+    if (shouldDelete) {
+      try {
+        props.deleteProperty(key);
+        deletedCount += 1;
+        if (isSnapshot) {
+          snapshotDeleted += 1;
+        } else {
+          legacyDeleted += 1;
+        }
+      } catch (error) {
+        Logger.log("[cleanup] 刪 " + key + " 失敗：" + error);
+      }
+    }
+  });
+
+  Logger.log("[cleanup] 完成。共刪 " + deletedCount + " 個 properties（legacy " + legacyDeleted + " + snapshot " + snapshotDeleted + "）。");
+  Logger.log("[cleanup] 剩下的 properties keys：" + JSON.stringify(props.getKeys()));
 }
 
 /**

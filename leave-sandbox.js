@@ -1577,6 +1577,13 @@
   //    改 lesson、已刪 GCal、已寄信，只差雲端紀錄。補推一次就好。
   //
   // silent=true：背景補救（focus/visibility）用，不彈 notifyUser，依賴 banner 持續顯示。
+  //
+  // Scope 規則：跟 renderPendingSyncBanner 一致。
+  // - 有 activeStudentCode → 只 retry 那位學生本機的請假
+  // - 沒 student 但有 coach → retry 那位教練底下的（教練端可一鍵推完所有未同步的）
+  // - 都沒有 → 跳過（沒登入時不該偷偷打 API）
+  // 早期版本不 scope，會在「學生測試頁」這種共用 state 場景，把其他學生未同步的請假
+  // 一併推上去、並在 notifyUser 統計裡把總數呈現給學生看，洩漏隔壁資料。
   async function retryUnsyncedLocalLeaves(options = {}) {
     const silent = Boolean(options && options.silent);
     if (!getAppsScriptUrl()) {
@@ -1585,12 +1592,21 @@
       }
       return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
     }
-    const candidates = (state.leaveRequests || []).filter((leave) => (
-      leave &&
-      !leave.revokedAt &&
-      String(leave.type || "normal") === "normal" &&
-      !leave.cloudSyncedAt
-    ));
+    if (!activeStudentCode && !activeCoachCode) {
+      if (!silent) {
+        addLog("[雲端請假補救] 尚未登入學生或教練，跳過。");
+      }
+      return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
+    }
+    const candidates = (state.leaveRequests || []).filter((leave) => {
+      if (!leave || leave.revokedAt) return false;
+      if (String(leave.type || "normal") !== "normal") return false;
+      if (leave.cloudSyncedAt) return false;
+      if (activeStudentCode) {
+        return leave.studentCode === activeStudentCode;
+      }
+      return leave.coachCode === activeCoachCode;
+    });
     if (!candidates.length) {
       if (!silent) {
         addLog("[雲端請假補救] 沒有需要補推的請假紀錄。");
@@ -2268,6 +2284,10 @@
   // 列出本機所有 pendingCloudSync 的請假，組成持續可見的紅色 banner。
   // 學生請假時若雲端失敗會留下 pendingCloudSync，banner 提醒並提供「立即重試」按鈕；
   // 背景的 retryUnsyncedLocalLeaves 也會在 focus/visibility 時自動跑一次（silent）。
+  //
+  // Scope 規則：若有 activeStudentCode → 只看那位學生的；否則退回 activeCoachCode 的全部；
+  // 都沒有就空。早期版本用 student OR coach 的 OR 條件，會在「學生測試頁」這種同時有
+  // student/coach session 的情境，把同教練底下其他學生的請假紀錄也顯示給學生看。
   function renderPendingSyncBanner() {
     if (!el.pendingLeaveBanner) {
       return;
@@ -2275,12 +2295,14 @@
     const all = (state.leaveRequests || []).filter((leave) => (
       leave && !leave.revokedAt && leave.pendingCloudSync && !leave.cloudSyncedAt
     ));
-    const visible = (activeStudentCode || activeCoachCode)
-      ? all.filter((leave) => (
-        (activeStudentCode && leave.studentCode === activeStudentCode) ||
-        (activeCoachCode && leave.coachCode === activeCoachCode)
-      ))
-      : all;
+    let visible;
+    if (activeStudentCode) {
+      visible = all.filter((leave) => leave.studentCode === activeStudentCode);
+    } else if (activeCoachCode) {
+      visible = all.filter((leave) => leave.coachCode === activeCoachCode);
+    } else {
+      visible = [];
+    }
     if (!visible.length) {
       el.pendingLeaveBanner.hidden = true;
       return;
@@ -2289,7 +2311,10 @@
       .map((leave) => {
         const lesson = getLessonById(leave.lessonId);
         const when = lesson ? formatDateTime(lesson.startAt) : "(找不到課程)";
-        return `${leave.studentCode}@${when}`;
+        // 學生視角不需要再印自己的 student code，省版面；教練視角則保留以區分學生
+        return activeStudentCode && !activeCoachCode
+          ? when
+          : `${leave.studentCode}@${when}`;
       })
       .join("、");
     if (el.pendingLeaveText) {
