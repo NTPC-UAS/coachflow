@@ -826,25 +826,25 @@ function submitWorkoutLogsLocked_(logs) {
   programs.forEach(function(row) { programById[String(row.program_id || "")] = row; });
   coaches.forEach(function(row) { coachById[String(row.coach_id || "")] = row; });
 
-  // 建 in-memory match map：key = student + program + activityDate + exercise，
-  // value = existing log_id。後續 incoming logs 對著 map 查 → 有就 update by log_id、
-  // 沒就 append。同一 batch 內後面進來的 record 如果撞到前面 record 的 key，也走 update
-  // 不重複 append。
-  const matchMap = {};
-  const buildKey = function(rec) {
-    return [
-      String(rec.student_id || ""),
-      String(rec.program_id || ""),
-      getWorkoutLogActivityDate_(rec),
-      String(rec.exercise || "")
-    ].join("|");
-  };
+  // Match key 改用 log_id（client 端 generate 的 UUID）：
+  // - retry 重送同筆 → 同一個 log_id → upsert，不重複
+  // - 不同時段送同動作 → 不同 log_id → 各自一筆，不誤合
+  // - client 沒有 edit-resubmit 流程，每次送出都是新 log_id（user 確認過）
+  //
+  // 舊版 match key 用 student+program+activityDate+exercise，會把「同一天
+  // 同一份 program 的同動作」整批硬合成一筆——dedupeWorkoutLogs 用同樣
+  // key 跑下去殺掉一堆其實合法的「同動作不同時段」紀錄，這次一併修。
+  const existingByLogId = {};
   existingRows.forEach(function(row) {
-    matchMap[buildKey(row)] = row.log_id;
+    const id = String(row.log_id || "");
+    if (id) {
+      existingByLogId[id] = row;
+    }
   });
 
   const toAppend = [];
   const pendingUpdates = [];
+  const batchSeenLogIds = {};
   logs.forEach(function(log) {
     const studentId = String(log.student_id || log.studentId || "");
     const programId = String(log.program_id || log.programId || "");
@@ -881,17 +881,13 @@ function submitWorkoutLogsLocked_(logs) {
       updated_at: now
     };
 
-    const key = buildKey(record);
-    const existingLogId = matchMap[key];
-    if (existingLogId) {
-      // 用既有 log_id 蓋掉
-      record.log_id = existingLogId;
+    if (existingByLogId[record.log_id] || batchSeenLogIds[record.log_id]) {
+      // 同 log_id 已存在於 Sheet 或同批次中 → upsert（retry 自動收斂）
       pendingUpdates.push(record);
     } else {
-      // 新增 → 同時更新 matchMap 讓 batch 內後面相同 key 的記錄也走 update
-      matchMap[key] = record.log_id;
       toAppend.push(record);
     }
+    batchSeenLogIds[record.log_id] = true;
   });
 
   pendingUpdates.forEach(function(record) {
@@ -900,7 +896,6 @@ function submitWorkoutLogsLocked_(logs) {
   if (toAppend.length) {
     appendRows_(SHEETS.workoutLogs, toAppend);
   }
-  // 強制 flush 避免後續其他請求 readTable_ 還是讀到舊資料
   SpreadsheetApp.flush();
 }
 
@@ -2171,10 +2166,13 @@ function cleanupLegacyLeaveProperties() {
 }
 
 /**
- * 一次性：清掉 WorkoutLogs 分頁的重複列。
- * 重複定義 = 同 student_id + program_id + activity_date + exercise。
- * 多筆並存時保留 updated_at 最新那一筆，其餘刪除。
- * 部署新版 Code.gs 後在 Editor 跑一次即可。idempotent，多跑不會壞。
+ * 一次性：清掉 WorkoutLogs 分頁裡有相同 log_id 的真重複列。
+ * 重複定義 = 同 log_id 出現多次（並行 submit race / 同一筆 retry 直接 append 出來
+ * 的副本）。多筆並存時保留 updated_at 最新那一筆、其餘刪除。
+ *
+ * 注意：先前版本誤用 (student + program + activity_date + exercise) 當重複 key，
+ * 會把「同一天送了多次同動作」這種合法多筆紀錄硬合掉。已修正成只比 log_id。
+ * 部署新版 Code.gs 後在 Editor 跑一次即可。idempotent。
  */
 function dedupeWorkoutLogs() {
   return withScriptLock_(function () {
@@ -2191,15 +2189,11 @@ function dedupeWorkoutLogs() {
     const headers = values[0];
     const headerIndex = {};
     headers.forEach(function(h, i) { headerIndex[h] = i; });
-    const required = ["log_id", "student_id", "program_id", "exercise", "updated_at"];
-    for (var i = 0; i < required.length; i += 1) {
-      if (!(required[i] in headerIndex)) {
-        Logger.log("[dedupe] 缺欄位：" + required[i] + "，中止。");
-        return;
-      }
+    if (!("log_id" in headerIndex) || !("updated_at" in headerIndex)) {
+      Logger.log("[dedupe] 缺 log_id 或 updated_at 欄位，中止。");
+      return;
     }
 
-    // 把 row index 與資料合在一起，方便挑保留的
     const records = [];
     for (var r = 1; r < values.length; r += 1) {
       const row = values[r];
@@ -2208,23 +2202,19 @@ function dedupeWorkoutLogs() {
       records.push({ rowIndex: r + 1, data: obj });
     }
 
-    // 群組
+    // 群組：只依 log_id
     const groups = {};
     records.forEach(function(rec) {
-      const activityDate = getWorkoutLogActivityDate_(rec.data);
-      const key = [
-        String(rec.data.student_id || ""),
-        String(rec.data.program_id || ""),
-        activityDate,
-        String(rec.data.exercise || "")
-      ].join("|");
+      const key = String(rec.data.log_id || "").trim();
+      if (!key) {
+        return; // 沒 log_id 的列就不動，避免把 import 進來的舊資料誤殺
+      }
       if (!groups[key]) {
         groups[key] = [];
       }
       groups[key].push(rec);
     });
 
-    // 每組挑 updated_at 最新的留下，其餘 rowIndex 加入刪除清單
     const toDelete = [];
     Object.keys(groups).forEach(function(key) {
       const list = groups[key];
@@ -2234,19 +2224,17 @@ function dedupeWorkoutLogs() {
       list.sort(function(a, b) {
         return new Date(b.data.updated_at || 0) - new Date(a.data.updated_at || 0);
       });
-      // 保留 list[0]，其餘加入刪除
       list.slice(1).forEach(function(rec) { toDelete.push(rec.rowIndex); });
-      Logger.log("[dedupe] key=" + key + " 找到 " + list.length + " 筆，保留 " + list[0].data.log_id + "，刪除 " + list.slice(1).map(function(r) { return r.data.log_id; }).join(", "));
+      Logger.log("[dedupe] log_id=" + key + " 重複 " + list.length + " 筆，保留 updated_at " + list[0].data.updated_at + "，刪除其餘 " + (list.length - 1) + " 筆。");
     });
 
-    // 由大到小刪，避免 index shift
     toDelete.sort(function(a, b) { return b - a; });
     toDelete.forEach(function(rowIndex) {
       sheet.deleteRow(rowIndex);
     });
 
     SpreadsheetApp.flush();
-    Logger.log("[dedupe] 完成。共刪 " + toDelete.length + " 列重複的 WorkoutLogs。");
+    Logger.log("[dedupe] 完成。共刪 " + toDelete.length + " 列同 log_id 的重複 WorkoutLogs。");
   });
 }
 
