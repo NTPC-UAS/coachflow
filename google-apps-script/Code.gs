@@ -798,24 +798,53 @@ function replaceProgramItems_(programId, items) {
 }
 
 function submitWorkoutLogs_(logs) {
+  // 用 ScriptLock 避免並行請求 race：
+  // client 端 callCloudApiCritical 失敗會 retry，三次請求可能同時到達 Apps Script。
+  // 沒鎖的話三個 execution 各跑 readTable_、都看不到對方 append 的 row、各自 append
+  // → 同一筆 workout log 在 Sheet 變成 N 份重複。
+  //
+  // 同時：把整個 batch 改用「一次讀 + in-memory match map + 批次寫」邏輯，比
+  // 原本 logs.forEach(replaceMatchingWorkoutLog_) 每次都 readTable_ 快很多，
+  // 也避開「同一 batch 內前面 row 寫進去後 readTable_ 可能因 Apps Script 未
+  // flush 看不到」這個 read-after-write 一致性風險。
+  return withScriptLock_(function () {
+    return submitWorkoutLogsLocked_(logs);
+  });
+}
+
+function submitWorkoutLogsLocked_(logs) {
   const now = nowString_();
   const students = readTable_(SHEETS.students);
   const programs = readTable_(SHEETS.programs);
   const coaches = readTable_(SHEETS.coaches);
+  const existingRows = readTable_(SHEETS.workoutLogs);
+
   const studentById = {};
   const programById = {};
   const coachById = {};
+  students.forEach(function(row) { studentById[String(row.student_id || "")] = row; });
+  programs.forEach(function(row) { programById[String(row.program_id || "")] = row; });
+  coaches.forEach(function(row) { coachById[String(row.coach_id || "")] = row; });
 
-  students.forEach(function(row) {
-    studentById[String(row.student_id || "")] = row;
-  });
-  programs.forEach(function(row) {
-    programById[String(row.program_id || "")] = row;
-  });
-  coaches.forEach(function(row) {
-    coachById[String(row.coach_id || "")] = row;
+  // 建 in-memory match map：key = student + program + activityDate + exercise，
+  // value = existing log_id。後續 incoming logs 對著 map 查 → 有就 update by log_id、
+  // 沒就 append。同一 batch 內後面進來的 record 如果撞到前面 record 的 key，也走 update
+  // 不重複 append。
+  const matchMap = {};
+  const buildKey = function(rec) {
+    return [
+      String(rec.student_id || ""),
+      String(rec.program_id || ""),
+      getWorkoutLogActivityDate_(rec),
+      String(rec.exercise || "")
+    ].join("|");
+  };
+  existingRows.forEach(function(row) {
+    matchMap[buildKey(row)] = row.log_id;
   });
 
+  const toAppend = [];
+  const pendingUpdates = [];
   logs.forEach(function(log) {
     const studentId = String(log.student_id || log.studentId || "");
     const programId = String(log.program_id || log.programId || "");
@@ -852,8 +881,27 @@ function submitWorkoutLogs_(logs) {
       updated_at: now
     };
 
-    replaceMatchingWorkoutLog_(record);
+    const key = buildKey(record);
+    const existingLogId = matchMap[key];
+    if (existingLogId) {
+      // 用既有 log_id 蓋掉
+      record.log_id = existingLogId;
+      pendingUpdates.push(record);
+    } else {
+      // 新增 → 同時更新 matchMap 讓 batch 內後面相同 key 的記錄也走 update
+      matchMap[key] = record.log_id;
+      toAppend.push(record);
+    }
   });
+
+  pendingUpdates.forEach(function(record) {
+    updateRow_(SHEETS.workoutLogs, "log_id", record.log_id, record);
+  });
+  if (toAppend.length) {
+    appendRows_(SHEETS.workoutLogs, toAppend);
+  }
+  // 強制 flush 避免後續其他請求 readTable_ 還是讀到舊資料
+  SpreadsheetApp.flush();
 }
 
 function importWorkoutLogs_(logs) {
@@ -2120,6 +2168,86 @@ function cleanupLegacyLeaveProperties() {
 
   Logger.log("[cleanup] 完成。共刪 " + deletedCount + " 個 properties（legacy " + legacyDeleted + " + snapshot " + snapshotDeleted + "）。");
   Logger.log("[cleanup] 剩下的 properties keys：" + JSON.stringify(props.getKeys()));
+}
+
+/**
+ * 一次性：清掉 WorkoutLogs 分頁的重複列。
+ * 重複定義 = 同 student_id + program_id + activity_date + exercise。
+ * 多筆並存時保留 updated_at 最新那一筆，其餘刪除。
+ * 部署新版 Code.gs 後在 Editor 跑一次即可。idempotent，多跑不會壞。
+ */
+function dedupeWorkoutLogs() {
+  return withScriptLock_(function () {
+    const sheet = getCoachflowSpreadsheet_().getSheetByName(SHEETS.workoutLogs);
+    if (!sheet) {
+      Logger.log("[dedupe] 找不到 WorkoutLogs 分頁。");
+      return;
+    }
+    const values = sheet.getDataRange().getValues();
+    if (values.length <= 1) {
+      Logger.log("[dedupe] WorkoutLogs 沒有資料列。");
+      return;
+    }
+    const headers = values[0];
+    const headerIndex = {};
+    headers.forEach(function(h, i) { headerIndex[h] = i; });
+    const required = ["log_id", "student_id", "program_id", "exercise", "updated_at"];
+    for (var i = 0; i < required.length; i += 1) {
+      if (!(required[i] in headerIndex)) {
+        Logger.log("[dedupe] 缺欄位：" + required[i] + "，中止。");
+        return;
+      }
+    }
+
+    // 把 row index 與資料合在一起，方便挑保留的
+    const records = [];
+    for (var r = 1; r < values.length; r += 1) {
+      const row = values[r];
+      const obj = {};
+      headers.forEach(function(h, i) { obj[h] = row[i]; });
+      records.push({ rowIndex: r + 1, data: obj });
+    }
+
+    // 群組
+    const groups = {};
+    records.forEach(function(rec) {
+      const activityDate = getWorkoutLogActivityDate_(rec.data);
+      const key = [
+        String(rec.data.student_id || ""),
+        String(rec.data.program_id || ""),
+        activityDate,
+        String(rec.data.exercise || "")
+      ].join("|");
+      if (!groups[key]) {
+        groups[key] = [];
+      }
+      groups[key].push(rec);
+    });
+
+    // 每組挑 updated_at 最新的留下，其餘 rowIndex 加入刪除清單
+    const toDelete = [];
+    Object.keys(groups).forEach(function(key) {
+      const list = groups[key];
+      if (list.length < 2) {
+        return;
+      }
+      list.sort(function(a, b) {
+        return new Date(b.data.updated_at || 0) - new Date(a.data.updated_at || 0);
+      });
+      // 保留 list[0]，其餘加入刪除
+      list.slice(1).forEach(function(rec) { toDelete.push(rec.rowIndex); });
+      Logger.log("[dedupe] key=" + key + " 找到 " + list.length + " 筆，保留 " + list[0].data.log_id + "，刪除 " + list.slice(1).map(function(r) { return r.data.log_id; }).join(", "));
+    });
+
+    // 由大到小刪，避免 index shift
+    toDelete.sort(function(a, b) { return b - a; });
+    toDelete.forEach(function(rowIndex) {
+      sheet.deleteRow(rowIndex);
+    });
+
+    SpreadsheetApp.flush();
+    Logger.log("[dedupe] 完成。共刪 " + toDelete.length + " 列重複的 WorkoutLogs。");
+  });
 }
 
 /**
