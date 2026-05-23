@@ -118,7 +118,12 @@
     coachCloudSyncText: document.getElementById("coach-cloud-sync-text"),
     pendingLeaveBanner: document.getElementById("pending-leave-banner"),
     pendingLeaveText: document.getElementById("pending-leave-text"),
-    pendingLeaveRetryBtn: document.getElementById("pending-leave-retry-btn")
+    pendingLeaveRetryBtn: document.getElementById("pending-leave-retry-btn"),
+    manualLessonStudent: document.getElementById("manual-lesson-student"),
+    manualLessonDate: document.getElementById("manual-lesson-date"),
+    manualLessonTime: document.getElementById("manual-lesson-time"),
+    manualLessonAlreadyAttended: document.getElementById("manual-lesson-already-attended"),
+    manualLessonAddBtn: document.getElementById("manual-lesson-add-btn")
   };
 
   let state = loadState();
@@ -2321,6 +2326,122 @@
       el.pendingLeaveText.textContent = `有 ${visible.length} 筆請假尚未同步到雲端：${lessonsText}。系統會在頁面聚焦/重新整理時自動重試；要立刻試的話按右邊按鈕。`;
     }
     el.pendingLeaveBanner.hidden = false;
+  }
+
+  // ----- 手動新增學生上課（教練端） -----
+  // 對應 leave-coach-sandbox.html 的「手動新增學生上課」card：
+  // 不靠 Google 日曆主動加課，由教練從系統 push 一筆 lesson 並同步建出 GCal 事件。
+  // sourceType 用 "REGULAR" 跟 GCal 來源等價，後續請假/補課/扣堂流程全自動沿用。
+  function populateManualLessonStudentSelect() {
+    if (!el.manualLessonStudent) {
+      return;
+    }
+    const select = el.manualLessonStudent;
+    if (!activeCoachCode) {
+      select.innerHTML = "<option value=\"\">請先登入教練</option>";
+      select.disabled = true;
+      return;
+    }
+    const previousValue = select.value;
+    const students = (state.students || [])
+      .filter((student) => student && student.coachCode === activeCoachCode && !isHiddenChargeStudent(student))
+      .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code), "zh-Hant"));
+    if (!students.length) {
+      select.innerHTML = "<option value=\"\">這個教練底下還沒有學生</option>";
+      select.disabled = true;
+      return;
+    }
+    select.innerHTML = "<option value=\"\">請選擇學生</option>" + students.map((student) => (
+      `<option value="${student.code}">${student.name || student.code}（${student.code}）</option>`
+    )).join("");
+    select.disabled = false;
+    if (previousValue && students.some((student) => student.code === previousValue)) {
+      select.value = previousValue;
+    }
+  }
+
+  async function addManualStudentLesson() {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
+    if (!activeCoachCode) {
+      alert("請先登入教練帳號。");
+      return;
+    }
+    if (!el.manualLessonStudent || !el.manualLessonDate || !el.manualLessonTime) {
+      return;
+    }
+    const studentCode = String(el.manualLessonStudent.value || "").trim();
+    const dateKey = String(el.manualLessonDate.value || "").trim();
+    const timeText = String(el.manualLessonTime.value || "").trim();
+    if (!studentCode) {
+      alert("請選擇學生。");
+      return;
+    }
+    if (!dateKey || !timeText) {
+      alert("請輸入日期與開始時間。");
+      return;
+    }
+    const student = getStudentByCode(studentCode);
+    if (!student || student.coachCode !== activeCoachCode) {
+      alert("找不到該學生，或學生不屬於目前登入的教練。");
+      return;
+    }
+
+    const startAtDate = makeTaipeiDateTime(dateKey, timeText);
+    if (!Number.isFinite(startAtDate.getTime())) {
+      alert("日期或時間格式不正確。");
+      return;
+    }
+    const startAtIso = startAtDate.toISOString();
+
+    // 同一學生在同一教練底下同一時刻已經有課 → 擋下避免重複
+    const duplicate = state.lessons.some((lesson) => (
+      lesson &&
+      lesson.coachCode === activeCoachCode &&
+      lesson.studentCode === studentCode &&
+      new Date(lesson.startAt || "").toISOString() === startAtIso &&
+      lesson.attendanceStatus !== "calendar-removed"
+    ));
+    if (duplicate) {
+      alert("這名學生在此時段已有課程，不重複新增。");
+      return;
+    }
+
+    const alreadyAttended = Boolean(el.manualLessonAlreadyAttended?.checked);
+    const lesson = makeLesson(newId("L"), studentCode, activeCoachCode, dateKey, timeText);
+    if (alreadyAttended) {
+      // 仿 markAutoCompletedLessonsForBilling 把這堂直接記成已扣堂
+      lesson.charged = true;
+      lesson.completedAt = new Date().toISOString();
+      lesson.completedBy = activeCoachCode;
+    }
+    state.lessons.push(lesson);
+    addLog(`教練 ${activeCoachCode} 手動新增學生 ${studentCode} 之上課：${formatDateTime(lesson.startAt)}（${alreadyAttended ? "已上完、立即扣堂" : "未來課程、不扣堂"}）。`);
+    saveState();
+    renderAll();
+    notifyUser(`已建立 ${student.name || studentCode} 的上課（${formatDateTime(lesson.startAt)}），正在同步 Google 日曆...`, "info");
+
+    // 同步建 GCal 事件。非 strict：失敗會走 compensation 任務排隊重試，本機 lesson 仍保留
+    let calendarEventId = "";
+    try {
+      calendarEventId = await tryCreateCalendarEventForLesson(lesson, "coach_manual_add_lesson", false);
+    } catch (error) {
+      addLog(`[Google日曆] 手動新增 ${lesson.id} 建立事件失敗：${String(error?.message || error)}`);
+    }
+    saveState();
+    renderAll();
+
+    if (calendarEventId && !isGeneratedLocalCalendarEventId(calendarEventId)) {
+      notifyUser(`已建立 ${student.name || studentCode} 的上課 + Google 日曆事件。${alreadyAttended ? "已計入扣堂。" : ""}`, "success");
+    } else {
+      notifyUser(`已建立 ${student.name || studentCode} 的上課，但 Google 日曆事件尚未確認；補償任務會自動重試。`, "warning");
+    }
+
+    // 清空 form（保留學生選擇方便連續加同學生不同時段）
+    if (el.manualLessonAlreadyAttended) {
+      el.manualLessonAlreadyAttended.checked = false;
+    }
   }
 
   async function uploadLocalLeaveStateToCloud() {
@@ -8617,6 +8738,7 @@
     renderCloudSnapshotControls();
     updateCoachReadOnlyUi();
     renderPendingSyncBanner();
+    populateManualLessonStudentSelect();
   }
 
   function loadSlotsForSelectedLeave() {
@@ -9208,6 +9330,22 @@
       el.coachLeaveAddBtn.addEventListener("click", () => {
         if (requireCoachWriteAccess()) {
           addCoachLeaveBlock();
+        }
+      });
+    }
+    if (el.manualLessonAddBtn) {
+      el.manualLessonAddBtn.addEventListener("click", async () => {
+        if (el.manualLessonAddBtn.disabled) return;
+        const originalText = el.manualLessonAddBtn.textContent;
+        el.manualLessonAddBtn.disabled = true;
+        el.manualLessonAddBtn.textContent = "新增中...";
+        try {
+          await addManualStudentLesson();
+        } catch (error) {
+          notifyUser(`新增失敗：${String(error?.message || error)}`, "warning");
+        } finally {
+          el.manualLessonAddBtn.disabled = false;
+          el.manualLessonAddBtn.textContent = originalText || "新增學生上課";
         }
       });
     }
