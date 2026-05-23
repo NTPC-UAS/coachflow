@@ -2014,16 +2014,16 @@ function writeChunkedProperty_(baseKey, value) {
 //
 // 部署流程：
 //   1. 部署這版 Code.gs 到 Apps Script Editor
-//   2. 在 Editor 手動執行 migrateLeaveAndBillingToSheets_
+//   2. 在 Editor 手動執行 migrateLeaveAndBillingToSheets
 //      （Run 選單 → 選函式 → Run；看 Log 確認筆數正確）
 //   3. 開 Sheet 肉眼確認 LeaveRecords / BillingProfiles 內容無誤
-//   4. 再執行 cleanupLegacyLeaveProperties_ 清掉 Properties
+//   4. 再執行 cleanupLegacyLeaveProperties 清掉 Properties
 //   5. 在 Editor「部署 → 管理部署 → 新版本」更新 URL 部署版
 //
 // 兩個函式都是 idempotent，多執行幾次不會壞資料。
 // ====================================================================
 
-function migrateLeaveAndBillingToSheets_() {
+function migrateLeaveAndBillingToSheets() {
   ensureSheets_();
 
   // ---- LEAVE_RECORDS_V1 → LeaveRecords ----
@@ -2072,10 +2072,10 @@ function migrateLeaveAndBillingToSheets_() {
     Logger.log("[migrate] PropertiesService 沒有 BILLING_PROFILES_V1，跳過。");
   }
 
-  Logger.log("[migrate] 完成。請肉眼檢查 Sheet 兩張分頁的資料筆數與內容，再執行 cleanupLegacyLeaveProperties_() 清掉 Properties。");
+  Logger.log("[migrate] 完成。請肉眼檢查 Sheet 兩張分頁的資料筆數與內容，再執行 cleanupLegacyLeaveProperties() 清掉 Properties。");
 }
 
-function cleanupLegacyLeaveProperties_() {
+function cleanupLegacyLeaveProperties() {
   const props = PropertiesService.getScriptProperties();
   const allKeys = props.getKeys();
   const LEGACY_BASE_KEYS = ["LEAVE_RECORDS_V1", "BILLING_PROFILES_V1"];
