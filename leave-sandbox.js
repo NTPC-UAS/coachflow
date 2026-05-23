@@ -1727,10 +1727,87 @@
     }
   }
 
+  // 把一筆 lesson 從 leave-normal 強制還原成 scheduled，並把同 lesson 的 active
+  // leave 一併 mark revoked、cloud push。
+  //
+  // 適用兩種 ghost 場景：
+  // A. 有 active leave + lesson=leave-normal：跟 revokeNormalLeave 一樣，但跳過
+  //    UI 的 isLeaveOpen 截止時間檢查，純救援。
+  // B. 沒 active leave，但 lesson 卡在 leave-normal（更詭異的不一致）：
+  //    revokeNormalLeave 會擋下「找不到對應請假紀錄」，這支照樣能還原 lesson。
+  //
+  // 若 calendarEventId 是 local placeholder（GCAL_L_...），清掉並嘗試重建 GCal
+  // 事件；若是真實的 GCal 事件 ID（例如 recurring instance），保留並依賴下一次
+  // 教練同步 Google 日曆對齊。
+  async function restoreLessonToScheduledForDebug(lessonId) {
+    if (!requireCoachWriteAccess()) {
+      return;
+    }
+    const lesson = getLessonById(lessonId);
+    if (!lesson) {
+      console.warn("[restoreLesson] 找不到 lesson:", lessonId);
+      return;
+    }
+    if (lesson.coachCode !== activeCoachCode) {
+      console.warn("[restoreLesson] lesson 不屬於目前登入教練:", lesson.coachCode, "vs", activeCoachCode);
+      return;
+    }
+    const before = {
+      attendanceStatus: lesson.attendanceStatus,
+      calendarOccupied: lesson.calendarOccupied,
+      calendarEventId: lesson.calendarEventId
+    };
+    console.log("[restoreLesson] before:", JSON.stringify(before));
+
+    const now = new Date().toISOString();
+    const activeLeaves = (state.leaveRequests || []).filter((leave) => (
+      leave && leave.lessonId === lessonId && !leave.revokedAt
+    ));
+    for (const leave of activeLeaves) {
+      leave.revokedAt = now;
+      leave.revokedBy = `${activeCoachCode}:debug-restore`;
+      leave.makeupEligible = false;
+      try {
+        await pushCloudLeaveRecord(leave, lesson);
+      } catch (error) {
+        console.warn("[restoreLesson] cloud push for revoked leave failed:", leave.id, error);
+      }
+    }
+
+    lesson.attendanceStatus = "scheduled";
+    lesson.calendarOccupied = true;
+    lesson.charged = false;
+    if (lesson.calendarEventId && isGeneratedLocalCalendarEventId(lesson.calendarEventId)) {
+      lesson.calendarEventId = "";
+    }
+    saveState();
+    renderAll();
+
+    if (!lesson.calendarEventId) {
+      try {
+        await tryCreateCalendarEventForLesson(lesson, "debug_restore_lesson", false);
+      } catch (error) {
+        console.warn("[restoreLesson] GCal recreate failed:", error);
+      }
+      saveState();
+      renderAll();
+    }
+
+    addLog(`[debug] 還原 lesson ${lesson.id}（${formatDateTime(lesson.startAt)}），revoke ${activeLeaves.length} 筆 leave。`);
+    console.log("[restoreLesson] after:", JSON.stringify({
+      attendanceStatus: lesson.attendanceStatus,
+      calendarOccupied: lesson.calendarOccupied,
+      calendarEventId: lesson.calendarEventId,
+      revokedLeaves: activeLeaves.map((l) => l.id)
+    }));
+  }
+
   // 暴露 debug helpers 到 window，console 直接呼叫用：
   // - retryUnsyncedLocalLeaves()：補推未同步請假
   // - revokeNormalLeave(lessonId)：教練取消學生的正常請假（含 GCal 重建 + 雲端同步）
   // - applyNormalLeaveByCoach(lessonId)：教練代學生請假
+  // - restoreLessonToScheduled(lessonId)：強制把 leave-normal lesson 還原 scheduled，
+  //   並 revoke 對應的 active leave。處理 ghost lesson 用。
   // - coachflowDebug.state：唯讀 access state（取代「state is not defined」）
   // - coachflowDebug.findLesson(studentCode, dateKey)：快速撈某學生某日的 lesson record
   // - coachflowDebug.findActiveLeaves(studentCode)：列出該學生未取消的請假
@@ -1738,6 +1815,7 @@
     window.retryUnsyncedLocalLeaves = retryUnsyncedLocalLeaves;
     window.revokeNormalLeave = revokeNormalLeave;
     window.applyNormalLeaveByCoach = applyNormalLeaveByCoach;
+    window.restoreLessonToScheduled = restoreLessonToScheduledForDebug;
     window.coachflowDebug = {
       get state() { return state; },
       findLesson(studentCode, dateKey) {
