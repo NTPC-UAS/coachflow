@@ -1727,9 +1727,31 @@
     }
   }
 
-  // 暴露到 window 讓 console 可手動呼叫：retryUnsyncedLocalLeaves()
+  // 暴露 debug helpers 到 window，console 直接呼叫用：
+  // - retryUnsyncedLocalLeaves()：補推未同步請假
+  // - revokeNormalLeave(lessonId)：教練取消學生的正常請假（含 GCal 重建 + 雲端同步）
+  // - applyNormalLeaveByCoach(lessonId)：教練代學生請假
+  // - coachflowDebug.state：唯讀 access state（取代「state is not defined」）
+  // - coachflowDebug.findLesson(studentCode, dateKey)：快速撈某學生某日的 lesson record
+  // - coachflowDebug.findActiveLeaves(studentCode)：列出該學生未取消的請假
   if (typeof window !== "undefined") {
     window.retryUnsyncedLocalLeaves = retryUnsyncedLocalLeaves;
+    window.revokeNormalLeave = revokeNormalLeave;
+    window.applyNormalLeaveByCoach = applyNormalLeaveByCoach;
+    window.coachflowDebug = {
+      get state() { return state; },
+      findLesson(studentCode, dateKey) {
+        return (state.lessons || []).filter((l) => (
+          l.studentCode === studentCode &&
+          (!dateKey || getDateKeyInTaipei(new Date(l.startAt)) === dateKey)
+        ));
+      },
+      findActiveLeaves(studentCode) {
+        return (state.leaveRequests || []).filter((l) => (
+          (!studentCode || l.studentCode === studentCode) && !l.revokedAt
+        ));
+      }
+    };
   }
 
   async function pushCloudLeaveRecord(leave, lesson) {
