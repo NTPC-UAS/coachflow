@@ -2395,8 +2395,21 @@
     }
     const startAtIso = startAtDate.toISOString();
 
-    // 同一學生在同一教練底下同一時刻已經有課 → 擋下避免重複
-    const duplicate = state.lessons.some((lesson) => (
+    // 同一學生在同一教練底下同一時刻已經有 lesson record → 擋下避免重複。
+    // 注意：月曆只顯示 calendarOccupied === true 的課程，所以一個 leave-normal 的
+    // lesson（學生已請假）月曆看不到，但 state 還在 → 教練容易誤以為「沒有課」而想
+    // 重複新增。alert 必須點明衝突 lesson 的時間、狀態、id，讓教練知道從哪裡處理。
+    const STATUS_LABEL = {
+      "scheduled": "已排課",
+      "leave-normal": "學生已請假",
+      "coach-leave": "教練停課",
+      "calendar-removed": "Google 日曆已移除",
+      "temporary-leave": "臨時請假（已扣堂）",
+      "no-show": "未到課（已扣堂）",
+      "major-case": "重大急事（不扣堂）",
+      "completed": "已上課"
+    };
+    const duplicate = state.lessons.find((lesson) => (
       lesson &&
       lesson.coachCode === activeCoachCode &&
       lesson.studentCode === studentCode &&
@@ -2404,7 +2417,15 @@
       lesson.attendanceStatus !== "calendar-removed"
     ));
     if (duplicate) {
-      alert("這名學生在此時段已有課程，不重複新增。");
+      const status = String(duplicate.attendanceStatus || "");
+      const statusText = STATUS_LABEL[status] || status || "(未知狀態)";
+      const whenText = formatDateTime(duplicate.startAt);
+      // calendarOccupied === false 表示 slot 已被 leave / coach-leave 釋出，月曆會隱藏 →
+      // 教練多半看不到，特別指引他到「學生請假紀錄」或「教練請假時段」處理
+      const hiddenHint = duplicate.calendarOccupied === false
+        ? "（此狀態的課程不會顯示在教練月曆，請到「學生請假紀錄」或「教練請假/停課時段」面板找到對應紀錄處理）"
+        : "";
+      alert(`這名學生在 ${whenText} 已有課程紀錄，不重複新增。\n狀態：${statusText}\n課程 ID：${duplicate.id}${hiddenHint ? "\n" + hiddenHint : ""}`);
       return;
     }
 
