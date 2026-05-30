@@ -1,1 +1,1 @@
-importScripts("./coachflow-sw.js?v=20260523-0006");
+importScripts("./coachflow-sw.js?v=20260530-0001");
