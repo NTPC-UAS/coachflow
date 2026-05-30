@@ -5876,8 +5876,19 @@
     const nextCount = toNonNegativeInt(el.chargeBaseCountInput?.value, 0);
     student.chargeStartCount = nextCount;
     const updatedBy = activeCoachCode || "SYSTEM";
-    const updatedAt = touchStudentBillingProfile(student, updatedBy);
-    student.chargeStartCountUpdatedAt = updatedAt;
+    touchStudentBillingProfile(student, updatedBy);
+    // baseline 固定用「導入追蹤起點」（BILLING_TRACKING_START_AT = 5/3），
+    // 而非「儲存當下時間」。
+    //
+    // 舊版每次存檔都把 baseline 重設成 now，造成：教練若晚於學生第一堂課才
+    // 設定導入前堂數，夾在「學生首課」與「設定日」之間的課（已上、charged）
+    // 既不算系統內扣堂（在 baseline 之前）、又不在手填的導入前數裡 → 整批
+    // 憑空消失，教練怎麼調導入前堂數都對不上實際畫面。
+    // 已上線案例：ST013 5/9、5/16 已上課，但 baseline 被鎖在 5/30，兩堂消失。
+    //
+    // 改用固定 tracking start 後，語意清楚：5/3（含）之後 charged 的課一律算
+    // 系統內扣堂，5/3 之前的用手填 chargeStartCount 表示。
+    student.chargeStartCountUpdatedAt = BILLING_TRACKING_START_AT;
     student.chargeStartCountUpdatedBy = normalizeParticipantCode(updatedBy);
     addLog(`[計費] ${student.code} 導入前已扣堂數調整為 ${nextCount}。`);
     saveState();
@@ -7368,6 +7379,15 @@
   }
 
   function isLessonChargedForBilling(lesson) {
+    // 正常請假（leave-normal）、重大急事（major-case）、教練停課（coach-leave）
+    // 依規則一律不扣堂——即使 lesson.charged 因歷史髒資料 / ghost 操作誤標 true。
+    // 已上線案例：ST013 5/23 是 leave-normal 卻 charged=true，被誤算進扣堂，
+    // 害「本期已扣」多算一堂。臨時請假 temporary-leave / 未到課 no-show 仍要扣，
+    // 不在排除名單。
+    const status = lesson?.attendanceStatus;
+    if (status === "leave-normal" || status === "major-case" || status === "coach-leave") {
+      return false;
+    }
     return Boolean(isLessonAfterBillingTrackingStart(lesson) && (lesson?.charged || isLessonAutoCompleted(lesson)));
   }
 
