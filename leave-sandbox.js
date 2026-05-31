@@ -5648,11 +5648,15 @@
       : CHARGE_REMINDER_STEP - currentCycleChargedCount;
     const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
     const coveredPaymentDueCount = storedPaidQuotaCount || (storedStatus === "paid" ? activeQuotaCount : 0);
-    const overduePaymentDueCount = lastCompletedPaymentDueCount > 0 && coveredPaymentDueCount < lastCompletedPaymentDueCount
-      ? lastCompletedPaymentDueCount
-      : 0;
+    // 規則：學生「用完了已繳堂數」就翻成未繳費，提醒教練收下個 cycle 的錢。
+    // 之前用 covered < lastCompleted 嚴格不等號，會讓 totalCharged=4 / paidThrough=4
+    // 這種「剛好做完上個 cycle 的最後一堂」維持已繳費，要等下一個 cycle 結束才翻
+    // → 教練漏收一個 cycle。改成 covered <= totalCharged：學生只要做到等於或超過
+    // 已繳堂數，就該收下一輪。
+    // 真正預付下個 cycle 的學生（paidThrough = totalCharged + step）不會誤判（8 <= 4 false）。
+    const isPaymentDue = lastCompletedPaymentDueCount > 0 && coveredPaymentDueCount <= totalChargedCount;
+    const overduePaymentDueCount = isPaymentDue ? lastCompletedPaymentDueCount : 0;
     const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
-    const isPaymentDue = overduePaymentDueCount > 0;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
     return {
       paidThroughCount,
