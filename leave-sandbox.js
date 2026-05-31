@@ -5648,13 +5648,19 @@
       : CHARGE_REMINDER_STEP - currentCycleChargedCount;
     const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
     const coveredPaymentDueCount = storedPaidQuotaCount || (storedStatus === "paid" ? activeQuotaCount : 0);
-    // 規則：學生「用完了已繳堂數」就翻成未繳費，提醒教練收下個 cycle 的錢。
-    // 之前用 covered < lastCompleted 嚴格不等號，會讓 totalCharged=4 / paidThrough=4
-    // 這種「剛好做完上個 cycle 的最後一堂」維持已繳費，要等下一個 cycle 結束才翻
-    // → 教練漏收一個 cycle。改成 covered <= totalCharged：學生只要做到等於或超過
-    // 已繳堂數，就該收下一輪。
-    // 真正預付下個 cycle 的學生（paidThrough = totalCharged + step）不會誤判（8 <= 4 false）。
-    const isPaymentDue = lastCompletedPaymentDueCount > 0 && coveredPaymentDueCount <= totalChargedCount;
+    // 規則：學生只要在 cycle 結束點（currentCycle 達 step）就翻未繳費，不看
+    // paidThroughCount 是否預付過。
+    //
+    // 為什麼忽略預付：實機案例朱朱、朱朱媽媽 paidThroughCount=8 對應到「教練之
+    // 前按確認匯款時，系統自動把 paidThroughCount 推到下個 cycle ceiling」，
+    // 教練的真實意思只是「這 cycle 收過了」、不是「預付到下 cycle」。但這個
+    // 推到下一個 cycle 的副作用讓下一輪 cycle 結束時系統認為「還在已繳區
+    // 間」、不翻未繳，教練就漏收一輪。
+    //
+    // 改成「每個 cycle 結束都跳未繳」後，預付的學生在每 cycle 結束時都會
+    // 被提醒一次。提醒會在學生做完下一堂課（currentCycle 從 step 變回 1）
+    // 自然消失——這是 user 在 PR review 時明確選的 option B 行為。
+    const isPaymentDue = totalChargedCount > 0 && currentCycleChargedCount === CHARGE_REMINDER_STEP;
     const overduePaymentDueCount = isPaymentDue ? lastCompletedPaymentDueCount : 0;
     const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
