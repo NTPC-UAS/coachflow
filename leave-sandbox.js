@@ -5648,19 +5648,30 @@
       : CHARGE_REMINDER_STEP - currentCycleChargedCount;
     const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
     const coveredPaymentDueCount = storedPaidQuotaCount || (storedStatus === "paid" ? activeQuotaCount : 0);
-    // 規則：學生只要在 cycle 結束點（currentCycle 達 step）就翻未繳費，不看
-    // paidThroughCount 是否預付過。
+    // 規則：cycle 結束點（currentCycle 達 step）翻未繳費。教練按確認匯款可清掉
+    // 這個提醒——下個 cycle 結束時會再翻一次（per-cycle 提醒）。
     //
-    // 為什麼忽略預付：實機案例朱朱、朱朱媽媽 paidThroughCount=8 對應到「教練之
-    // 前按確認匯款時，系統自動把 paidThroughCount 推到下個 cycle ceiling」，
-    // 教練的真實意思只是「這 cycle 收過了」、不是「預付到下 cycle」。但這個
-    // 推到下一個 cycle 的副作用讓下一輪 cycle 結束時系統認為「還在已繳區
-    // 間」、不翻未繳，教練就漏收一輪。
+    // Cycle 是否「已被確認」用 paymentConfirmedAt 跟「最近一堂被計入扣堂的課」
+    // 的 startAt 比：
+    //   - confirmedAt 晚於最近扣堂課 startAt → 這 cycle 已 ack → 不翻未繳
+    //   - confirmedAt 早於 → 這 cycle 還沒 ack → 翻未繳費
+    // 學生上下一堂課後，「最近扣堂課」會更新到那堂、再次晚於 confirmedAt，
+    // 下個 cycle 結束時自動翻未繳。
     //
-    // 改成「每個 cycle 結束都跳未繳」後，預付的學生在每 cycle 結束時都會
-    // 被提醒一次。提醒會在學生做完下一堂課（currentCycle 從 step 變回 1）
-    // 自然消失——這是 user 在 PR review 時明確選的 option B 行為。
-    const isPaymentDue = totalChargedCount > 0 && currentCycleChargedCount === CHARGE_REMINDER_STEP;
+    // 不再依賴 paidThroughCount 判斷：舊版按確認匯款會把 paidThroughCount 自動
+    // 推到下個 cycle ceiling，副作用是下個 cycle 結束時系統認為「還在已繳區
+    // 間」、不翻未繳，教練漏收一輪（朱朱、朱朱媽媽案例）。
+    const chargedLessonsList = Array.isArray(stats?.chargedLessons) ? stats.chargedLessons : [];
+    // stats.chargedLessons 已按 startAt 降序排序；[0] 就是最近被計入扣堂的課
+    const lastChargedLesson = chargedLessonsList[0];
+    const lastChargedLessonTime = lastChargedLesson ? new Date(lastChargedLesson.startAt).getTime() : 0;
+    const confirmedTime = new Date(student?.paymentConfirmedAt || 0).getTime();
+    const cycleAckedByCoach = Number.isFinite(confirmedTime)
+      && confirmedTime > 0
+      && (!Number.isFinite(lastChargedLessonTime) || lastChargedLessonTime <= 0 || confirmedTime > lastChargedLessonTime);
+    const isPaymentDue = totalChargedCount > 0
+      && currentCycleChargedCount === CHARGE_REMINDER_STEP
+      && !cycleAckedByCoach;
     const overduePaymentDueCount = isPaymentDue ? lastCompletedPaymentDueCount : 0;
     const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
