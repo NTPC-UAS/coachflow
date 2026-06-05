@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260530-0004">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260530-0005">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -351,6 +351,14 @@
       text-decoration: line-through;
       opacity: 0.85;
     }
+    /* 教練停課：學生課程被教練請假時段覆蓋，月曆同樣顯示但用警告色 + 刪除線 */
+    .cal-item.coach-off {
+      border-color: var(--warning-soft);
+      background: var(--warning-soft);
+      color: var(--warning);
+      text-decoration: line-through;
+      opacity: 0.85;
+    }
     .readonly-period {
       display: grid;
       gap: 3px;
@@ -592,7 +600,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260530-0004&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260530-0005&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -827,10 +835,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260530-0004"></script>
-  <script src="leave-sandbox.js?v=20260530-0004"></script>
+  <script src="config.js?v=20260530-0005"></script>
+  <script src="leave-sandbox.js?v=20260530-0005"></script>
   <script>
-    const coachPwaVersion = "20260530-0004";
+    const coachPwaVersion = "20260530-0005";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");
