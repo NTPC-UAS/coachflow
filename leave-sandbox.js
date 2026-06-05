@@ -7860,9 +7860,11 @@
         : lessons.slice(0, 3).map((lesson) => {
         const isOnLeave = lesson.attendanceStatus === "leave-normal";
         const isCoachLeave = lesson.attendanceStatus === "coach-leave";
-        const typeClass = lesson.sourceType === "MAKEUP"
-          ? "makeup"
-          : (isCoachLeave ? "coach-off" : (isOnLeave ? "on-leave" : ""));
+        // status 優先於 sourceType：補課 lesson 被教練請假覆蓋時，typeClass 也得是
+        // coach-off / on-leave，否則 makeup 綠底會壓過警告色和刪除線。
+        const typeClass = isCoachLeave
+          ? "coach-off"
+          : (isOnLeave ? "on-leave" : (lesson.sourceType === "MAKEUP" ? "makeup" : ""));
         const prefix = isCoachLeave
           ? "教練請假"
           : (isOnLeave ? "請假" : (lesson.sourceType === "MAKEUP" ? "補課" : "原課"));
