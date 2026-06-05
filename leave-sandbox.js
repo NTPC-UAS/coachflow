@@ -720,18 +720,23 @@
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
   }
 
-  // 教練月曆要看到該日的所有課程，包含學生「正常請假」狀態（leave-normal）的課。
-  // 原本只列 calendarOccupied=true，會把 leave-normal 整個藏掉 → 教練從月曆完全看
-  // 不到該學生今天有請假、也找不到入口去處理。
-  // calendar-removed / coach-leave / temporary-leave / no-show / major-case 仍藏起來
-  // （這些另有 calendarRemovedPanel / 教練請假時段表 / 計費面板可看）。
+  // 教練月曆要看到該日的所有課程，包含學生「正常請假」(leave-normal) 與「教練
+  // 停課」(coach-leave) 狀態的課。原本只列 calendarOccupied=true，會把這兩種
+  // 整個藏掉 → 教練從月曆完全看不到該學生今天有請假/教練停課、也找不到入口
+  // 去處理或核對。
+  // calendar-removed / temporary-leave / no-show / major-case 仍藏起來（這些
+  // 另有 calendarRemovedPanel / 計費面板可看）。
   function getCoachLessonsForDate(coachCode, dateKey) {
     return state.lessons
       .filter(
         (lesson) =>
           lesson.coachCode === coachCode &&
           isLessonAfterTrackingDataReset(lesson) &&
-          (lesson.calendarOccupied || lesson.attendanceStatus === "leave-normal") &&
+          (
+            lesson.calendarOccupied ||
+            lesson.attendanceStatus === "leave-normal" ||
+            lesson.attendanceStatus === "coach-leave"
+          ) &&
           getDateKeyInTaipei(new Date(lesson.startAt)) === dateKey
       )
       .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
@@ -7841,8 +7846,12 @@
           </div>
         `;
       };
-      // 唯讀月曆只給其他教練/觀察者快速看排課，不需要顯示請假狀態；過濾掉 leave-normal
-      const lessonsForReadonly = lessons.filter((lesson) => lesson.attendanceStatus !== "leave-normal");
+      // 唯讀月曆只給其他教練/觀察者快速看排課，不需要顯示請假/停課狀態；
+      // 過濾掉 leave-normal 與 coach-leave 兩種
+      const lessonsForReadonly = lessons.filter((lesson) => (
+        lesson.attendanceStatus !== "leave-normal" &&
+        lesson.attendanceStatus !== "coach-leave"
+      ));
       const lessonSnippets = readOnly
         ? [
           renderReadonlyPeriod("上午", lessonsForReadonly.filter((lesson) => getLessonHour(lesson) < 12)),
@@ -7850,10 +7859,13 @@
         ].join("")
         : lessons.slice(0, 3).map((lesson) => {
         const isOnLeave = lesson.attendanceStatus === "leave-normal";
-        const typeClass = lesson.sourceType === "MAKEUP" ? "makeup" : (isOnLeave ? "on-leave" : "");
-        const prefix = isOnLeave
-          ? "請假"
-          : (lesson.sourceType === "MAKEUP" ? "補課" : "原課");
+        const isCoachLeave = lesson.attendanceStatus === "coach-leave";
+        const typeClass = lesson.sourceType === "MAKEUP"
+          ? "makeup"
+          : (isCoachLeave ? "coach-off" : (isOnLeave ? "on-leave" : ""));
+        const prefix = isCoachLeave
+          ? "教練請假"
+          : (isOnLeave ? "請假" : (lesson.sourceType === "MAKEUP" ? "補課" : "原課"));
         const selectedClass = lesson.id === selectedCoachLessonId ? "selected" : "";
         return renderCalendarItem(
           `${prefix} ${getTimeText(lesson.startAt)} ${getStudentDisplayName(lesson.studentCode)}`,
