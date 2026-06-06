@@ -4026,9 +4026,13 @@ function isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leav
   }
   // 對齊 leave-sandbox.js PR #31：以「日」為粒度比較，baseline 當天或之後的課
   // 都算系統內扣堂。原本嚴格時刻比較會把同一天但時間早於 baseline 的課誤排除。
-  const baselineDayStart = new Date(baselineTime);
-  baselineDayStart.setHours(0, 0, 0, 0);
-  return lessonTime >= baselineDayStart.getTime();
+  //
+  // 日界線用 APP_TIME_ZONE（台北）算（Codex review #38）：原本 setHours(0,0,0,0)
+  // 取的是瀏覽器本地午夜，學生若在非台北裝置開系統，日界線會偏掉、把前一天傍晚
+  // 的課誤算進當期。台灣無 DST、固定 +08:00。
+  const bp = getDateTimePartsInAppZone(new Date(baselineTime));
+  const baselineDayStartTime = new Date(`${bp.year}-${bp.month}-${bp.day}T00:00:00+08:00`).getTime();
+  return lessonTime >= baselineDayStartTime;
 }
 
 function getLocalLeaveBillingSummary(student, assignedCoach) {
