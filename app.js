@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260605-0001";
+const PUBLIC_APP_VERSION = "20260605-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -3938,7 +3938,12 @@ function isLeaveLessonAfterBillingTrackingStart(lesson) {
 }
 
 function isLocalLeaveGoogleSyncLesson(lesson) {
-  return lesson?.sourceType === "REGULAR" || lesson?.sourceType === "GOOGLE_CALENDAR";
+  // 對齊 leave-sandbox.js isLessonAutoCompleted：補課 (MAKEUP) 也是
+  // 計入扣堂的合法 source。app.js 之前漏這個，補課做完不會被自動算
+  // 進「本期已扣」，計數比實際少。
+  return lesson?.sourceType === "REGULAR"
+    || lesson?.sourceType === "GOOGLE_CALENDAR"
+    || lesson?.sourceType === "MAKEUP";
 }
 
 function isLocalLeaveLessonAutoCompleted(lesson) {
@@ -3962,6 +3967,13 @@ function isLocalLeaveLessonActiveForBilling(lesson) {
 }
 
 function isLocalLeaveLessonChargedForBilling(lesson) {
+  // 對齊 leave-sandbox.js PR #31：正常請假 / 重大急事 / 教練停課一律不扣堂，
+  // 即使 lesson.charged 因為髒資料 / ghost 操作誤標 true 也不算進去。
+  // app.js 主系統學生「本期已扣」之前漏這個排除，會把請假課程當扣堂顯示。
+  const status = lesson?.attendanceStatus;
+  if (status === "leave-normal" || status === "major-case" || status === "coach-leave") {
+    return false;
+  }
   return Boolean(isLeaveLessonAfterBillingTrackingStart(lesson) && (lesson?.charged || isLocalLeaveLessonAutoCompleted(lesson)));
 }
 
@@ -4005,8 +4017,18 @@ function isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leav
     return true;
   }
   const lessonTime = new Date(lesson?.startAt || "").getTime();
+  if (!Number.isFinite(lessonTime)) {
+    return false;
+  }
   const baselineTime = new Date(baselineAt).getTime();
-  return Number.isFinite(lessonTime) && (!Number.isFinite(baselineTime) || lessonTime > baselineTime);
+  if (!Number.isFinite(baselineTime)) {
+    return true;
+  }
+  // 對齊 leave-sandbox.js PR #31：以「日」為粒度比較，baseline 當天或之後的課
+  // 都算系統內扣堂。原本嚴格時刻比較會把同一天但時間早於 baseline 的課誤排除。
+  const baselineDayStart = new Date(baselineTime);
+  baselineDayStart.setHours(0, 0, 0, 0);
+  return lessonTime >= baselineDayStart.getTime();
 }
 
 function getLocalLeaveBillingSummary(student, assignedCoach) {
