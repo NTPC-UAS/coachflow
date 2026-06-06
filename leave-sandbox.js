@@ -4580,6 +4580,7 @@
           console.error("billing reminder failed:", error);
         });
       });
+      repushBillingForAutoCompletedStudents(completionStats, "student_calendar_auto_complete");
     }
     return syncedAny || completionStats.changed || cloudLeaveChanged;
   }
@@ -4686,6 +4687,7 @@
           console.error("billing reminder failed:", error);
         });
       });
+      repushBillingForAutoCompletedStudents(completionStats, "coach_calendar_auto_complete");
     }
     return syncedAny || cloudLeaveChanged;
   }
@@ -7456,6 +7458,20 @@
       count: affectedLessons.length,
       studentCodes: Array.from(affectedStudents)
     };
+  }
+
+  // autoComplete 把課標扣堂後，主動把受影響學生的雲端 billing 快照重新 push。
+  // 否則主系統 app.js 讀到的「本期已扣」會停在「上次教練手動操作計費面板」
+  // 的凍結快照，學生上完新課後一直顯示舊堂數（本期已扣總是錯的根因之一）。
+  // pushStudentBillingProfileQuietly 是容錯 fire-and-forget，雲端 upsert by
+  // updatedAt，重複 push 安全。
+  function repushBillingForAutoCompletedStudents(completionStats, triggerSource) {
+    if (!completionStats || !completionStats.changed) {
+      return;
+    }
+    (completionStats.studentCodes || []).forEach((code) => {
+      pushStudentBillingProfileQuietly(code, triggerSource || "auto_completed_lesson");
+    });
   }
 
   function getStatusPill(status, lesson, viewMode) {
