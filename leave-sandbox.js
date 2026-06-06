@@ -2752,8 +2752,11 @@
     // 過去用嚴格時刻比較，會造成「教練在當天 10:02 設 baseline，但學生 09:00 的課
     // 被當成在 baseline 之前」→ 系統內扣堂少算 1。教練設定 baseline 的意圖通常是
     // 「從今天起系統開始計算」，同一天的課應該算進來。
-    const baselineDayStart = new Date(baselineTime);
-    baselineDayStart.setHours(0, 0, 0, 0);
+    //
+    // 日界線用「台北時區」算（Codex review #38）：原本 setHours(0,0,0,0) 取的是
+    // 瀏覽器本地午夜，教練/學生若在非台北裝置開系統，日界線會偏掉、把前一天傍晚
+    // 的課誤算進當期。台灣無 DST、固定 +08:00，用 makeTaipeiDateTime 鎖死台北日。
+    const baselineDayStart = makeTaipeiDateTime(getDateKeyInTaipei(new Date(baselineTime)), "00:00");
     return lessonTime >= baselineDayStart.getTime();
   }
 
@@ -4577,6 +4580,7 @@
           console.error("billing reminder failed:", error);
         });
       });
+      repushBillingForAutoCompletedStudents(completionStats, "student_calendar_auto_complete");
     }
     return syncedAny || completionStats.changed || cloudLeaveChanged;
   }
@@ -4683,6 +4687,7 @@
           console.error("billing reminder failed:", error);
         });
       });
+      repushBillingForAutoCompletedStudents(completionStats, "coach_calendar_auto_complete");
     }
     return syncedAny || cloudLeaveChanged;
   }
@@ -7453,6 +7458,20 @@
       count: affectedLessons.length,
       studentCodes: Array.from(affectedStudents)
     };
+  }
+
+  // autoComplete 把課標扣堂後，主動把受影響學生的雲端 billing 快照重新 push。
+  // 否則主系統 app.js 讀到的「本期已扣」會停在「上次教練手動操作計費面板」
+  // 的凍結快照，學生上完新課後一直顯示舊堂數（本期已扣總是錯的根因之一）。
+  // pushStudentBillingProfileQuietly 是容錯 fire-and-forget，雲端 upsert by
+  // updatedAt，重複 push 安全。
+  function repushBillingForAutoCompletedStudents(completionStats, triggerSource) {
+    if (!completionStats || !completionStats.changed) {
+      return;
+    }
+    (completionStats.studentCodes || []).forEach((code) => {
+      pushStudentBillingProfileQuietly(code, triggerSource || "auto_completed_lesson");
+    });
   }
 
   function getStatusPill(status, lesson, viewMode) {

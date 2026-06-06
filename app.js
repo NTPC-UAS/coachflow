@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260605-0001";
+const PUBLIC_APP_VERSION = "20260606-0002";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -3938,7 +3938,12 @@ function isLeaveLessonAfterBillingTrackingStart(lesson) {
 }
 
 function isLocalLeaveGoogleSyncLesson(lesson) {
-  return lesson?.sourceType === "REGULAR" || lesson?.sourceType === "GOOGLE_CALENDAR";
+  // 對齊 leave-sandbox.js isLessonAutoCompleted：補課 (MAKEUP) 也是
+  // 計入扣堂的合法 source。app.js 之前漏這個，補課做完不會被自動算
+  // 進「本期已扣」，計數比實際少。
+  return lesson?.sourceType === "REGULAR"
+    || lesson?.sourceType === "GOOGLE_CALENDAR"
+    || lesson?.sourceType === "MAKEUP";
 }
 
 function isLocalLeaveLessonAutoCompleted(lesson) {
@@ -3962,6 +3967,13 @@ function isLocalLeaveLessonActiveForBilling(lesson) {
 }
 
 function isLocalLeaveLessonChargedForBilling(lesson) {
+  // 對齊 leave-sandbox.js PR #31：正常請假 / 重大急事 / 教練停課一律不扣堂，
+  // 即使 lesson.charged 因為髒資料 / ghost 操作誤標 true 也不算進去。
+  // app.js 主系統學生「本期已扣」之前漏這個排除，會把請假課程當扣堂顯示。
+  const status = lesson?.attendanceStatus;
+  if (status === "leave-normal" || status === "major-case" || status === "coach-leave") {
+    return false;
+  }
   return Boolean(isLeaveLessonAfterBillingTrackingStart(lesson) && (lesson?.charged || isLocalLeaveLessonAutoCompleted(lesson)));
 }
 
@@ -4005,8 +4017,22 @@ function isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leav
     return true;
   }
   const lessonTime = new Date(lesson?.startAt || "").getTime();
+  if (!Number.isFinite(lessonTime)) {
+    return false;
+  }
   const baselineTime = new Date(baselineAt).getTime();
-  return Number.isFinite(lessonTime) && (!Number.isFinite(baselineTime) || lessonTime > baselineTime);
+  if (!Number.isFinite(baselineTime)) {
+    return true;
+  }
+  // 對齊 leave-sandbox.js PR #31：以「日」為粒度比較，baseline 當天或之後的課
+  // 都算系統內扣堂。原本嚴格時刻比較會把同一天但時間早於 baseline 的課誤排除。
+  //
+  // 日界線用 APP_TIME_ZONE（台北）算（Codex review #38）：原本 setHours(0,0,0,0)
+  // 取的是瀏覽器本地午夜，學生若在非台北裝置開系統，日界線會偏掉、把前一天傍晚
+  // 的課誤算進當期。台灣無 DST、固定 +08:00。
+  const bp = getDateTimePartsInAppZone(new Date(baselineTime));
+  const baselineDayStartTime = new Date(`${bp.year}-${bp.month}-${bp.day}T00:00:00+08:00`).getTime();
+  return lessonTime >= baselineDayStartTime;
 }
 
 function getLocalLeaveBillingSummary(student, assignedCoach) {
@@ -4055,13 +4081,29 @@ function getLocalLeaveBillingSummary(student, assignedCoach) {
 }
 
 function chooseStudentLeaveBillingSummary(localSummary, cloudSummary) {
-  // 教練 / 管理員透過請假系統維護的 cloud profile 是計費權威來源。
-  // 學生端本機 leave state 可能是舊快照（學生只讀），不應蓋掉雲端值。
-  // 只有當雲端完全沒資料時，才退回本機作為最後 fallback。
-  if (cloudSummary) {
-    return cloudSummary;
+  // 兩個來源各有 stale 風險，改成「比最後變動時間，取較新者」：
+  //
+  // - cloudSummary：請假系統教練端 push 的「凍結快照」。只在教練操作計費面板
+  //   或手動上傳時更新。學生上完新課後若沒人刷新，雲端快照會一直是舊值。
+  // - localSummary：app.js 與請假系統同源、共用同一個 localStorage
+  //   (coachflow-leave-sandbox-v1)，用權威算法「即時重算」本機 lessons
+  //   （含課程時間過了自動完成扣堂）。同一台裝置開過請假系統就會有這份資料。
+  //
+  // 舊版無條件優先 cloud，導致學生上完課後主系統永遠顯示 stale 舊堂數
+  // （本期已扣總是錯的根因）。改成比 updatedTime：
+  //   - 本機剛反映完新課（updatedTime 較新）→ 用本機即時值
+  //   - 本機缺資料（沒開過請假系統 / 換裝置 / 清快取）→ localSummary 為 null
+  //     自動退回 cloud，不會比現狀差
+  //   - 平手時取本機（本機是即時重算，至少不劣於凍結快照）
+  if (!localSummary) {
+    return cloudSummary || null;
   }
-  return localSummary || null;
+  if (!cloudSummary) {
+    return localSummary;
+  }
+  const localTime = Number(localSummary.updatedTime) || 0;
+  const cloudTime = Number(cloudSummary.updatedTime) || 0;
+  return localTime >= cloudTime ? localSummary : cloudSummary;
 }
 
 function normalizeLeaveBillingProfile(profile = {}) {
