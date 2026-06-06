@@ -1428,6 +1428,33 @@
     };
   }
 
+  // 精簡成雲端 Lessons 分頁的 10 欄。calendarEventId / completedBy / beforeCalendarRemoved
+  // 等本機專用欄位不上雲（計費用不到）。updatedAt fallback 鏈：
+  // updatedAt → completedAt → startAt → now，確保每筆都有可比較的時間戳，
+  // 讓後端 +2000ms stale 防護與主系統「比 updatedTime 取較新者」都能正確運作。
+  function normalizeLessonForCloud(lesson) {
+    if (!lesson || !lesson.id) {
+      return null;
+    }
+    const startTime = new Date(lesson.startAt || "").getTime();
+    if (!Number.isFinite(startTime)) {
+      return null;
+    }
+    const startAt = new Date(startTime).toISOString();
+    return {
+      id: String(lesson.id),
+      studentCode: normalizeParticipantCode(lesson.studentCode),
+      coachCode: normalizeParticipantCode(lesson.coachCode),
+      startAt,
+      sourceType: String(lesson.sourceType || "REGULAR"),
+      calendarOccupied: lesson.calendarOccupied !== false,
+      attendanceStatus: String(lesson.attendanceStatus || "scheduled"),
+      charged: Boolean(lesson.charged),
+      completedAt: lesson.completedAt || "",
+      updatedAt: lesson.updatedAt || lesson.completedAt || startAt || new Date().toISOString()
+    };
+  }
+
   function findLessonForCloudLeaveRecord(record) {
     if (!record) {
       return null;
@@ -1879,6 +1906,56 @@
       saveState();
     }
     return changed;
+  }
+
+  // 把本機完整課表（tracking-start 之後）推上雲端 Lessons 分頁。
+  // 後端 saveLessons 是差量 upsert by id，重複 push 安全。分批 100 筆避免單次
+  // payload 過大。後端未部署（Unsupported action）時 graceful 回 false，呼叫端
+  // 退回現有 local/snapshot 兩來源，零行為退化。
+  // 回傳：成功時為已 push 的課堂數；後端未支援/回 ok:false 時為 false。
+  async function pushCloudLessons(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const syncScope = getCloudStateScope(scope);
+    const lessons = (state.lessons || [])
+      .filter((lesson) => (
+        lesson &&
+        isLessonAfterBillingTrackingStart(lesson) &&
+        (!syncScope.coachCode || normalizeParticipantCode(lesson.coachCode) === syncScope.coachCode) &&
+        (!syncScope.studentCode || normalizeParticipantCode(lesson.studentCode) === syncScope.studentCode)
+      ))
+      .map(normalizeLessonForCloud)
+      .filter(Boolean);
+    if (!lessons.length) {
+      return 0;
+    }
+    const batchSize = 100;
+    let pushed = 0;
+    try {
+      for (let i = 0; i < lessons.length; i += batchSize) {
+        const batch = lessons.slice(i, i + batchSize);
+        const result = await callAppsScriptApi("saveLessons", { lessons: batch });
+        if (result?.ok === false) {
+          return false;
+        }
+        pushed += batch.length;
+      }
+      return pushed;
+    } catch (error) {
+      if (isUnsupportedAppsScriptAction(error, "saveLessons")) {
+        return false;
+      }
+      throw error;
+    }
+  }
+
+  // Fire-and-forget 版：請假/改狀態/日曆同步等接入點呼叫，雲端課表持續保鮮，
+  // 失敗只記 console 不影響主流程。
+  function pushCloudLessonsQuietly(scope = {}) {
+    pushCloudLessons(scope).catch((error) => {
+      console.warn("Cloud lessons push failed:", error);
+    });
   }
 
   function clonePlain(value) {
@@ -2380,7 +2457,19 @@
         billingCount += 1;
       }
     }
-    return { leaveCount, billingCount };
+
+    // 完整課表雲端化的第一次灌入主入口：把這台「開過完整課表」裝置的完整課表
+    // 一次推上雲。之後請假/改狀態/日曆同步會自動增量 push，雲端持續保鮮。
+    // 後端未部署時 pushCloudLessons graceful 回 false → lessonsPushed 記 0。
+    let lessonsPushed = 0;
+    try {
+      const pushed = await pushCloudLessons(syncScope);
+      lessonsPushed = pushed === false ? 0 : pushed;
+    } catch (error) {
+      addLog(`[雲端課表] 上傳完整課表失敗：${String(error?.message || error)}`);
+    }
+
+    return { leaveCount, billingCount, lessonsPushed };
   }
 
   function renderCloudSnapshotControls() {
@@ -2547,10 +2636,13 @@
       lesson.completedAt = new Date().toISOString();
       lesson.completedBy = activeCoachCode;
     }
+    lesson.updatedAt = new Date().toISOString();
     state.lessons.push(lesson);
     addLog(`教練 ${activeCoachCode} 手動新增學生 ${studentCode} 之上課：${formatDateTime(lesson.startAt)}（${alreadyAttended ? "已上完、立即扣堂" : "未來課程、不扣堂"}）。`);
     saveState();
     renderAll();
+    // 完整課表雲端化：手動新增的課同步推上雲，主系統即時看得到。
+    pushCloudLessonsQuietly({ coachCode: activeCoachCode, studentCode });
     notifyUser(`已建立 ${student.name || studentCode} 的上課（${formatDateTime(lesson.startAt)}），正在同步 Google 日曆...`, "info");
 
     // 同步建 GCal 事件。非 strict：失敗會走 compensation 任務排隊重試，本機 lesson 仍保留
@@ -2623,7 +2715,7 @@
         return;
       }
       renderAll();
-      notifyUser(`已上傳到雲端：請假 ${counts.leaveCount} 筆、扣課資料 ${counts.billingCount} 位，完整快照已更新。`, "success");
+      notifyUser(`已上傳到雲端：請假 ${counts.leaveCount} 筆、扣課資料 ${counts.billingCount} 位、完整課表 ${counts.lessonsPushed} 堂，完整快照已更新。`, "success");
     } catch (error) {
       notifyUser(`雲端同步失敗：${String(error?.message || error)}`, "warning");
     } finally {
@@ -4581,6 +4673,8 @@
         });
       });
       repushBillingForAutoCompletedStudents(completionStats, "student_calendar_auto_complete");
+      // 完整課表雲端化：日曆同步後（含自動扣堂、移除暫存課）把完整課表推上雲保鮮。
+      pushCloudLessonsQuietly({ coachCode: activeCoachCode, studentCode: activeStudentCode });
     }
     return syncedAny || completionStats.changed || cloudLeaveChanged;
   }
@@ -4688,6 +4782,8 @@
         });
       });
       repushBillingForAutoCompletedStudents(completionStats, "coach_calendar_auto_complete");
+      // 完整課表雲端化：教練端日曆同步後把整個 coach scope 的完整課表推上雲保鮮。
+      pushCloudLessonsQuietly({ coachCode });
     }
     return syncedAny || cloudLeaveChanged;
   }
@@ -4767,6 +4863,9 @@
     lesson.calendarEventId = "";
     lesson.calendarRemovedAt = new Date().toISOString();
     lesson.calendarRemovedReason = reason || "google_calendar_deleted";
+    // 完整課表雲端化：removed 沒有 completedAt 可當 updatedAt fallback，明確補上時間戳，
+    // 否則雲端這筆會 fallback 到舊的 startAt、被其他裝置 stale 的 scheduled push 蓋回去。
+    lesson.updatedAt = lesson.calendarRemovedAt;
     addLog(`[日曆同步] 已依 Google 日曆移除課程 ${lesson.id}（${formatDateTime(lesson.startAt)}）。`);
   }
 
@@ -6374,9 +6473,12 @@
     delete leaveRecord.pendingCloudSync;
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
+    lesson.updatedAt = new Date().toISOString();
     addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
     saveState();
     renderAll();
+    // 完整課表雲端化：請假後課程轉 leave-normal（不扣堂），同步推上雲讓主系統重算正確。
+    pushCloudLessonsQuietly({ coachCode: lesson.coachCode, studentCode: lesson.studentCode });
     notifyUser("請假紀錄已建立，正在同步 Google 日曆與寄出確認信...", "info");
     const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "student_normal_leave", false, {
       resolveMissingEventId: true
@@ -6536,9 +6638,12 @@
     delete leaveRecord.pendingCloudSync;
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
+    lesson.updatedAt = new Date().toISOString();
     addLog(`[雲端請假] 已同步教練代請假 ${leaveRecord.id}。`);
     saveState();
     renderAll();
+    // 完整課表雲端化：教練代請假後課程轉 leave-normal，同步推上雲讓主系統重算正確。
+    pushCloudLessonsQuietly({ coachCode: lesson.coachCode, studentCode: lesson.studentCode });
     notifyUser(`已代 ${studentName} 建立請假紀錄，正在同步 Google 日曆...`, "info");
 
     const calendarSynced = await tryDeleteCalendarEventForLesson(lesson, "coach_student_normal_leave", false, {
@@ -6634,6 +6739,7 @@
     lesson.attendanceStatus = "scheduled";
     lesson.calendarOccupied = true;
     lesson.charged = false;
+    lesson.updatedAt = nowIso;
     notifyUser("正在取消請假並還原 Google 日曆課程...", "info");
 
     // 先確認雲端寫入，再做 calendar / email 等不可逆操作。
@@ -6670,6 +6776,8 @@
     addLog(`學生 ${activeStudentCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
+    // 完整課表雲端化：取消請假後課程還原 scheduled，同步推上雲讓主系統重算正確。
+    pushCloudLessonsQuietly({ coachCode: lesson.coachCode, studentCode: lesson.studentCode });
     await trySendEmailNotice(
       "leave_cancelled_by_student",
       {
@@ -7064,6 +7172,7 @@
     lesson.attendanceStatus = "scheduled";
     lesson.calendarOccupied = true;
     lesson.charged = false;
+    lesson.updatedAt = nowIso;
     notifyUser("正在取消請假...", "info");
 
     // 雲端確認後才做不可逆操作（calendar create + email），否則網路抖留 ghost 資料
@@ -7098,6 +7207,8 @@
     addLog(`教練 ${activeCoachCode} 已取消課程 ${lesson.id} 的請假。`);
     saveState();
     renderAll();
+    // 完整課表雲端化：教練取消請假後課程還原 scheduled，同步推上雲讓主系統重算正確。
+    pushCloudLessonsQuietly({ coachCode: lesson.coachCode, studentCode: lesson.studentCode });
     notifyUser("已取消請假，正在寄送通知...", "info");
     await trySendEmailNotice(
       "leave_revoked_by_coach",
@@ -7252,9 +7363,14 @@
     const wasCharged = Boolean(lesson.charged);
     lesson.attendanceStatus = target.attendanceStatus;
     lesson.charged = target.charged;
+    lesson.updatedAt = new Date().toISOString();
     addLog(`教練 ${lesson.coachCode} 將課程 ${lesson.id} 標記為 ${target.attendanceStatus}。`);
     saveState();
     renderAll();
+    // 完整課表雲端化最關鍵的接入點：臨時請假/未到課/重大急事/重置這四種狀態
+    // 只改 lesson 內部欄位、不碰 Google 日曆，光看日曆永遠算不準扣堂。一定要把
+    // 改完的 lesson 推上雲，主系統才能用權威算法即時重算正確的「本期已扣」。
+    pushCloudLessonsQuietly({ coachCode: lesson.coachCode, studentCode: lesson.studentCode });
     notifyUser(`課程狀態已更新：${getStatusPill(target.attendanceStatus).replace(/<[^>]+>/g, "")}。`, "success");
     if (!wasCharged && target.charged) {
       maybeSendChargeReminder(lesson.studentCode, "coach_mark_status").catch((error) => {

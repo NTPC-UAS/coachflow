@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260606-0002";
+const PUBLIC_APP_VERSION = "20260606-0003";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -3937,6 +3937,37 @@ function isLeaveLessonAfterBillingTrackingStart(lesson) {
   return Number.isFinite(lessonTime) && lessonTime >= startTime;
 }
 
+// 雲端 Lessons 的 boolean（calendarOccupied / charged）round-trip 後可能是 boolean
+// 或字串（Apps Script Sheet cell / JSON）。兩種都還原成 JS boolean，這是計費正確性
+// 的關鍵：charged 判錯就直接讓「本期已扣」算錯。
+function normalizeCloudLessonBoolean(value) {
+  if (value === true) {
+    return true;
+  }
+  if (value === false) {
+    return false;
+  }
+  return String(value || "").trim().toLowerCase() === "true";
+}
+
+function normalizeCloudLesson(row) {
+  if (!row || typeof row !== "object") {
+    return null;
+  }
+  return {
+    id: String(row.id || ""),
+    studentCode: normalizeLeaveSystemCode(row.studentCode),
+    coachCode: normalizeLeaveSystemCode(row.coachCode),
+    startAt: String(row.startAt || ""),
+    sourceType: String(row.sourceType || "REGULAR"),
+    calendarOccupied: normalizeCloudLessonBoolean(row.calendarOccupied),
+    attendanceStatus: String(row.attendanceStatus || "scheduled"),
+    charged: normalizeCloudLessonBoolean(row.charged),
+    completedAt: String(row.completedAt || ""),
+    updatedAt: String(row.updatedAt || "")
+  };
+}
+
 function isLocalLeaveGoogleSyncLesson(lesson) {
   // 對齊 leave-sandbox.js isLessonAutoCompleted：補課 (MAKEUP) 也是
   // 計入扣堂的合法 source。app.js 之前漏這個，補課做完不會被自動算
@@ -4262,6 +4293,72 @@ async function callLeaveSystemApi(action, payload = {}, method = "GET") {
   }
 }
 
+// 完整課表雲端化的讀算端：從雲端 listLessons 撈完整課表，重用本機那套權威算法
+// （isLocalLeaveLessonChargedForBilling 等）即時重算「本期已扣」。這才是真根治：
+// 不靠「開過請假系統那台裝置的 localStorage」、也不靠只更新到「教練上次操作」的
+// 凍結快照，任何裝置只開主系統就能算對。
+//
+// chargeStartCount / 扣堂 baseline 從傳入的 latestProfile（listBillingProfiles 結果）
+// 拿，跟 getLocalLeaveBillingSummary 對齊。後端未部署（Unsupported action）時回 null，
+// 上層 chooseStudentLeaveBillingSummary 會自動退回 snapshot / local 兩來源。
+async function fetchCloudLessonsBillingSummary(student, assignedCoach, latestProfile) {
+  const studentCode = normalizeLeaveSystemCode(student?.accessCode || student?.id || "");
+  if (!studentCode || !getLeaveAppsScriptUrl()) {
+    return null;
+  }
+  const coachCode = normalizeLeaveSystemCode(assignedCoach?.accessCode || "");
+  const payload = { studentCode };
+  if (coachCode) {
+    payload.coachCode = coachCode;
+  }
+
+  let lessons = [];
+  try {
+    const result = await callLeaveSystemApi("listLessons", payload, "GET");
+    lessons = (Array.isArray(result?.lessons) ? result.lessons : [])
+      .map(normalizeCloudLesson)
+      .filter(Boolean);
+  } catch (error) {
+    // 後端未部署（Unsupported action）→ 安靜回 null，退回現有兩來源，零行為退化。
+    if (!/unsupported action/i.test(String(error?.message || ""))) {
+      console.warn("Cloud lessons billing fetch failed:", error);
+    }
+    return null;
+  }
+
+  const studentProfile = latestProfile || null;
+  const leaveState = readLeaveSandboxLocalState();
+  const startCount = toNonNegativeInteger(studentProfile?.chargeStartCount, 0);
+  const scopedLessons = lessons.filter((lesson) => (
+    normalizeLeaveSystemCode(lesson.studentCode) === studentCode &&
+    (!coachCode || normalizeLeaveSystemCode(lesson.coachCode) === coachCode) &&
+    lesson.attendanceStatus !== "calendar-removed" &&
+    isLocalLeaveLessonActiveForBilling(lesson)
+  ));
+  const chargedLessons = scopedLessons.filter((lesson) => (
+    isLocalLeaveLessonChargedForBilling(lesson) &&
+    isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leaveState)
+  ));
+  if (!studentProfile && !chargedLessons.length) {
+    return null;
+  }
+  const totalChargedCount = startCount + chargedLessons.length;
+  const lessonTimes = chargedLessons.flatMap((lesson) => [lesson?.completedAt, lesson?.updatedAt, lesson?.startAt]);
+  const updatedTime = Math.max(
+    getBillingProfileTime(studentProfile || {}),
+    ...lessonTimes
+      .map((value) => new Date(value || "").getTime())
+      .filter((time) => Number.isFinite(time)),
+    0
+  );
+  return buildLeaveBillingCycleSummary(totalChargedCount, LEAVE_BILLING_DEFAULT_STEP, {
+    source: "cloud-lessons",
+    updatedTime,
+    systemChargedCount: chargedLessons.length,
+    chargeStartCount: startCount
+  });
+}
+
 async function fetchStudentLeaveBillingSummary(student, assignedCoach) {
   const localSummary = getLocalLeaveBillingSummary(student, assignedCoach);
   const studentCode = normalizeLeaveSystemCode(student?.accessCode || student?.id || "");
@@ -4300,8 +4397,21 @@ async function fetchStudentLeaveBillingSummary(student, assignedCoach) {
   const latestProfile = profiles
     .filter((profile) => normalizeLeaveSystemCode(profile.studentCode) === studentCode)
     .sort((a, b) => getBillingProfileTime(b) - getBillingProfileTime(a))[0];
-  const cloudSummary = latestProfile ? getLeaveBillingSummaryFromProfile(latestProfile) : getStudentLeaveBillingDefaultSummary();
-  return chooseStudentLeaveBillingSummary(localSummary, cloudSummary);
+  const cloudSnapshotSummary = latestProfile ? getLeaveBillingSummaryFromProfile(latestProfile) : getStudentLeaveBillingDefaultSummary();
+
+  // 三來源整合：
+  //   cloud-lessons（完整課表即時重算）> cloud-snapshot（凍結快照）> local（本機即時重算）
+  // chooseStudentLeaveBillingSummary 比 updatedTime、平手取第一參數，所以這兩層
+  // choose 讓 cloud-lessons 在平手時勝出 snapshot 與 local；而當 cloud-lessons 為 null
+  // （後端未部署），cloudBest 自動退回 snapshot，再與 local 比較，零行為退化。
+  let cloudLessonsSummary = null;
+  try {
+    cloudLessonsSummary = await fetchCloudLessonsBillingSummary(student, assignedCoach, latestProfile);
+  } catch (error) {
+    console.warn("Cloud lessons billing summary failed:", error);
+  }
+  const cloudBest = chooseStudentLeaveBillingSummary(cloudLessonsSummary, cloudSnapshotSummary);
+  return chooseStudentLeaveBillingSummary(cloudBest, localSummary);
 }
 
 function renderStudentActiveInfo(student, assignedCoachName, program) {

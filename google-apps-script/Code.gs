@@ -5,7 +5,8 @@ const SHEETS = {
   programItems: "ProgramItems",
   workoutLogs: "WorkoutLogs",
   leaveRecords: "LeaveRecords",
-  billingProfiles: "BillingProfiles"
+  billingProfiles: "BillingProfiles",
+  lessons: "Lessons"
 };
 const APP_TIME_ZONE = "Asia/Taipei";
 
@@ -130,6 +131,24 @@ const SCHEMA = {
     "updatedAt",
     "updatedBy",
     "createdAt"
+  ],
+  // 完整課表雲端化：每堂課一列，計費要算的「每堂 attendanceStatus + charged」權威來源。
+  // 過去課表只散落在「開過請假系統那台裝置的 localStorage」+ Google Calendar，
+  // 但臨時請假/未到課（扣堂）、重大急事（不扣堂）只改 lesson 內部欄位、不碰日曆，
+  // 光看日曆算不準 → 主系統學生「本期已扣 X/4」會錯。把完整課表存上雲端，主系統
+  // 直接讀完整課表用權威算法即時重算才是真根治。
+  // calendarOccupied / charged 是 boolean，normalizeLessonRow_ 做 round-trip 防誤判。
+  Lessons: [
+    "id",
+    "studentCode",
+    "coachCode",
+    "startAt",
+    "sourceType",
+    "calendarOccupied",
+    "attendanceStatus",
+    "charged",
+    "completedAt",
+    "updatedAt"
   ]
 };
 
@@ -171,6 +190,9 @@ function doGet(e) {
 
       case "listBillingProfiles":
         return jsonResponse_(listBillingProfiles_(e && e.parameter ? e.parameter : {}));
+
+      case "listLessons":
+        return jsonResponse_(listLessons_(e && e.parameter ? e.parameter : {}));
 
       case "getLeaveStateSnapshot":
         return jsonResponse_(getLeaveStateSnapshot_(e && e.parameter ? e.parameter : {}));
@@ -308,6 +330,12 @@ function doPost(e) {
       case "saveBillingProfile":
         return jsonResponse_(saveBillingProfile_(payload));
 
+      case "listLessons":
+        return jsonResponse_(listLessons_(payload));
+
+      case "saveLessons":
+        return jsonResponse_(saveLessons_(payload));
+
       case "getLeaveStateSnapshot":
         return jsonResponse_(getLeaveStateSnapshot_(payload));
 
@@ -317,7 +345,7 @@ function doPost(e) {
       default:
         return jsonResponse_({
           ok: false,
-          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/getLeaveStateSnapshot/saveLeaveStateSnapshot/sendEmail."
+          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/listLessons/saveLessons/getLeaveStateSnapshot/saveLeaveStateSnapshot/sendEmail."
         });
     }
   } catch (error) {
@@ -355,7 +383,10 @@ function shouldEnsureSheetsForAction_(action) {
     "listLeaveRecords",
     "saveLeaveRecord",
     "listBillingProfiles",
-    "saveBillingProfile"
+    "saveBillingProfile",
+    // 完整課表雲端化：listLessons/saveLessons 走 Lessons 分頁，確保分頁存在再操作
+    "listLessons",
+    "saveLessons"
   ];
   return sheetActions.indexOf(normalized) !== -1;
 }
@@ -1868,6 +1899,156 @@ function setBillingProfiles_(profiles) {
     });
     appendRows_(SHEETS.billingProfiles, rowsToWrite);
   }
+}
+
+// ====================================================================
+// 完整課表雲端化（Lessons 分頁）
+//
+// 計費要算「每堂 attendanceStatus + charged」，但課表過去沒完整存雲端：雲端只有
+// LeaveRecords（請假紀錄）+ BillingProfiles（凍結快照），完整課表只在開過請假系統
+// 那台裝置的 localStorage + Google Calendar。但 Google Calendar 不是完整真相
+// （臨時請假/未到課要扣堂、重大急事不扣堂，這三種只改 lesson 內部欄位、不碰日曆），
+// 光看日曆算不準。把完整課表存上雲端，主系統 listLessons 讀回用權威算法即時重算，
+// 才是「學生本期已扣 X/4 顯示錯誤」的真根治。
+// ====================================================================
+
+// calendarOccupied / charged 是 boolean，但 Sheet cell round-trip 後可能回 boolean
+// 或字串（手動編輯、匯入、不同 client）。兩種都吃，避免把扣堂與否判錯。
+function normalizeLessonBoolean_(value) {
+  if (value === true) {
+    return true;
+  }
+  if (value === false) {
+    return false;
+  }
+  const text = String(value === null || value === undefined ? "" : value).trim().toLowerCase();
+  if (text === "true") {
+    return true;
+  }
+  if (text === "false") {
+    return false;
+  }
+  return false;
+}
+
+function normalizeLessonRow_(row) {
+  row = row || {};
+  return {
+    id: safeString_(row.id, ""),
+    studentCode: normalizeCode_(row.studentCode),
+    coachCode: normalizeCode_(row.coachCode),
+    startAt: safeString_(row.startAt, ""),
+    sourceType: safeString_(row.sourceType, "REGULAR"),
+    calendarOccupied: normalizeLessonBoolean_(row.calendarOccupied),
+    attendanceStatus: safeString_(row.attendanceStatus, "scheduled"),
+    charged: normalizeLessonBoolean_(row.charged),
+    completedAt: safeString_(row.completedAt, ""),
+    updatedAt: safeString_(row.updatedAt, "")
+  };
+}
+
+function getLessons_() {
+  return readTable_(SHEETS.lessons).map(normalizeLessonRow_);
+}
+
+// 整批寫回：清資料區（保留 header）再 bulk write。
+// 重要：絕不可 slice 截斷。歷史扣堂課（已上完、charged=true）一旦被截掉，
+// 主系統重算的「本期已扣」會少算。Lessons 會持續累積但 Sheet 容量實質無上限。
+function setLessons_(lessons) {
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(SHEETS.lessons);
+  const headers = SCHEMA.Lessons;
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+  }
+  if (lessons && lessons.length) {
+    appendRows_(SHEETS.lessons, lessons.map(normalizeLessonRow_));
+  }
+}
+
+function listLessons_(payload) {
+  const coachCode = normalizeCode_(payload.coachCode);
+  const studentCode = normalizeCode_(payload.studentCode);
+  const lessons = getLessons_()
+    .filter(function(lesson) {
+      return (!coachCode || normalizeCode_(lesson.coachCode) === coachCode) &&
+        (!studentCode || normalizeCode_(lesson.studentCode) === studentCode);
+    })
+    .sort(function(a, b) {
+      return new Date(b.startAt || 0) - new Date(a.startAt || 0);
+    });
+  return {
+    ok: true,
+    action: "listLessons",
+    count: lessons.length,
+    lessons: lessons
+  };
+}
+
+// 差量 upsert by id（不是整 scope 覆寫）：
+// 學生端只會 push 自己的課；若做整 scope 覆寫，學生一推就會把「同教練底下其他
+// 學生的課」整批清掉。所以只 upsert 進來的那幾筆，其餘原封不動。
+//
+// +2000ms stale 防護：incoming.updatedAt 明顯比現有舊（落後 2 秒以上）就忽略，
+// 避免落後裝置用過期狀態覆寫較新的扣堂/請假結果（對齊 saveBillingProfile_）。
+function saveLessons_(payload) {
+  const incoming = Array.isArray(payload.lessons) ? payload.lessons : [];
+  const normalizedIncoming = incoming
+    .map(normalizeLessonRow_)
+    .filter(function(lesson) {
+      return lesson.id;
+    });
+  if (!normalizedIncoming.length) {
+    return {
+      ok: true,
+      action: "saveLessons",
+      saved: 0,
+      message: "No lessons to save."
+    };
+  }
+
+  return withScriptLock_(function () {
+    const existing = getLessons_();
+    const indexById = {};
+    existing.forEach(function(lesson, index) {
+      if (lesson.id) {
+        indexById[lesson.id] = index;
+      }
+    });
+
+    let inserted = 0;
+    let updated = 0;
+    let ignored = 0;
+    normalizedIncoming.forEach(function(lesson) {
+      const existingIndex = indexById[lesson.id];
+      if (existingIndex === undefined) {
+        existing.push(lesson);
+        indexById[lesson.id] = existing.length - 1;
+        inserted += 1;
+        return;
+      }
+      const current = existing[existingIndex];
+      const incomingTime = new Date(lesson.updatedAt || 0).getTime();
+      const currentTime = new Date(current.updatedAt || 0).getTime();
+      if (Number.isFinite(incomingTime) && Number.isFinite(currentTime) && incomingTime + 2000 < currentTime) {
+        ignored += 1;
+        return;
+      }
+      existing[existingIndex] = lesson;
+      updated += 1;
+    });
+
+    setLessons_(existing);
+    return {
+      ok: true,
+      action: "saveLessons",
+      saved: inserted + updated,
+      inserted: inserted,
+      updated: updated,
+      ignored: ignored,
+      total: existing.length
+    };
+  });
 }
 
 // === Snapshot 端點停用 ===
