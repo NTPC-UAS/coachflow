@@ -1110,7 +1110,48 @@
     return String(window.APP_CONFIG?.coachflowAppsScriptUrl || "").trim();
   }
 
+  // 會搶後端 ScriptLock 的 Sheet 寫入 action。這些要走「單機排隊 + 重試」：
+  // 頁面一打開常有三股寫入同時跑（日曆同步尾段 push 課表、billing 快照補種、
+  // 手動上傳），全部並發打後端會互搶鎖 → LOCK_TIMEOUT。排隊後同一台裝置
+  // 一次只送一個寫入，鎖競爭幾乎消失；剩餘的（跨裝置）由重試吸收。
+  const CLOUD_WRITE_ACTIONS = ["saveLessons", "saveLeaveRecord", "saveBillingProfile"];
+  let cloudWriteChain = Promise.resolve();
+
+  function isRetryableCloudWriteError(error) {
+    // LOCK_TIMEOUT：後端搶鎖逾時。逾時：client 12s abort，但後端可能仍在排隊
+    // 完成寫入——三個寫入 action 都是 upsert 冪等，重送安全。
+    return /LOCK_TIMEOUT|逾時/i.test(String(error?.message || error || ""));
+  }
+
   async function callAppsScriptApi(action, payload = {}, method = "POST") {
+    if (!CLOUD_WRITE_ACTIONS.includes(action)) {
+      return callAppsScriptApiRaw(action, payload, method);
+    }
+    const run = async () => {
+      const delays = [0, 2000, 5000, 10000];
+      let lastError;
+      for (const delay of delays) {
+        if (delay) {
+          await new Promise((resolve) => setTimeout(resolve, delay + Math.floor(Math.random() * 500)));
+        }
+        try {
+          return await callAppsScriptApiRaw(action, payload, method);
+        } catch (error) {
+          lastError = error;
+          if (!isRetryableCloudWriteError(error)) {
+            throw error;
+          }
+        }
+      }
+      throw lastError;
+    };
+    // 排隊：前一個寫入無論成敗都接著跑下一個（錯誤由各自呼叫端處理）
+    const result = cloudWriteChain.then(run, run);
+    cloudWriteChain = result.catch(() => {});
+    return result;
+  }
+
+  async function callAppsScriptApiRaw(action, payload = {}, method = "POST") {
     const url = getAppsScriptUrl();
     if (!url) {
       return {

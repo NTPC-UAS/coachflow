@@ -1675,9 +1675,21 @@ function saveLeaveRecord_(payload) {
     const nextRecords = records.map(function(item) {
       if (getLeaveRecordKey_(item) === recordKey) {
         replaced = true;
-        return Object.assign({}, item, record, {
+        const merged = Object.assign({}, item, record, {
           updatedAt: nowIso_()
         });
+        // 防復活 ratchet：同一筆 leave id 一旦 revoked 就不可被「未帶 revokedAt
+        // 的舊狀態」蓋回活著。沒有任何合法流程會清空同一筆 leave 的 revokedAt
+        // （重試請假一律建新 id），會清空的只有「stale 裝置手動上傳整包舊資料」
+        // —— 已上線案例：教練在 A 裝置取消請假，B 裝置（資料較舊）按「上傳到
+        // 雲端」把整批 leave push 回雲，revokedAt 被空值覆蓋 → 請假復活 →
+        // 所有裝置同步後課程又變回「請假」（幽靈請假）。
+        if (safeString_(item.revokedAt, "") && !safeString_(record.revokedAt, "")) {
+          merged.revokedAt = item.revokedAt;
+          merged.revokedBy = item.revokedBy;
+          merged.makeupEligible = item.makeupEligible;
+        }
+        return merged;
       }
       return item;
     });
@@ -2049,6 +2061,146 @@ function saveLessons_(payload) {
       total: existing.length
     };
   });
+}
+
+// ====================================================================
+// 雲端自動整理排程（時間觸發器）
+//
+// 過去課表狀態的「整理」（請假套用到課、課程時間過後自動扣堂）全部跑在瀏覽器：
+// 教練電腦沒開，雲端資料就停止保鮮——這正是「系統更新都有問題」的根因。
+// 這裡把整理邏輯搬進 Apps Script 時間觸發器，每小時自動跑，完全不依賴任何
+// 裝置開著：
+//
+//   1. 請假對齊：active 的 normal 請假紀錄 → 對應 Lessons 列改 leave-normal
+//      （不扣堂）。防護「學生請假成功但 lesson push 失敗 → 課表列還停在
+//      scheduled → 被誤扣堂」。
+//   2. 取消還原：請假已 revoked 但課表列還卡 leave-normal → 還原 scheduled。
+//   3. 自動扣堂：scheduled + 佔用日曆 + 時間已過 → charged=true。
+//      主系統 app.js 讀雲端課表時本來就會即時算，這裡是把結果落地回 Sheet，
+//      讓 Sheet 本身永遠是對的（教練直接看 Sheet 也對）。
+//
+// 部署：貼上這版 Code.gs 後，在 Apps Script Editor 手動執行一次
+// setupCoachflowTriggers（會要求授權），之後每小時自動跑。idempotent，
+// 多跑不會壞資料。
+// ====================================================================
+
+// 與前端 leave-sandbox.js / app.js 的 BILLING_TRACKING_START_AT 對齊：
+// 5/3（含）之後的課才納入追蹤與自動整理。
+const LESSONS_TRACKING_START_AT = "2026-05-03T00:00:00+08:00";
+
+function lessonCloudKey_(studentCode, coachCode, startAt) {
+  const time = new Date(startAt || "").getTime();
+  if (!studentCode || !coachCode || !Number.isFinite(time)) {
+    return "";
+  }
+  return normalizeCode_(studentCode) + "|" + normalizeCode_(coachCode) + "|" + new Date(time).toISOString();
+}
+
+function reconcileAndAutoCompleteLessons() {
+  return withScriptLock_(function () {
+    const nowMs = Date.now();
+    const trackingStartMs = new Date(LESSONS_TRACKING_START_AT).getTime();
+    const lessons = getLessons_();
+    if (!lessons.length) {
+      Logger.log("[reconcile] Lessons 分頁沒有資料，跳過。");
+      return;
+    }
+
+    // 只看 normal 請假（temporary-leave / no-show / major-case 是 lesson 內部
+    // 狀態、教練停課另有流程，都不在這裡動）。
+    const leaves = getLeaveRecords_().filter(function(record) {
+      return String(record.type || "normal") === "normal";
+    });
+    const activeByLessonId = {};
+    const activeByKey = {};
+    const revokedByLessonId = {};
+    const revokedByKey = {};
+    leaves.forEach(function(record) {
+      const idKey = safeString_(record.lessonId, "");
+      const lessonKey = safeString_(record.lessonKey, "") ||
+        lessonCloudKey_(record.studentCode, record.coachCode, record.lessonStartAt);
+      const isActive = !safeString_(record.revokedAt, "");
+      const idMap = isActive ? activeByLessonId : revokedByLessonId;
+      const keyMap = isActive ? activeByKey : revokedByKey;
+      if (idKey) {
+        idMap[idKey] = true;
+      }
+      if (lessonKey) {
+        keyMap[lessonKey] = true;
+      }
+    });
+
+    let leaveApplied = 0;
+    let leaveRestored = 0;
+    let autoCompleted = 0;
+    const now = nowIso_();
+
+    lessons.forEach(function(lesson) {
+      const startMs = new Date(lesson.startAt || "").getTime();
+      if (!Number.isFinite(startMs) || startMs < trackingStartMs) {
+        return;
+      }
+      const key = lessonCloudKey_(lesson.studentCode, lesson.coachCode, lesson.startAt);
+      const hasActiveLeave = Boolean(activeByLessonId[lesson.id] || (key && activeByKey[key]));
+      const hasRevokedLeave = Boolean(revokedByLessonId[lesson.id] || (key && revokedByKey[key]));
+
+      // (1) 請假成立但課表列還停在 scheduled → 套用 leave-normal、不扣堂
+      if (hasActiveLeave && lesson.attendanceStatus === "scheduled") {
+        lesson.attendanceStatus = "leave-normal";
+        lesson.calendarOccupied = false;
+        lesson.charged = false;
+        lesson.updatedAt = now;
+        leaveApplied += 1;
+        return;
+      }
+
+      // (2) 請假已取消但課表列卡在 leave-normal → 還原 scheduled
+      //（接著仍會走 (3)：若時間已過，照常自動扣堂）
+      if (!hasActiveLeave && hasRevokedLeave && lesson.attendanceStatus === "leave-normal") {
+        lesson.attendanceStatus = "scheduled";
+        lesson.calendarOccupied = true;
+        lesson.charged = false;
+        lesson.updatedAt = now;
+        leaveRestored += 1;
+      }
+
+      // (3) 自動扣堂：與前端 isLessonAutoCompleted 同語意
+      if (
+        lesson.attendanceStatus === "scheduled" &&
+        lesson.calendarOccupied &&
+        !lesson.charged &&
+        startMs <= nowMs
+      ) {
+        lesson.charged = true;
+        lesson.completedAt = lesson.completedAt || now;
+        lesson.updatedAt = now;
+        autoCompleted += 1;
+      }
+    });
+
+    if (leaveApplied || leaveRestored || autoCompleted) {
+      setLessons_(lessons);
+    }
+    Logger.log(
+      "[reconcile] 完成：套用請假 " + leaveApplied +
+      " 堂、還原已取消請假 " + leaveRestored +
+      " 堂、自動扣堂 " + autoCompleted + " 堂（共掃 " + lessons.length + " 堂）。"
+    );
+  });
+}
+
+// 一次性安裝：刪掉同名舊觸發器再建新的，避免重複。在 Editor 手動執行一次即可。
+function setupCoachflowTriggers() {
+  const handler = "reconcileAndAutoCompleteLessons";
+  let removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    if (trigger.getHandlerFunction() === handler) {
+      ScriptApp.deleteTrigger(trigger);
+      removed += 1;
+    }
+  });
+  ScriptApp.newTrigger(handler).timeBased().everyHours(1).create();
+  Logger.log("[trigger] 已建立每小時排程 " + handler + "（移除舊觸發器 " + removed + " 個）。");
 }
 
 // === Snapshot 端點停用 ===
@@ -2423,12 +2575,18 @@ function dedupeWorkoutLogs() {
  * 用法：withScriptLock_(function () { ... 寫入動作 ... })
  * 多裝置同時寫同一份 chunked property 會 lost update。
  * 包進 ScriptLock 後同一時間只允許一個寫入交易。
- * 取不到鎖在 5 秒內 throw，呼叫端可決定是否回傳「忙碌請重試」。
+ * 取不到鎖在 30 秒內 throw，呼叫端可決定是否回傳「忙碌請重試」。
+ *
+ * 等待時間從 5s 拉長到 30s：完整課表第一次灌入（saveLessons 分批）+
+ * billing 快照補種 + 請假紀錄會同時到達，5s 太短會大量 LOCK_TIMEOUT。
+ * Apps Script 單次執行上限 6 分鐘，30s 等鎖完全安全；client 端 12s 逾時
+ * 中斷也沒關係——server 端會繼續排隊完成寫入，寫入全部是 upsert 冪等，
+ * client 重試不會產生重複資料。
  */
 function withScriptLock_(fn) {
   const lock = LockService.getScriptLock();
-  if (!lock.tryLock(5000)) {
-    throw new Error("LOCK_TIMEOUT: could not acquire script lock within 5s, please retry.");
+  if (!lock.tryLock(30000)) {
+    throw new Error("LOCK_TIMEOUT: could not acquire script lock within 30s, please retry.");
   }
   try {
     return fn();
