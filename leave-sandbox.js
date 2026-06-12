@@ -3772,15 +3772,6 @@
     return 0;
   }
 
-  function hashTextForCode(value) {
-    const text = String(value || "").trim();
-    let hash = 0;
-    for (let index = 0; index < text.length; index += 1) {
-      hash = ((hash << 5) - hash + text.charCodeAt(index)) >>> 0;
-    }
-    return hash.toString(36).toUpperCase().padStart(5, "0").slice(0, 5);
-  }
-
   function readCalendarDateTime(value) {
     if (!value) {
       return "";
@@ -3834,46 +3825,6 @@
       startAt: startDate.toISOString(),
       endAt: Number.isNaN(endDate.getTime()) ? fallbackEndDate.toISOString() : endDate.toISOString()
     };
-  }
-
-  function ensureGoogleEventStudentProfile(event, coachCode) {
-    const title = String(event?.title || "").trim();
-    const fallbackKey = normalizeCalendarEventId(event?.eventId || event?.id || "") || `${event?.startAt || ""}-${title}`;
-    const baseCode = `G${hashTextForCode(normalizeLooseText(title) || fallbackKey)}`;
-    let code = baseCode;
-    let suffix = 1;
-    while (state.students.some((student) => student.code === code && student.coachCode !== coachCode)) {
-      suffix += 1;
-      code = `${baseCode}${suffix}`;
-    }
-    const existed = getStudentByCode(code);
-    if (existed) {
-      if (title && existed.name !== title) {
-        existed.name = title;
-      }
-      existed.coachCode = coachCode;
-      existed.sourceType = existed.sourceType || "GOOGLE_CALENDAR";
-      return existed;
-    }
-    const created = {
-      code,
-      name: title || "Google 日曆課程",
-      coachCode,
-      email: "",
-      chargeStartCount: 0,
-      chargeStartCountUpdatedAt: "",
-      chargeStartCountUpdatedBy: "",
-      paidThroughCount: 0,
-      paymentStatus: "unknown",
-      paymentNote: "",
-      paymentConfirmedAt: "",
-      paymentConfirmedBy: "",
-      chargeReminderLogs: [],
-      sourceType: "GOOGLE_CALENDAR"
-    };
-    state.students.push(created);
-    addLog(`[日曆同步] 已建立 Google 日曆來源學生 ${created.name}（${created.code}）。`);
-    return created;
   }
 
   function resolveStudentCodeFromCalendarEvent(event, coachCode) {
@@ -4104,8 +4055,8 @@
     let updatedStart = 0;
     let relinkedEventId = 0;
     let createdLessons = 0;
-    let createdGoogleStudents = 0;
     let skippedUnmatchedStudent = 0;
+    const skippedUnmatchedTitles = [];
     let skippedNonLessonEvent = 0;
     let skippedMakeupClaimed = 0;
 
@@ -4140,16 +4091,17 @@
         return;
       }
 
-      let studentCode = resolveStudentCodeFromCalendarEvent(event, coachCode);
+      // 對不到學生的事件一律略過，不再自動建「Google 日曆來源學生」＋課程。
+      // 之前自動建檔會把教練私人行程全部變成 G 開頭代碼的假學生與課表；
+      // 需要納管的事件請改事件標題，或在 config 的 calendarStudentAliases 加別名。
+      const studentCode = resolveStudentCodeFromCalendarEvent(event, coachCode);
       if (!studentCode) {
-        const googleStudent = ensureGoogleEventStudentProfile(event, coachCode);
-        studentCode = googleStudent?.code || "";
-        if (studentCode) {
-          createdGoogleStudents += 1;
-        } else {
-          skippedUnmatchedStudent += 1;
-          return;
+        skippedUnmatchedStudent += 1;
+        const title = String(event?.title || "").trim();
+        if (title && !skippedUnmatchedTitles.includes(title)) {
+          skippedUnmatchedTitles.push(title);
         }
+        return;
       }
 
       const normalizedEventId = normalizeCalendarEventId(eventId);
@@ -4204,8 +4156,8 @@
       updatedStart,
       relinkedEventId,
       createdLessons,
-      createdGoogleStudents,
       skippedUnmatchedStudent,
+      skippedUnmatchedTitles,
       skippedNonLessonEvent,
       skippedMakeupClaimed,
       matchedLessonIds: Array.from(usedLessonIds)
@@ -4506,7 +4458,11 @@
         const alignStats = alignCoachLessonsWithGoogleEvents(activeCoachCode, events);
         alignedLessonIdSet = new Set(Array.isArray(alignStats.matchedLessonIds) ? alignStats.matchedLessonIds : []);
         if (alignStats.totalEvents > 0) {
-          alignedSummary = `Google對齊：calendar ${syncedCalendarId || "-"}，抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆，Google來源學生 ${alignStats.createdGoogleStudents} 筆，未匹配學生 ${alignStats.skippedUnmatchedStudent} 筆，非課程事件 ${alignStats.skippedNonLessonEvent} 筆`;
+          const unmatchedTitles = Array.isArray(alignStats.skippedUnmatchedTitles) ? alignStats.skippedUnmatchedTitles : [];
+          const unmatchedHint = unmatchedTitles.length
+            ? `（略過事件：${unmatchedTitles.slice(0, 8).join("、")}${unmatchedTitles.length > 8 ? "…" : ""}）`
+            : "";
+          alignedSummary = `Google對齊：calendar ${syncedCalendarId || "-"}，抓到 ${alignStats.totalEvents} 筆，匹配 ${alignStats.matchedEvents} 筆，調整時間 ${alignStats.updatedStart} 筆，重綁事件ID ${alignStats.relinkedEventId} 筆，新增課程 ${alignStats.createdLessons} 筆，未匹配學生 ${alignStats.skippedUnmatchedStudent} 筆${unmatchedHint}，非課程事件 ${alignStats.skippedNonLessonEvent} 筆`;
           addLog(`[日曆同步] ${alignedSummary}`);
         } else {
           alignedSummary = `Google對齊：calendar ${syncedCalendarId || "-"} 查無事件。`;

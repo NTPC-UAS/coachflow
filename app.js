@@ -125,7 +125,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260606-0004";
+const PUBLIC_APP_VERSION = "20260612-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -1212,7 +1212,8 @@ function getCoachScopedStudents() {
   if (APP_MODE === "admin") {
     return state.students;
   }
-  return state.students.filter((student) => (student.primaryCoachId || coach.id) === coach.id);
+  // 無主資料（沒填教練）不再自動歸給目前教練；要顯示請先在管理端指派教練。
+  return state.students.filter((student) => student.primaryCoachId === coach.id);
 }
 
 function getCoachScopedPrograms() {
@@ -1223,7 +1224,7 @@ function getCoachScopedPrograms() {
   if (APP_MODE === "admin") {
     return state.programs;
   }
-  return state.programs.filter((program) => (program.coachId || coach.id) === coach.id);
+  return state.programs.filter((program) => program.coachId === coach.id);
 }
 
 function getCoachScopedLogs() {
@@ -1237,7 +1238,7 @@ function getCoachScopedLogs() {
   return state.workoutLogs.filter((log) => {
     const program = state.programs.find((item) => item.id === log.programId);
     const student = state.students.find((item) => item.id === log.studentId);
-    const coachId = log.coachId || program?.coachId || student?.primaryCoachId || coach.id;
+    const coachId = log.coachId || program?.coachId || student?.primaryCoachId || "";
     return coachId === coach.id;
   });
 }
@@ -1249,7 +1250,7 @@ function getDefaultEditingProgramId() {
   }
 
   const coachPrograms = state.programs
-    .filter((program) => (program.coachId || coach.id) === coach.id)
+    .filter((program) => program.coachId === coach.id)
     .sort((a, b) => {
       const dateCompare = String(b.date || "").localeCompare(String(a.date || ""));
       if (dateCompare !== 0) {
