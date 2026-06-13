@@ -4881,6 +4881,7 @@
       const createdEventId = String(result?.eventId || result?.calendarEventId || lesson.calendarEventId || newId("GCAL")).trim();
       lesson.calendarEventId = createdEventId;
       if (!result?.mock) {
+        const serverEventId = String(result?.eventId || result?.calendarEventId || "").trim();
         let verifiedEvent = null;
         let verificationMessage = "";
         try {
@@ -4888,19 +4889,29 @@
         } catch (error) {
           verificationMessage = String(error?.message || error || "驗證失敗");
         }
-        if (!verifiedEvent) {
+        if (verifiedEvent) {
+          lesson.calendarEventId = String(verifiedEvent.eventId || createdEventId).trim();
+        } else if (serverEventId) {
+          // 後端 createEvent 只有在 calendar.createEvent 成功後才會回 eventId，
+          // 所以「有拿到 serverEventId」= 事件確實建好了。建完馬上重讀驗證失敗，
+          // 多半是 Google 日曆最終一致性延遲、或標題比對抓不到（學生沒名字用代碼），
+          // 不是沒建成。此時務必信任 serverEventId、不要還原 + 排「再建一次」的補償
+          // 任務 —— 那正是「系統一直亂生重複『課程…』事件」的根因。
+          lesson.calendarEventId = serverEventId;
+          addLog(`[Google日曆] 建立後即時重讀未確認，信任後端回傳事件 ${serverEventId}（不重建）：${lesson.id}${verificationMessage ? `（${verificationMessage}）` : ""}`);
+        } else {
+          // 後端沒回 eventId = 真的沒建成，照舊 strict throw / 排補償。
           lesson.calendarEventId = previousEventId;
-          const message = verificationMessage || "重新讀取 Google 日曆時找不到剛建立的課程事件";
-          addLog(`[Google日曆] 建立事件後驗證失敗：${lesson.id}（${message}）`);
+          const message = verificationMessage || "後端未回傳事件 ID，視為建立失敗";
+          addLog(`[Google日曆] 建立事件失敗：${lesson.id}（${message}）`);
           if (strictMode) {
-            throw new Error(`Google 日曆建立後驗證失敗：${message}`);
+            throw new Error(`Google 日曆建立失敗：${message}`);
           }
           const retryPayload = buildLessonEventPayload({ ...lesson, calendarEventId: "" }, { reason });
-          enqueueCompensationTask("createEvent", retryPayload, `建立後驗證失敗：${message}`);
+          enqueueCompensationTask("createEvent", retryPayload, `建立失敗：${message}`);
           saveState();
           return "";
         }
-        lesson.calendarEventId = String(verifiedEvent.eventId || createdEventId).trim();
       }
       addLog(`[Google日曆] 已建立事件 ${createdEventId}${result.mock ? "（模擬）" : ""}`);
       saveState();
@@ -8633,6 +8644,32 @@
         saveState();
         renderAll();
         return;
+      } else if (task.type === "createEvent") {
+        // 重送前先查同時段是否已有事件（多半上一次其實建成了、只是當下驗證
+        // 沒讀到）。有就直接綁定、視為成功，不再重建——否則補償重送會一直
+        // 疊出重複的「課程…」事件。
+        const lesson = finalPayload?.lessonId ? getLessonById(finalPayload.lessonId) : null;
+        if (lesson) {
+          let existingEvent = null;
+          try {
+            existingEvent = await resolveSingleCalendarEventForLesson(
+              lesson,
+              finalPayload.eventId || lesson.calendarEventId || ""
+            );
+          } catch (error) {
+            existingEvent = null;
+          }
+          if (existingEvent) {
+            lesson.calendarEventId = String(existingEvent.eventId || lesson.calendarEventId || "").trim();
+            task.status = "completed";
+            task.completedAt = new Date().toISOString();
+            task.lastError = "";
+            addLog(`[補償重送] createEvent 視為成功（該時段已有事件，不重建，${task.id}）。`);
+            saveState();
+            renderAll();
+            return;
+          }
+        }
       } else if (task.type === "deleteEvent" || task.type === "deleteSingleEvent") {
         Object.assign(finalPayload, addSingleEventDeleteGuards(finalPayload));
         task.payload = finalPayload;
