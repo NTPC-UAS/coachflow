@@ -337,6 +337,10 @@ function doPost(e) {
         return jsonResponse_(listBillingProfiles_(payload));
 
       case "saveBillingProfile":
+        if (isTestPollutionBlocked_() &&
+          looksLikeTestParticipantName_((payload.profile || payload).studentName)) {
+          return jsonResponse_(testPollutionRejection_("saveBillingProfile"));
+        }
         return jsonResponse_(saveBillingProfile_(payload));
 
       case "listLessons":
@@ -2646,7 +2650,7 @@ function looksLikeTestParticipantName_(value) {
     return false;
   }
   // 真資料：Monster Chang、中文姓名，都不會命中。
-  return /grader|workflow|測試|weekend|\bwf\d*\b|\bw2\b|\bwflow\b|\bgrd\w*|\bgrade\b|\bsync\b|\beval\b|\bwknd\b|\bwkend\b|\btest\b/i.test(s);
+  return /grader|workflow|測試|週末|流程|學員|學生|student|weekend|\bwf\d*\b|\bw2s?\b|\bw5\b|\bw6\b|\bwflow\b|\bgrd\w*|\bgrade\b|\bsync\b|\beval\b|\bwknd\b|\bwkend\b|\btest\b|\bqa\b/i.test(s);
 }
 
 function looksLikeTestProgramCode_(code) {

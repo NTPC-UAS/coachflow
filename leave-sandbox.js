@@ -3015,8 +3015,23 @@
     });
   }
 
+  // 自動測試/評分腳本會直接對正式後端灌入假學生的 billing profile，請假系統
+  // 同步時就會自動把它們建成學生（WF1 Student / Grader Student / 測試學員…）。
+  // 這個指紋用來在同步時略過、不落地。真學生（中文姓名或 Zoe/Elsie/Matt）不命中。
+  function looksLikeTestParticipant(value) {
+    const s = String(value === null || value === undefined ? "" : value).trim();
+    if (!s) {
+      return false;
+    }
+    return /grader|workflow|測試|週末|流程|學員|學生|student|\bwf\d|\bw2s?\b|\bw5\b|\bw6\b|wflow|grd|\bgrade\b|\bsync\b|\beval\b|wknd|wkend|weekend|\btest\b|\bqa\b/i.test(s);
+  }
+
   function applyCloudBillingProfile(profile) {
     if (!profile) {
+      return false;
+    }
+    // 略過自動測試假學生的 billing profile，避免請假系統自動建出測試學生。
+    if (looksLikeTestParticipant(profile.studentName || profile.name)) {
       return false;
     }
     const studentCode = normalizeParticipantCode(profile.studentCode || profile.code);
