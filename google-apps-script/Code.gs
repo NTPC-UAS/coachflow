@@ -238,6 +238,9 @@ function doPost(e) {
         return jsonResponse_(buildStudentBootstrap_(payload.studentId));
 
       case "upsertCoach":
+        if (isTestPollutionBlocked_() && coachLooksLikeTestPollution_(payload.coach || {})) {
+          return jsonResponse_(testPollutionRejection_("upsertCoach"));
+        }
         upsertCoach_(payload.coach || {});
         return jsonResponse_(buildFullBootstrap_());
 
@@ -250,6 +253,9 @@ function doPost(e) {
         return jsonResponse_(buildFullBootstrap_());
 
       case "upsertStudent":
+        if (isTestPollutionBlocked_() && studentLooksLikeTestPollution_(payload.student || {})) {
+          return jsonResponse_(testPollutionRejection_("upsertStudent"));
+        }
         upsertStudent_(payload.student || {});
         return jsonResponse_(buildFullBootstrap_());
 
@@ -266,6 +272,9 @@ function doPost(e) {
         return jsonResponse_(buildFullBootstrap_());
 
       case "saveProgram":
+        if (isTestPollutionBlocked_() && programLooksLikeTestPollution_(payload.program || {})) {
+          return jsonResponse_(testPollutionRejection_("saveProgram"));
+        }
         saveProgram_(payload.program || {}, payload.items || []);
         return jsonResponse_(buildFullBootstrap_());
 
@@ -328,6 +337,10 @@ function doPost(e) {
         return jsonResponse_(listBillingProfiles_(payload));
 
       case "saveBillingProfile":
+        if (isTestPollutionBlocked_() &&
+          looksLikeTestParticipantName_((payload.profile || payload).studentName)) {
+          return jsonResponse_(testPollutionRejection_("saveBillingProfile"));
+        }
         return jsonResponse_(saveBillingProfile_(payload));
 
       case "listLessons":
@@ -2606,6 +2619,73 @@ function safeString_(value, fallback) {
 
 function nowIso_() {
   return new Date().toISOString();
+}
+
+// ====================================================================
+// 阻擋自動測試／評分腳本把假資料灌進正式資料庫
+//
+// 已上線事故：外部自動化測試直接對正式後端 POST saveProgram / upsertCoach /
+// upsertStudent，每天在教練的正式資料庫塞滿 WF* / GRADE* / TEST* 課表與
+// Grader Coach / WF2 Coach / 測試教練 等假帳號。一直手動刪是打地鼠。
+//
+// 這裡在「寫入當下」就擋掉這些假資料。設計目標：真實資料 0 誤殺。
+//   - 真教練：Monster Chang（不含測試字樣）
+//   - 真學生：中文姓名（不含測試字樣）
+//   - 真課表代碼：純數字（日期，如 503 / 6060612），絕不含英文字母
+// 測試指紋：課表代碼含英文字母、或教練/學生名含 WF/GRADE/TEST/Grader/
+// Workflow/測試/Weekend 等字樣。
+//
+// 逃生門：若有正當需求要暫時放行（例如自己要建英文代碼課表），到
+// Script Properties 設 COACHFLOW_BLOCK_TEST_DATA = "false" 即可關閉本守門。
+// ====================================================================
+function isTestPollutionBlocked_() {
+  const v = String(PropertiesService.getScriptProperties().getProperty("COACHFLOW_BLOCK_TEST_DATA") || "")
+    .trim().toLowerCase();
+  return v !== "false" && v !== "0" && v !== "off" && v !== "no";
+}
+
+function looksLikeTestParticipantName_(value) {
+  const s = String(value === null || value === undefined ? "" : value).trim();
+  if (!s) {
+    return false;
+  }
+  // 真資料：Monster Chang、中文姓名，都不會命中。
+  return /grader|workflow|測試|週末|流程|學員|學生|student|weekend|\bwf\d*\b|\bw2s?\b|\bw5\b|\bw6\b|\bwflow\b|\bgrd\w*|\bgrade\b|\bsync\b|\beval\b|\bwknd\b|\bwkend\b|\btest\b|\bqa\b/i.test(s);
+}
+
+function looksLikeTestProgramCode_(code) {
+  const s = String(code === null || code === undefined ? "" : code).trim();
+  if (!s) {
+    return false; // 空白代碼不擋（草稿）
+  }
+  // 真課表代碼是純數字（日期）。含任何英文字母一律視為自動測試命名。
+  return /[A-Za-z]/.test(s);
+}
+
+function coachLooksLikeTestPollution_(coach) {
+  coach = coach || {};
+  return looksLikeTestParticipantName_(coach.coach_name || coach.name);
+}
+
+function studentLooksLikeTestPollution_(student) {
+  student = student || {};
+  return looksLikeTestParticipantName_(student.student_name || student.name) ||
+    looksLikeTestParticipantName_(student.primary_coach_name);
+}
+
+function programLooksLikeTestPollution_(program) {
+  program = program || {};
+  return looksLikeTestProgramCode_(program.program_code || program.code) ||
+    looksLikeTestParticipantName_(program.coach_name || program.coachName);
+}
+
+function testPollutionRejection_(action) {
+  return {
+    ok: false,
+    blocked: true,
+    action: action,
+    message: "Rejected: payload matches automated-test fingerprint and was blocked to protect production data. Set Script Property COACHFLOW_BLOCK_TEST_DATA=false to disable."
+  };
 }
 
 function parsePostBody_(e) {
