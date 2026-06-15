@@ -76,6 +76,7 @@ let assigningStudentId = "";
 let authenticatedCoachId = "";
 let authenticatedCoachAccess = "";
 let currentStudentAccess = "";
+let adminAccess = "";
 let coachEditorDirty = false;
 let studentEntriesDirty = false;
 let loadedStudentProgramId = "";
@@ -531,12 +532,16 @@ async function callCloudApi(action, payload = {}, method = "POST") {
 
   try {
     const url = new URL(APP_CONFIG.appsScriptUrl);
+    const requestPayload = {
+      ...buildCloudAuthPayload(),
+      ...(payload || {})
+    };
 
     let response;
     if (String(method).toUpperCase() === "GET") {
       url.searchParams.set("action", action);
       url.searchParams.set("_ts", String(Date.now()));
-      Object.entries(payload || {}).forEach(([key, value]) => {
+      Object.entries(requestPayload).forEach(([key, value]) => {
         if (value !== undefined && value !== null) {
           url.searchParams.set(key, String(value));
         }
@@ -553,7 +558,7 @@ async function callCloudApi(action, payload = {}, method = "POST") {
         headers: {
           "Content-Type": "text/plain;charset=UTF-8"
         },
-        body: JSON.stringify({ action, ...payload, _ts: Date.now() }),
+        body: JSON.stringify({ action, ...requestPayload, _ts: Date.now() }),
         signal: controller.signal
       });
     }
@@ -571,6 +576,27 @@ async function callCloudApi(action, payload = {}, method = "POST") {
   } finally {
     window.clearTimeout(timeout);
   }
+}
+
+function buildCloudAuthPayload() {
+  const authPayload = {};
+  if (authenticatedCoachAccess) {
+    authPayload.coachAccess = authenticatedCoachAccess;
+  }
+  if (authenticatedCoachId) {
+    authPayload.coachId = authenticatedCoachId;
+  }
+  if (currentStudentAccess) {
+    authPayload.studentAccess = currentStudentAccess;
+  }
+  if (currentStudentId) {
+    authPayload.studentId = currentStudentId;
+  }
+  const configuredAdminAccess = adminAccess || getAdminAccessFromUrl();
+  if (configuredAdminAccess) {
+    authPayload.adminAccess = configuredAdminAccess;
+  }
+  return authPayload;
 }
 
 function shouldRetryCloudError(error) {
@@ -613,8 +639,16 @@ async function bootstrapCloudMode() {
   }
 
   if (APP_MODE === "admin") {
+    adminAccess = getAdminAccessFromUrl();
+    if (!adminAccess) {
+      adminAccess = String(window.prompt("請輸入管理員代碼：") || "").trim();
+    }
+    if (!adminAccess) {
+      console.warn("Admin cloud bootstrap skipped: missing admin access code.");
+      return;
+    }
     try {
-      const payload = await callCloudApiCritical("bootstrapAdmin", {}, "GET", 3);
+      const payload = await callCloudApiCritical("bootstrapAdmin", { adminAccess }, "GET", 3);
       applyCloudPayloadToState(payload);
     } catch (error) {
       console.warn("Admin cloud bootstrap failed, using local state:", error);
@@ -623,8 +657,12 @@ async function bootstrapCloudMode() {
   }
 
   if (APP_MODE === "dual") {
+    adminAccess = getAdminAccessFromUrl();
+    if (!adminAccess) {
+      return;
+    }
     try {
-      const payload = await callCloudApiCritical("bootstrap", {}, "GET", 3);
+      const payload = await callCloudApiCritical("bootstrap", { adminAccess }, "GET", 3);
       applyCloudPayloadToState(payload);
     } catch (error) {
       console.warn("Dual cloud bootstrap failed, using local state:", error);
@@ -762,6 +800,9 @@ async function bootstrapCloudMode() {
 
 function getModeAccessFromUrl(mode) {
   const params = new URLSearchParams(window.location.search);
+  if (mode === "admin") {
+    return normalizeAccessInput(params.get("admin") || params.get("adminAccess") || params.get("key") || "");
+  }
   if (mode === "coach") {
     return normalizeAccessInput(params.get("coach") || params.get("token") || params.get("code") || "");
   }
@@ -769,6 +810,10 @@ function getModeAccessFromUrl(mode) {
     return normalizeAccessInput(params.get("student") || params.get("token") || params.get("code") || "");
   }
   return "";
+}
+
+function getAdminAccessFromUrl() {
+  return getModeAccessFromUrl("admin") || String(APP_CONFIG.adminAccessCode || "").trim();
 }
 
 async function resolveStudentAccessFromCloud(accessValue) {

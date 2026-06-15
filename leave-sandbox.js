@@ -1167,11 +1167,15 @@
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const endpoint = new URL(url);
+      const requestPayload = {
+        ...buildAppsScriptAuthPayload(),
+        ...(payload || {})
+      };
       let response;
       if (String(method).toUpperCase() === "GET") {
         endpoint.searchParams.set("action", action);
         endpoint.searchParams.set("_ts", String(Date.now()));
-        Object.entries(payload || {}).forEach(([key, value]) => {
+        Object.entries(requestPayload).forEach(([key, value]) => {
           if (value !== undefined && value !== null) {
             endpoint.searchParams.set(key, String(value));
           }
@@ -1188,7 +1192,7 @@
           headers: {
             "Content-Type": "text/plain;charset=UTF-8"
           },
-          body: JSON.stringify({ action, ...payload, _ts: Date.now() }),
+          body: JSON.stringify({ action, ...requestPayload, _ts: Date.now() }),
           signal: controller.signal
         });
       }
@@ -1207,6 +1211,17 @@
     }
   }
 
+  function buildAppsScriptAuthPayload() {
+    const auth = {};
+    if (activeCoachCode) {
+      auth.actorCoachAccess = activeCoachCode;
+    }
+    if (activeStudentCode) {
+      auth.actorStudentAccess = activeStudentCode;
+    }
+    return auth;
+  }
+
   async function callCoachflowApi(action, payload = {}, method = "POST") {
     const url = getCoachflowAppsScriptUrl();
     if (!url) {
@@ -1218,11 +1233,15 @@
     const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
     try {
       const endpoint = new URL(url);
+      const requestPayload = {
+        ...buildCoachflowAuthPayload(),
+        ...(payload || {})
+      };
       let response;
       if (String(method).toUpperCase() === "GET") {
         endpoint.searchParams.set("action", action);
         endpoint.searchParams.set("_ts", String(Date.now()));
-        Object.entries(payload || {}).forEach(([key, value]) => {
+        Object.entries(requestPayload).forEach(([key, value]) => {
           if (value !== undefined && value !== null) {
             endpoint.searchParams.set(key, String(value));
           }
@@ -1239,7 +1258,7 @@
           headers: {
             "Content-Type": "text/plain;charset=UTF-8"
           },
-          body: JSON.stringify({ action, ...payload, _ts: Date.now() }),
+          body: JSON.stringify({ action, ...requestPayload, _ts: Date.now() }),
           signal: controller.signal
         });
       }
@@ -1256,6 +1275,15 @@
     } finally {
       window.clearTimeout(timeout);
     }
+  }
+
+  function buildCoachflowAuthPayload() {
+    const auth = buildAppsScriptAuthPayload();
+    const adminCode = String(window.APP_CONFIG?.adminAccessCode || "").trim();
+    if (adminCode) {
+      auth.adminAccess = adminCode;
+    }
+    return auth;
   }
 
   function enqueueCompensationTask(type, payload, reason) {

@@ -168,12 +168,15 @@ function doGet(e) {
         return jsonResponse_(resolveStudentAccessResponse_(getParam_(e, "access")));
 
       case "bootstrapAdmin":
+        requireAdminAccess_(e && e.parameter ? e.parameter : {});
         return jsonResponse_(buildFullBootstrap_());
 
       case "bootstrapCoach":
+        requireCoachReadAccess_(e && e.parameter ? e.parameter : {}, getParam_(e, "coachId"));
         return jsonResponse_(buildCoachBootstrap_(getParam_(e, "coachId")));
 
       case "bootstrapStudent":
+        requireStudentReadAccess_(e && e.parameter ? e.parameter : {}, getParam_(e, "studentId"));
         return jsonResponse_(buildStudentBootstrap_(getParam_(e, "studentId")));
 
       case "ping":
@@ -199,6 +202,7 @@ function doGet(e) {
 
       case "bootstrap":
       default:
+        requireAdminAccess_(e && e.parameter ? e.parameter : {});
         return jsonResponse_(buildFullBootstrap_());
     }
   } catch (error) {
@@ -229,26 +233,32 @@ function doPost(e) {
         return jsonResponse_(resolveStudentAccessResponse_(payload.access));
 
       case "bootstrapAdmin":
+        requireAdminAccess_(payload);
         return jsonResponse_(buildFullBootstrap_());
 
       case "bootstrapCoach":
+        requireCoachReadAccess_(payload, payload.coachId);
         return jsonResponse_(buildCoachBootstrap_(payload.coachId));
 
       case "bootstrapStudent":
+        requireStudentReadAccess_(payload, payload.studentId);
         return jsonResponse_(buildStudentBootstrap_(payload.studentId));
 
       case "upsertCoach":
         if (isTestPollutionBlocked_() && coachLooksLikeTestPollution_(payload.coach || {})) {
           return jsonResponse_(testPollutionRejection_("upsertCoach"));
         }
+        requireCoachUpsertAccess_(payload, payload.coach || {});
         upsertCoach_(payload.coach || {});
         return jsonResponse_(buildFullBootstrap_());
 
       case "setCoachStatus":
+        requireAdminAccess_(payload);
         setCoachStatus_(payload.coachId, payload.status);
         return jsonResponse_(buildFullBootstrap_());
 
       case "deleteCoach":
+        requireAdminAccess_(payload);
         deleteCoach_(payload.coachId);
         return jsonResponse_(buildFullBootstrap_());
 
@@ -256,18 +266,22 @@ function doPost(e) {
         if (isTestPollutionBlocked_() && studentLooksLikeTestPollution_(payload.student || {})) {
           return jsonResponse_(testPollutionRejection_("upsertStudent"));
         }
+        requireStudentUpsertAccess_(payload, payload.student || {});
         upsertStudent_(payload.student || {});
         return jsonResponse_(buildFullBootstrap_());
 
       case "assignStudentCoach":
+        requireStudentMutationAccess_(payload, payload.studentId);
         assignStudentCoach_(payload.studentId, payload.coachId);
         return jsonResponse_(buildFullBootstrap_());
 
       case "setStudentStatus":
+        requireStudentMutationAccess_(payload, payload.studentId);
         setStudentStatus_(payload.studentId, payload.status);
         return jsonResponse_(buildFullBootstrap_());
 
       case "deleteStudent":
+        requireStudentMutationAccess_(payload, payload.studentId);
         deleteStudent_(payload.studentId);
         return jsonResponse_(buildFullBootstrap_());
 
@@ -275,37 +289,46 @@ function doPost(e) {
         if (isTestPollutionBlocked_() && programLooksLikeTestPollution_(payload.program || {})) {
           return jsonResponse_(testPollutionRejection_("saveProgram"));
         }
+        requireProgramSaveAccess_(payload, payload.program || {});
         saveProgram_(payload.program || {}, payload.items || []);
         return jsonResponse_(buildFullBootstrap_());
 
       case "publishProgram":
+        requireProgramMutationAccess_(payload, payload.programId, payload.coachId);
         publishProgram_(payload.programId, payload.coachId);
         return jsonResponse_(buildFullBootstrap_());
 
       case "deleteProgram":
+        requireProgramMutationAccess_(payload, payload.programId || payload.program_id);
         deleteProgram_(payload.programId || payload.program_id);
         return jsonResponse_(buildFullBootstrap_());
 
       case "submitWorkoutLogs":
+        requireWorkoutLogSubmitAccess_(payload, payload.logs || []);
         submitWorkoutLogs_(payload.logs || []);
         return jsonResponse_(buildFullBootstrap_());
 
       case "importWorkoutLogs":
+        requireCoachWriteAccess_(payload);
         importWorkoutLogs_(payload.logs || []);
         return jsonResponse_(buildFullBootstrap_());
 
       case "touchCoach":
+        requireCoachReadAccess_(payload, payload.coachId);
         touchCoach_(payload.coachId);
         return jsonResponse_(buildCoachBootstrap_(payload.coachId));
 
       case "touchStudent":
+        requireStudentReadAccess_(payload, payload.studentId);
         touchStudent_(payload.studentId);
         return jsonResponse_(buildStudentBootstrap_(payload.studentId));
 
       case "createEvent":
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, payload.studentCode);
         return jsonResponse_(createCalendarEvent_(payload));
 
       case "updateEvent":
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, payload.studentCode);
         return jsonResponse_(updateCalendarEvent_(payload));
 
       case "checkEvent":
@@ -315,9 +338,11 @@ function doPost(e) {
         return jsonResponse_(listCalendarEvents_(payload));
 
       case "deleteEvent":
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, payload.studentCode);
         return jsonResponse_(deleteCalendarEvent_(payload));
 
       case "deleteSingleEvent":
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, payload.studentCode);
         return jsonResponse_(deleteCalendarEvent_(Object.assign({}, payload || {}, {
           deleteScope: "single",
           singleEventOnly: true,
@@ -325,12 +350,14 @@ function doPost(e) {
         })));
 
       case "sendEmail":
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, payload.studentCode);
         return jsonResponse_(sendEmailNotice_(payload));
 
       case "listLeaveRecords":
         return jsonResponse_(listLeaveRecords_(payload));
 
       case "saveLeaveRecord":
+        requireLeaveRecordWriteAccess_(payload);
         return jsonResponse_(saveLeaveRecord_(payload));
 
       case "listBillingProfiles":
@@ -341,18 +368,21 @@ function doPost(e) {
           looksLikeTestParticipantName_((payload.profile || payload).studentName)) {
           return jsonResponse_(testPollutionRejection_("saveBillingProfile"));
         }
+        requireBillingProfileWriteAccess_(payload);
         return jsonResponse_(saveBillingProfile_(payload));
 
       case "listLessons":
         return jsonResponse_(listLessons_(payload));
 
       case "saveLessons":
+        requireLessonsWriteAccess_(payload);
         return jsonResponse_(saveLessons_(payload));
 
       case "getLeaveStateSnapshot":
         return jsonResponse_(getLeaveStateSnapshot_(payload));
 
       case "saveLeaveStateSnapshot":
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, payload.studentCode);
         return jsonResponse_(saveLeaveStateSnapshot_(payload));
 
       default:
@@ -1034,6 +1064,322 @@ function resolveStudentByAccess_(accessValue) {
     const token = String(row.token || "").trim().toLowerCase();
     return value === code || value === token || value === String(row.student_id || "").trim().toLowerCase();
   })[0] || null;
+}
+
+function getAuthValue_(payload, keys) {
+  payload = payload || {};
+  const auth = payload.auth && typeof payload.auth === "object" ? payload.auth : {};
+  for (var i = 0; i < keys.length; i += 1) {
+    const key = keys[i];
+    const value = payload[key] || auth[key];
+    if (String(value || "").trim()) {
+      return String(value || "").trim();
+    }
+  }
+  return "";
+}
+
+function isActiveRecord_(record) {
+  return !!record && String(record.status || "").toLowerCase() !== "inactive";
+}
+
+function getActiveCoachFromPayload_(payload) {
+  const access = getAuthValue_(payload, ["coachAccess", "actorCoachAccess", "coachCode", "access"]);
+  const coach = resolveCoachByAccess_(access);
+  return isActiveRecord_(coach) ? coach : null;
+}
+
+function getActiveStudentFromPayload_(payload) {
+  const access = getAuthValue_(payload, ["studentAccess", "actorStudentAccess", "studentCode", "access"]);
+  const student = resolveStudentByAccess_(access);
+  return isActiveRecord_(student) ? student : null;
+}
+
+function getAdminAccessValue_(payload) {
+  return getAuthValue_(payload, ["adminAccess", "adminKey", "writeAdminAccess"]);
+}
+
+function isAdminAccessAllowed_(payload) {
+  const expected = safeString_(
+    PropertiesService.getScriptProperties().getProperty("COACHFLOW_ADMIN_ACCESS_CODE"),
+    ""
+  );
+  if (!expected) {
+    return false;
+  }
+  return String(getAdminAccessValue_(payload) || "").trim() === expected;
+}
+
+function requireAdminAccess_(payload) {
+  const expected = safeString_(
+    PropertiesService.getScriptProperties().getProperty("COACHFLOW_ADMIN_ACCESS_CODE"),
+    ""
+  );
+  if (!expected) {
+    throw new Error("UNAUTHORIZED: admin access is disabled. Set Script Property COACHFLOW_ADMIN_ACCESS_CODE before using admin bootstrap or admin-only writes.");
+  }
+  if (String(getAdminAccessValue_(payload) || "").trim() !== expected) {
+    throw new Error("UNAUTHORIZED: missing or invalid admin access code.");
+  }
+}
+
+function requireCoachWriteAccess_(payload, expectedCoachId) {
+  if (isAdminAccessAllowed_(payload)) {
+    return { admin: true };
+  }
+  const coach = getActiveCoachFromPayload_(payload);
+  if (!coach) {
+    throw new Error("UNAUTHORIZED: a valid coach access code is required for this write.");
+  }
+  if (expectedCoachId && String(coach.coach_id || "") !== String(expectedCoachId || "")) {
+    throw new Error("UNAUTHORIZED: coach access does not match this record.");
+  }
+  return coach;
+}
+
+function requireCoachReadAccess_(payload, coachId) {
+  return requireCoachWriteAccess_(payload, coachId);
+}
+
+function requireStudentReadAccess_(payload, studentId) {
+  if (isAdminAccessAllowed_(payload)) {
+    return { admin: true };
+  }
+  const student = getActiveStudentFromPayload_(payload);
+  if (student && String(student.student_id || "") === String(studentId || "")) {
+    return student;
+  }
+
+  const existing = readTable_(SHEETS.students).filter(function(row) {
+    return String(row.student_id || "") === String(studentId || "");
+  })[0];
+  const coach = getActiveCoachFromPayload_(payload);
+  if (coach && existing && String(existing.primary_coach_id || "") === String(coach.coach_id || "")) {
+    return coach;
+  }
+
+  throw new Error("UNAUTHORIZED: a valid student or coach access code is required for this record.");
+}
+
+function requireCoachUpsertAccess_(payload, coach) {
+  coach = coach || {};
+  const id = coach.coach_id || coach.id || "";
+  const rows = readTable_(SHEETS.coaches);
+  const existing = rows.filter(function(row) {
+    return String(row.coach_id || "") === String(id || "");
+  })[0];
+
+  if (!rows.length) {
+    return true;
+  }
+  if (isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+  const actor = requireCoachWriteAccess_(payload);
+  if (existing && String(existing.coach_id || "") !== String(actor.coach_id || "")) {
+    throw new Error("UNAUTHORIZED: coach access can only update its own coach record.");
+  }
+  return true;
+}
+
+function requireStudentUpsertAccess_(payload, student) {
+  student = student || {};
+  if (isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+
+  const id = student.student_id || student.id || "";
+  const existing = readTable_(SHEETS.students).filter(function(row) {
+    return String(row.student_id || "") === String(id || "");
+  })[0];
+  const targetCoachId = student.primary_coach_id || existing && existing.primary_coach_id || "";
+  const actor = requireCoachWriteAccess_(payload, targetCoachId || "");
+  if (!targetCoachId) {
+    student.primary_coach_id = actor.coach_id;
+  }
+  return true;
+}
+
+function requireStudentMutationAccess_(payload, studentId) {
+  if (isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+  const existing = readTable_(SHEETS.students).filter(function(row) {
+    return String(row.student_id || "") === String(studentId || "");
+  })[0];
+  const targetCoachId = existing && existing.primary_coach_id || "";
+  const actor = requireCoachWriteAccess_(payload, targetCoachId || "");
+  if (!targetCoachId) {
+    return actor;
+  }
+  return actor;
+}
+
+function requireProgramSaveAccess_(payload, program) {
+  program = program || {};
+  if (isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+
+  const id = program.program_id || program.id || "";
+  const existing = readTable_(SHEETS.programs).filter(function(row) {
+    return String(row.program_id || "") === String(id || "");
+  })[0];
+  const targetCoachId = program.coach_id || program.coachId || existing && existing.coach_id || "";
+  const actor = requireCoachWriteAccess_(payload, targetCoachId || "");
+  if (!targetCoachId) {
+    program.coach_id = actor.coach_id;
+  }
+  return true;
+}
+
+function requireProgramMutationAccess_(payload, programId, coachId) {
+  if (isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+  const existing = readTable_(SHEETS.programs).filter(function(row) {
+    return String(row.program_id || "") === String(programId || "");
+  })[0];
+  const targetCoachId = coachId || existing && existing.coach_id || "";
+  return requireCoachWriteAccess_(payload, targetCoachId || "");
+}
+
+function requireWorkoutLogSubmitAccess_(payload, logs) {
+  logs = logs || [];
+  if (!logs.length || isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+
+  const student = getActiveStudentFromPayload_(payload);
+  if (student) {
+    const allForStudent = logs.every(function(log) {
+      return String(log.student_id || log.studentId || "") === String(student.student_id || "");
+    });
+    if (allForStudent) {
+      return true;
+    }
+  }
+
+  const coach = getActiveCoachFromPayload_(payload);
+  if (coach) {
+    const students = readTable_(SHEETS.students);
+    const programs = readTable_(SHEETS.programs);
+    const allForCoach = logs.every(function(log) {
+      const logCoachId = String(log.coach_id || log.coachId || "");
+      if (logCoachId) {
+        return logCoachId === String(coach.coach_id || "");
+      }
+      const studentRow = students.filter(function(row) {
+        return String(row.student_id || "") === String(log.student_id || log.studentId || "");
+      })[0];
+      if (studentRow && String(studentRow.primary_coach_id || "") === String(coach.coach_id || "")) {
+        return true;
+      }
+      const programRow = programs.filter(function(row) {
+        return String(row.program_id || "") === String(log.program_id || log.programId || "");
+      })[0];
+      return programRow && String(programRow.coach_id || "") === String(coach.coach_id || "");
+    });
+    if (allForCoach) {
+      return true;
+    }
+  }
+
+  throw new Error("UNAUTHORIZED: a valid student or coach access code is required to submit logs.");
+}
+
+function codeMatchesRecord_(code, record, idField, accessField) {
+  const normalized = normalizeCode_(code);
+  if (!normalized || !record) {
+    return false;
+  }
+  const candidates = [
+    record[idField],
+    record[accessField],
+    record.token,
+    record.student_id,
+    record.coach_id
+  ].map(normalizeCode_);
+  return candidates.indexOf(normalized) !== -1;
+}
+
+function getActorCoachAccessCode_(payload) {
+  return normalizeCode_(getAuthValue_(payload, ["coachAccess", "actorCoachAccess", "coachCode", "access"]));
+}
+
+function getActorStudentAccessCode_(payload) {
+  return normalizeCode_(getAuthValue_(payload, ["studentAccess", "actorStudentAccess", "studentCode", "access"]));
+}
+
+function activeCoachCanWriteLeaveScope_(payload, coachCode) {
+  const actorCode = getActorCoachAccessCode_(payload);
+  const coach = getActiveCoachFromPayload_(payload);
+  if (!coach) {
+    return false;
+  }
+  return !coachCode ||
+    normalizeCode_(coachCode) === actorCode ||
+    codeMatchesRecord_(coachCode, coach, "coach_id", "access_code");
+}
+
+function activeStudentCanWriteLeaveScope_(payload, studentCode) {
+  const actorCode = getActorStudentAccessCode_(payload);
+  const student = getActiveStudentFromPayload_(payload);
+  if (!student) {
+    return false;
+  }
+  return !studentCode ||
+    normalizeCode_(studentCode) === actorCode ||
+    codeMatchesRecord_(studentCode, student, "student_id", "access_code");
+}
+
+function requireLeaveScopedWriteAccess_(payload, coachCode, studentCode) {
+  if (isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+  if (coachCode && activeCoachCanWriteLeaveScope_(payload, coachCode)) {
+    return true;
+  }
+  if (studentCode && activeStudentCanWriteLeaveScope_(payload, studentCode)) {
+    return true;
+  }
+  if (!coachCode && !studentCode && getActiveCoachFromPayload_(payload)) {
+    return true;
+  }
+  throw new Error("UNAUTHORIZED: a valid coach or student code is required for this leave-system write.");
+}
+
+function requireLeaveRecordWriteAccess_(payload) {
+  const record = payload && (payload.record || payload) || {};
+  return requireLeaveScopedWriteAccess_(payload, record.coachCode, record.studentCode);
+}
+
+function requireBillingProfileWriteAccess_(payload) {
+  const profile = payload && (payload.profile || payload) || {};
+  return requireLeaveScopedWriteAccess_(payload, profile.coachCode, profile.studentCode);
+}
+
+function requireLessonsWriteAccess_(payload) {
+  const lessons = payload && payload.lessons || [];
+  if (!lessons.length || isAdminAccessAllowed_(payload)) {
+    return true;
+  }
+
+  const coach = getActiveCoachFromPayload_(payload);
+  if (coach && lessons.every(function(lesson) {
+    return activeCoachCanWriteLeaveScope_(payload, lesson.coachCode);
+  })) {
+    return true;
+  }
+
+  const student = getActiveStudentFromPayload_(payload);
+  if (student && lessons.every(function(lesson) {
+    return activeStudentCanWriteLeaveScope_(payload, lesson.studentCode);
+  })) {
+    return true;
+  }
+
+  throw new Error("UNAUTHORIZED: lesson writes must match the active coach or student code.");
 }
 
 function upsertRow_(sheetName, keyField, record) {
