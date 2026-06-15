@@ -372,7 +372,7 @@ function doPost(e) {
         return jsonResponse_(saveBillingProfile_(payload));
 
       case "cleanupLeaveTestData":
-        requireCoachWriteAccess_(payload, payload.coachCode);
+        requireLeaveScopedWriteAccess_(payload, payload.coachCode, "");
         return jsonResponse_(cleanupLeaveTestData_(payload));
 
       case "listLessons":
