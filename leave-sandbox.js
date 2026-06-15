@@ -166,7 +166,7 @@
       if (Number(parsed.version) !== SCHEMA_VERSION) {
         return seedState();
       }
-      return parsed;
+      return sanitizeLoadedState(parsed, true);
     } catch (error) {
       console.warn("Failed to parse sandbox state:", error);
       return seedState();
@@ -450,6 +450,60 @@
       attendanceStatus: "scheduled",
       charged: false
     };
+  }
+
+  function isKnownFakeStudentName(value) {
+    const s = String(value === null || value === undefined ? "" : value).trim();
+    if (!s) {
+      return false;
+    }
+    return /^(student|test student|weekend student|workflow2 student|grade student|wfstua|wf\d|wfstu)/i.test(s) ||
+      s === "test" ||
+      s.indexOf("\u6e2c\u8a66") !== -1 ||
+      s.indexOf("\u9031\u672b\u6e2c\u8a66") === 0 ||
+      s.indexOf("\u5468\u672b\u6e2c\u8a66") === 0;
+  }
+
+  function isKnownFakeStudentRecord(student) {
+    return isKnownFakeStudentName(student?.name || student?.studentName);
+  }
+
+  function sanitizeLoadedState(candidateState, persist = false) {
+    const nextState = candidateState && typeof candidateState === "object" ? candidateState : seedState();
+    const students = Array.isArray(nextState.students) ? nextState.students : [];
+    const fakeStudents = students.filter(isKnownFakeStudentRecord);
+    if (!fakeStudents.length) {
+      return nextState;
+    }
+
+    const fakeCodes = new Set(fakeStudents.map((student) => normalizeParticipantCode(student.code || student.studentCode)).filter(Boolean));
+    const realCodes = new Set(
+      students
+        .filter((student) => !isKnownFakeStudentRecord(student))
+        .map((student) => normalizeParticipantCode(student.code || student.studentCode))
+        .filter(Boolean)
+    );
+    const removableCodes = new Set([...fakeCodes].filter((code) => !realCodes.has(code)));
+
+    nextState.students = students.filter((student) => !isKnownFakeStudentRecord(student));
+    if (removableCodes.size) {
+      nextState.lessons = (nextState.lessons || []).filter((lesson) => !removableCodes.has(normalizeParticipantCode(lesson.studentCode)));
+      nextState.leaveRequests = (nextState.leaveRequests || []).filter((leave) => !removableCodes.has(normalizeParticipantCode(leave.studentCode)));
+      nextState.makeupRequests = (nextState.makeupRequests || []).filter((request) => !removableCodes.has(normalizeParticipantCode(request.studentCode)));
+      nextState.compensationTasks = (nextState.compensationTasks || []).filter((task) => {
+        const payload = task?.payload || {};
+        return !removableCodes.has(normalizeParticipantCode(payload.studentCode));
+      });
+    }
+
+    if (persist) {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify(nextState));
+      } catch (error) {
+        console.warn("Failed to persist sanitized leave state:", error);
+      }
+    }
+    return nextState;
   }
 
   function saveState() {
@@ -3036,6 +3090,9 @@
   function getScopedBillingStudents(scope = {}) {
     const { coachCode, studentCode } = getCloudStateScope(scope);
     return (state.students || []).filter((student) => {
+      if (isKnownFakeStudentRecord(student)) {
+        return false;
+      }
       const currentStudentCode = normalizeParticipantCode(student?.code);
       const currentCoachCode = normalizeParticipantCode(student?.coachCode);
       return (!studentCode || currentStudentCode === studentCode) &&
@@ -3399,6 +3456,9 @@
 
   function ensureStudentProfile(studentCode, coachCode, options = {}) {
     const { studentName = "", studentEmail = "", silentMode = true } = options;
+    if (isKnownFakeStudentName(studentName)) {
+      return null;
+    }
     const normalizedStudentCode = normalizeParticipantCode(studentCode);
     if (!normalizedStudentCode) {
       return null;
@@ -3499,6 +3559,9 @@
       const studentName = String(
         student?.name || student?.student_name || student?.studentName || `${studentCode} 學生`
       ).trim();
+      if (isKnownFakeStudentName(studentName)) {
+        return;
+      }
       const studentEmail = String(
         student?.email ||
         student?.studentEmail ||
@@ -8894,6 +8957,9 @@
     const code = normalizeParticipantCode(student?.code);
     const looseName = normalizeLooseText(student?.name || "");
     if (!code) {
+      return true;
+    }
+    if (isKnownFakeStudentRecord(student)) {
       return true;
     }
     if (["STU001", "STU002", "STU003"].includes(code)) {
