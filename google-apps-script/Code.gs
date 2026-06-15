@@ -371,6 +371,10 @@ function doPost(e) {
         requireBillingProfileWriteAccess_(payload);
         return jsonResponse_(saveBillingProfile_(payload));
 
+      case "cleanupLeaveTestData":
+        requireCoachWriteAccess_(payload, payload.coachCode);
+        return jsonResponse_(cleanupLeaveTestData_(payload));
+
       case "listLessons":
         return jsonResponse_(listLessons_(payload));
 
@@ -2270,6 +2274,65 @@ function setBillingProfiles_(profiles) {
     });
     appendRows_(SHEETS.billingProfiles, rowsToWrite);
   }
+}
+
+function cleanupLeaveTestData_(payload) {
+  const coachCode = normalizeCode_(payload && payload.coachCode);
+  if (!coachCode) {
+    return {
+      ok: false,
+      action: "cleanupLeaveTestData",
+      message: "Missing coachCode."
+    };
+  }
+
+  return withScriptLock_(function () {
+    const profiles = getBillingProfiles_();
+    const targetCodes = {};
+    profiles.forEach(function(profile) {
+      if (normalizeCode_(profile.coachCode) === coachCode &&
+        looksLikeTestParticipantName_(profile.studentName || profile.studentCode)) {
+        targetCodes[normalizeCode_(profile.studentCode)] = true;
+      }
+    });
+
+    const codeList = Object.keys(targetCodes).filter(Boolean);
+    if (!codeList.length) {
+      return {
+        ok: true,
+        action: "cleanupLeaveTestData",
+        removedBillingProfiles: 0,
+        removedLessons: 0,
+        removedLeaveRecords: 0,
+        targetCodes: []
+      };
+    }
+
+    const nextProfiles = profiles.filter(function(profile) {
+      return !(normalizeCode_(profile.coachCode) === coachCode && targetCodes[normalizeCode_(profile.studentCode)]);
+    });
+    const lessons = getLessons_();
+    const nextLessons = lessons.filter(function(lesson) {
+      return !(normalizeCode_(lesson.coachCode) === coachCode && targetCodes[normalizeCode_(lesson.studentCode)]);
+    });
+    const leaveRecords = getLeaveRecords_();
+    const nextLeaveRecords = leaveRecords.filter(function(record) {
+      return !(normalizeCode_(record.coachCode) === coachCode && targetCodes[normalizeCode_(record.studentCode)]);
+    });
+
+    setBillingProfiles_(nextProfiles);
+    setLessons_(nextLessons);
+    setLeaveRecords_(nextLeaveRecords);
+
+    return {
+      ok: true,
+      action: "cleanupLeaveTestData",
+      removedBillingProfiles: profiles.length - nextProfiles.length,
+      removedLessons: lessons.length - nextLessons.length,
+      removedLeaveRecords: leaveRecords.length - nextLeaveRecords.length,
+      targetCodes: codeList
+    };
+  });
 }
 
 // ====================================================================
