@@ -2995,6 +2995,17 @@ function looksLikeTestParticipantName_(value) {
   if (!s) {
     return false;
   }
+  const explicitPrefixes = [
+    "\u6e2c\u8a66\u5b78\u751f",
+    "\u9031\u672b\u6e2c\u8a66\u5b78\u751f",
+    "\u5468\u672b\u6e2c\u8a66\u5b78\u751f",
+    "WFStuA"
+  ];
+  if (explicitPrefixes.some(function(prefix) {
+    return s.indexOf(prefix) === 0;
+  })) {
+    return true;
+  }
   // 真資料：Monster Chang、中文姓名，都不會命中。
   return /grader|workflow|測試|週末|流程|學員|學生|student|weekend|\bwf\d*\b|\bw2s?\b|\bw5\b|\bw6\b|\bwflow\b|\bgrd\w*|\bgrade\b|\bsync\b|\beval\b|\bwknd\b|\bwkend\b|\btest\b|\bqa\b/i.test(s);
 }
