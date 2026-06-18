@@ -1426,7 +1426,10 @@
 
   function getCloudLeaveRecordMatchKey(record) {
     const lessonKey = String(record?.lessonKey || "").trim();
-    return lessonKey || getCloudLeaveMatchKeyFromValues(record?.studentCode, record?.coachCode, record?.lessonStartAt);
+    // 欄位值是目前雲端紀錄實際顯示的學生／教練／時段；lessonKey 只是舊版
+    // 冗餘快取，可能在課程曾被錯誤對齊後留下舊值。優先重算 tuple，只有
+    // 舊紀錄缺欄位時才退回 lessonKey。
+    return getCloudLeaveMatchKeyFromValues(record?.studentCode, record?.coachCode, record?.lessonStartAt) || lessonKey;
   }
 
   function isLeaveInCloudSyncScope(leave, lesson, scope) {
@@ -1582,16 +1585,27 @@
     if (!record) {
       return null;
     }
+    const recordMatchKey = getCloudLeaveRecordMatchKey(record);
     const lessonId = String(record.lessonId || "").trim();
     if (lessonId) {
       const byId = getLessonById(lessonId);
-      if (byId) {
+      // lessonId 是最強識別，但仍要防止舊快照裡極少數重複／污染的 ID
+      // 把請假套到不同學生或不同時段。舊資料若沒有完整 tuple，才保留
+      // 單憑 lessonId 的相容行為。
+      if (byId && (!recordMatchKey || getLessonCloudMatchKey(byId) === recordMatchKey)) {
         return byId;
       }
     }
     const recordEventId = normalizeCalendarEventId(record.calendarEventId);
-    if (recordEventId) {
-      const byEventId = state.lessons.find((lesson) => normalizeCalendarEventId(lesson.calendarEventId) === recordEventId);
+    if (recordEventId && recordMatchKey) {
+      // Google recurring event 的每個 occurrence 可能共用同一個 eventId。
+      // 過去只憑 eventId 取第一堂，套用請假後又清掉該堂 eventId；下次同步
+      // 就會依序命中下一週，造成單筆請假一路蔓延。eventId 現在只能當輔助
+      // 識別，學生＋教練＋開始時間必須完全一致。
+      const byEventId = state.lessons.find((lesson) => (
+        normalizeCalendarEventId(lesson.calendarEventId) === recordEventId &&
+        getLessonCloudMatchKey(lesson) === recordMatchKey
+      ));
       if (byEventId) {
         return byEventId;
       }
@@ -1600,20 +1614,46 @@
     // 在跨裝置 lessonId 不一致 + calendarEventId 缺失時，會把雲端某一天的
     // 請假紀錄誤套到本地另一筆相近時刻的 lesson。改成 ISO 完全一致才算數，
     // 避免再發生「請 5/10 結果套到 5/31」這種跨日誤配對。
-    const studentCode = normalizeParticipantCode(record.studentCode);
-    const coachCode = normalizeParticipantCode(record.coachCode);
-    const recordStartIso = (() => {
-      const time = new Date(record.lessonStartAt || "").getTime();
-      return Number.isFinite(time) ? new Date(time).toISOString() : "";
-    })();
-    if (!studentCode || !coachCode || !recordStartIso) {
+    if (!recordMatchKey) {
       return null;
     }
-    return state.lessons.find((lesson) => (
-      normalizeParticipantCode(lesson.studentCode) === studentCode &&
-      normalizeParticipantCode(lesson.coachCode) === coachCode &&
-      new Date(lesson.startAt || "").toISOString() === recordStartIso
-    )) || null;
+    return state.lessons.find((lesson) => getLessonCloudMatchKey(lesson) === recordMatchKey) || null;
+  }
+
+  function restoreOrphanedNormalLeaveLessons(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const activeLeaveLessonIds = new Set(
+      (state.leaveRequests || [])
+        .filter((leave) => (
+          leave &&
+          String(leave.type || "normal") === "normal" &&
+          !leave.revokedAt &&
+          isLeaveInCloudSyncScope(leave, getLessonById(leave.lessonId), syncScope)
+        ))
+        .map((leave) => String(leave.lessonId || "").trim())
+        .filter(Boolean)
+    );
+    const restoredLessonIds = [];
+    const nowIso = new Date().toISOString();
+    (state.lessons || []).forEach((lesson) => {
+      if (
+        !lesson ||
+        lesson.attendanceStatus !== "leave-normal" ||
+        !isLessonInScope(lesson, syncScope) ||
+        activeLeaveLessonIds.has(String(lesson.id || "").trim())
+      ) {
+        return;
+      }
+      lesson.attendanceStatus = "scheduled";
+      lesson.calendarOccupied = true;
+      lesson.charged = false;
+      lesson.updatedAt = nowIso;
+      restoredLessonIds.push(lesson.id);
+    });
+    if (restoredLessonIds.length) {
+      addLog(`[雲端請假修復] 已還原 ${restoredLessonIds.length} 堂沒有有效請假紀錄、但被錯標為請假的課程：${restoredLessonIds.join(", ")}。`);
+    }
+    return restoredLessonIds;
   }
 
   function ensureLessonForCloudLeaveRecord(record) {
@@ -1714,9 +1754,25 @@
         makeupEligible: record.makeupEligible !== false
       });
       changed = true;
-    } else if (recordCalendarEventId && normalizeCalendarEventId(existing.calendarEventId) !== normalizeCalendarEventId(recordCalendarEventId)) {
-      existing.calendarEventId = recordCalendarEventId;
-      changed = true;
+    } else {
+      // 同一筆雲端 leave 曾因 recurring eventId 誤配到別堂時，除了修正 lesson
+      // 狀態，也要把本機 leave 的指向搬回權威 tuple，否則孤立狀態無法清理。
+      if (existing.lessonId !== lesson.id) {
+        existing.lessonId = lesson.id;
+        changed = true;
+      }
+      if (normalizeParticipantCode(existing.studentCode) !== normalizeParticipantCode(record.studentCode)) {
+        existing.studentCode = record.studentCode;
+        changed = true;
+      }
+      if (normalizeParticipantCode(existing.coachCode) !== normalizeParticipantCode(record.coachCode)) {
+        existing.coachCode = record.coachCode;
+        changed = true;
+      }
+      if (recordCalendarEventId && normalizeCalendarEventId(existing.calendarEventId) !== normalizeCalendarEventId(recordCalendarEventId)) {
+        existing.calendarEventId = recordCalendarEventId;
+        changed = true;
+      }
     }
     if (lesson.attendanceStatus !== "leave-normal" || lesson.calendarOccupied !== false) {
       lesson.attendanceStatus = "leave-normal";
@@ -2021,6 +2077,12 @@
         changed = true;
       }
     });
+    // listLeaveRecords 成功後，雲端清單即為這個 scope 的請假真相來源。
+    // 清掉舊版 recurring eventId bug 留下的「沒有 active leave、卻仍是
+    // leave-normal」課程，並在後續既有流程推回 Lessons 雲端表。
+    if (restoreOrphanedNormalLeaveLessons(payload).length) {
+      changed = true;
+    }
     if (reconcileLocalLeaveRecordsWithCloud(records, payload)) {
       changed = true;
     }
