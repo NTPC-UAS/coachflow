@@ -457,11 +457,10 @@
     if (!s) {
       return false;
     }
-    return /^(student|test student|weekend student|workflow2 student|grade student|wfstua|wf\d|wfstu)/i.test(s) ||
-      s === "test" ||
-      s.indexOf("\u6e2c\u8a66") !== -1 ||
-      s.indexOf("\u9031\u672b\u6e2c\u8a66") === 0 ||
-      s.indexOf("\u5468\u672b\u6e2c\u8a66") === 0;
+    // 讀取端也做最後一道防線：即使正式後端曾被測試流程污染，主系統名冊、
+    // billing profile 或 snapshot 都不能再把 WF / WKND / TEST 學生建回本機。
+    // 不使用「學生」單獨判斷，避免擋到缺姓名時的正常 `${code} 學生` fallback。
+    return /grader|workflow|測試|週末|流程|學員|student|weekend|wf\d*|wflow|grd|grade|sync|eval|wknd|wkend|test|qa/i.test(s);
   }
 
   function isKnownFakeStudentRecord(student) {

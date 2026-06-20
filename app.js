@@ -126,7 +126,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260618-0001";
+const PUBLIC_APP_VERSION = "20260620-0001";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -335,8 +335,22 @@ function normalizeCloudCoach(row, index = 0) {
   };
 }
 
+function looksLikeAutomatedTestParticipant(value) {
+  const text = String(value === null || value === undefined ? "" : value).trim();
+  if (!text) {
+    return false;
+  }
+  return /grader|workflow|測試|週末|流程|學員|student|weekend|wf\d*|wflow|grd|grade|sync|eval|wknd|wkend|test|qa/i.test(text);
+}
+
+function looksLikeAutomatedTestProgramCode(value) {
+  return /[A-Za-z]/.test(String(value === null || value === undefined ? "" : value).trim());
+}
+
 function isUsableCoach(record) {
-  return !!String(record?.id || "").trim() && !!String(record?.name || "").trim();
+  return !!String(record?.id || "").trim()
+    && !!String(record?.name || "").trim()
+    && !looksLikeAutomatedTestParticipant(record?.name);
 }
 
 function normalizeCloudStudent(row, index = 0) {
@@ -355,7 +369,9 @@ function normalizeCloudStudent(row, index = 0) {
 }
 
 function isUsableStudent(record) {
-  return !!String(record?.id || "").trim() && !!String(record?.name || "").trim();
+  return !!String(record?.id || "").trim()
+    && !!String(record?.name || "").trim()
+    && !looksLikeAutomatedTestParticipant(record?.name);
 }
 
 function normalizeCloudProgram(row, index = 0) {
@@ -375,7 +391,10 @@ function normalizeCloudProgram(row, index = 0) {
 }
 
 function isUsableProgram(record) {
-  return !!String(record?.id || "").trim() && !!String(record?.code || "").trim();
+  return !!String(record?.id || "").trim()
+    && !!String(record?.code || "").trim()
+    && !looksLikeAutomatedTestProgramCode(record?.code)
+    && !looksLikeAutomatedTestParticipant(record?.coachName);
 }
 
 function normalizeProgramStudentIds(value = []) {
@@ -498,21 +517,25 @@ function applyCloudPayloadToState(payload) {
 
   if (payload.coach) {
     const normalizedCoach = normalizeCloudCoach(payload.coach);
-    const existingCoach = state.coaches.find((coach) => coach.id === normalizedCoach.id);
-    if (existingCoach) {
-      Object.assign(existingCoach, normalizedCoach);
-    } else {
-      state.coaches.push(normalizedCoach);
+    if (isUsableCoach(normalizedCoach)) {
+      const existingCoach = state.coaches.find((coach) => coach.id === normalizedCoach.id);
+      if (existingCoach) {
+        Object.assign(existingCoach, normalizedCoach);
+      } else {
+        state.coaches.push(normalizedCoach);
+      }
     }
   }
 
   if (payload.student) {
     const normalizedStudent = normalizeCloudStudent(payload.student);
-    const existingStudent = state.students.find((student) => student.id === normalizedStudent.id);
-    if (existingStudent) {
-      Object.assign(existingStudent, normalizedStudent);
-    } else {
-      state.students.push(normalizedStudent);
+    if (isUsableStudent(normalizedStudent)) {
+      const existingStudent = state.students.find((student) => student.id === normalizedStudent.id);
+      if (existingStudent) {
+        Object.assign(existingStudent, normalizedStudent);
+      } else {
+        state.students.push(normalizedStudent);
+      }
     }
   }
 
