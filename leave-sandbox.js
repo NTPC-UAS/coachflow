@@ -1409,6 +1409,59 @@
     ].join("|");
   }
 
+  function collapseDuplicateGoogleLessons(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const groups = new Map();
+    (state.lessons || []).forEach((lesson) => {
+      if (!lesson || !isGoogleSyncLesson(lesson) || !isLessonInScope(lesson, syncScope) || !hasValidDateValue(lesson.startAt)) {
+        return;
+      }
+      const key = getLessonCloudMatchKey(lesson);
+      if (!key) return;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(lesson);
+    });
+
+    const activeLeavesByLesson = new Map();
+    (state.leaveRequests || []).forEach((leave) => {
+      if (!leave || leave.revokedAt || String(leave.type || "normal") !== "normal") return;
+      const lessonId = String(leave.lessonId || "").trim();
+      if (!lessonId) return;
+      if (!activeLeavesByLesson.has(lessonId)) activeLeavesByLesson.set(lessonId, []);
+      activeLeavesByLesson.get(lessonId).push(leave);
+    });
+
+    const priority = (lesson) => {
+      const leaves = activeLeavesByLesson.get(String(lesson.id || "")) || [];
+      const hasRealLeaveEvent = leaves.some((leave) => normalizeCalendarEventId(leave.calendarEventId) && !isGeneratedLocalCalendarEventId(leave.calendarEventId));
+      const hasRealLessonEvent = normalizeCalendarEventId(lesson.calendarEventId) && !isGeneratedLocalCalendarEventId(lesson.calendarEventId);
+      return (hasRealLeaveEvent ? 1000 : 0) + (leaves.length ? 500 : 0) + (hasRealLessonEvent ? 200 : 0) +
+        (lesson.attendanceStatus === "leave-normal" ? 100 : 0) + (lesson.calendarOccupied ? 20 : 0);
+    };
+
+    const duplicateIds = [];
+    const nowIso = new Date().toISOString();
+    groups.forEach((lessons) => {
+      if (lessons.length < 2) return;
+      const sorted = [...lessons].sort((left, right) => {
+        const scoreDiff = priority(right) - priority(left);
+        return scoreDiff || String(left.id || "").localeCompare(String(right.id || ""));
+      });
+      sorted.slice(1).forEach((lesson) => {
+        lesson.sourceType = "DUPLICATE";
+        lesson.calendarOccupied = false;
+        lesson.attendanceStatus = "calendar-removed";
+        lesson.charged = false;
+        lesson.updatedAt = nowIso;
+        duplicateIds.push(lesson.id);
+      });
+    });
+    if (duplicateIds.length) {
+      addLog(`[重複課程修復] 已停用 ${duplicateIds.length} 筆同學生、同時段的重複課程：${duplicateIds.join(", ")}。`);
+    }
+    return duplicateIds;
+  }
+
   function getCloudLeaveMatchKeyFromValues(studentCode, coachCode, startAt) {
     const normalizedStudentCode = normalizeParticipantCode(studentCode);
     const normalizedCoachCode = normalizeParticipantCode(coachCode);
@@ -2083,6 +2136,9 @@
       changed = true;
     }
     if (reconcileLocalLeaveRecordsWithCloud(records, payload)) {
+      changed = true;
+    }
+    if (collapseDuplicateGoogleLessons(payload).length) {
       changed = true;
     }
     if (changed) {
@@ -4185,6 +4241,7 @@
 
   function alignCoachLessonsWithGoogleEvents(coachCode, events) {
     const usedLessonIds = new Set();
+    const seenStudentOccurrences = new Set();
     const eventIdToLessons = new Map();
     // Build a separate index of MAKEUP lessons' Google event IDs. These
     // events are tracked by their own MAKEUP lesson record (which is NOT a
@@ -4226,6 +4283,7 @@
     const skippedUnmatchedTitles = [];
     let skippedNonLessonEvent = 0;
     let skippedMakeupClaimed = 0;
+    let skippedDuplicateEvent = 0;
 
     const maxRelinkDistanceMs = Math.max(1, Number(window.APP_CONFIG?.googleRelinkMaxHours || 12)) * 60 * 60 * 1000;
     const sortedEvents = [...events]
@@ -4269,6 +4327,15 @@
           skippedUnmatchedTitles.push(title);
         }
         return;
+      }
+
+      const occurrenceKey = getCloudLeaveMatchKeyFromValues(studentCode, coachCode, startAt);
+      if (occurrenceKey && seenStudentOccurrences.has(occurrenceKey)) {
+        skippedDuplicateEvent += 1;
+        return;
+      }
+      if (occurrenceKey) {
+        seenStudentOccurrences.add(occurrenceKey);
       }
 
       const normalizedEventId = normalizeCalendarEventId(eventId);
@@ -4317,6 +4384,8 @@
       matchedEvents += 1;
     });
 
+    const collapsedDuplicateLessonIds = collapseDuplicateGoogleLessons({ coachCode });
+
     return {
       totalEvents: sortedEvents.length,
       matchedEvents,
@@ -4327,6 +4396,8 @@
       skippedUnmatchedTitles,
       skippedNonLessonEvent,
       skippedMakeupClaimed,
+      skippedDuplicateEvent,
+      collapsedDuplicateLessonIds,
       matchedLessonIds: Array.from(usedLessonIds)
     };
   }
@@ -10249,6 +10320,7 @@
   }
 
   async function bootstrap() {
+    collapseDuplicateGoogleLessons();
     ensureMakeupCodes();
     ensureLessonCalendarEventIds();
     ensureParticipantEmails();
