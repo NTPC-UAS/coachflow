@@ -6107,8 +6107,17 @@
     const defaultQuotaCount = importedCount > 0 ? getPaidQuotaCeiling(importedCount) : CHARGE_REMINDER_STEP;
     const activeQuotaCount = storedPaidQuotaCount || defaultQuotaCount;
     const paidThroughCount = storedPaidQuotaCount || (storedStatus === "paid" || totalChargedCount > 0 ? activeQuotaCount : 0);
-    const cycleRemainder = totalChargedCount % CHARGE_REMINDER_STEP;
-    const currentCycleChargedCount = totalChargedCount <= 0
+    const chargedLessonsList = Array.isArray(stats?.chargedLessons) ? stats.chargedLessons : [];
+    const confirmedTime = new Date(student?.paymentConfirmedAt || 0).getTime();
+    const hasPaidCycleBoundary = storedStatus === "paid" && Number.isFinite(confirmedTime) && confirmedTime > 0;
+    const cycleChargedCount = hasPaidCycleBoundary
+      ? chargedLessonsList.filter((lesson) => {
+        const lessonTime = new Date(lesson?.startAt || "").getTime();
+        return Number.isFinite(lessonTime) && lessonTime > confirmedTime;
+      }).length
+      : totalChargedCount;
+    const cycleRemainder = cycleChargedCount % CHARGE_REMINDER_STEP;
+    const currentCycleChargedCount = cycleChargedCount <= 0
       ? 0
       : (cycleRemainder === 0 ? CHARGE_REMINDER_STEP : cycleRemainder);
     const remainingToNextPayment = currentCycleChargedCount === CHARGE_REMINDER_STEP
@@ -6129,11 +6138,9 @@
     // 不再依賴 paidThroughCount 判斷：舊版按確認匯款會把 paidThroughCount 自動
     // 推到下個 cycle ceiling，副作用是下個 cycle 結束時系統認為「還在已繳區
     // 間」、不翻未繳，教練漏收一輪（朱朱、朱朱媽媽案例）。
-    const chargedLessonsList = Array.isArray(stats?.chargedLessons) ? stats.chargedLessons : [];
     // stats.chargedLessons 已按 startAt 降序排序；[0] 就是最近被計入扣堂的課
     const lastChargedLesson = chargedLessonsList[0];
     const lastChargedLessonTime = lastChargedLesson ? new Date(lastChargedLesson.startAt).getTime() : 0;
-    const confirmedTime = new Date(student?.paymentConfirmedAt || 0).getTime();
     const cycleAckedByCoach = Number.isFinite(confirmedTime)
       && confirmedTime > 0
       && (!Number.isFinite(lastChargedLessonTime) || lastChargedLessonTime <= 0 || confirmedTime > lastChargedLessonTime);
