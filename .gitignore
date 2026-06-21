@@ -1,4 +1,5 @@
 .chrome-test/
+.private-backups/
 snapshots/
 stable/
 excel-vba/

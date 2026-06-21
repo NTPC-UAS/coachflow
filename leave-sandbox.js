@@ -127,6 +127,8 @@
   };
 
   let state = loadState();
+  const cloudLessonReadyScopes = new Set();
+  let cloudRosterResolvedForSession = false;
   let activeStudentCode = "";
   let activeCoachCode = "";
   let selectedChargeStudentCode = "";
@@ -153,23 +155,38 @@
   let studentLoginPromptHidden = false;
   let coachLoginPromptHidden = false;
 
+  function createEmptyState() {
+    return {
+      version: SCHEMA_VERSION,
+      students: [],
+      coaches: [],
+      lessons: [],
+      leaveRequests: [],
+      makeupRequests: [],
+      coachBlocks: [],
+      compensationTasks: [],
+      eventLog: [],
+      migrations: {}
+    };
+  }
+
   function loadState() {
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) {
-      return seedState();
+      return createEmptyState();
     }
     try {
       const parsed = JSON.parse(raw);
       if (!parsed || typeof parsed !== "object") {
-        return seedState();
+        return createEmptyState();
       }
       if (Number(parsed.version) !== SCHEMA_VERSION) {
-        return seedState();
+        return createEmptyState();
       }
       return sanitizeLoadedState(parsed, true);
     } catch (error) {
       console.warn("Failed to parse sandbox state:", error);
-      return seedState();
+      return createEmptyState();
     }
   }
 
@@ -506,8 +523,8 @@
   }
 
   function saveState() {
+    // 本機只保存最近一次畫面快取；任何雲端寫入都必須走明確的單筆 API。
     localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
-    queueCloudStateSnapshotUpload("local-save");
   }
 
   function addLog(message) {
@@ -928,11 +945,15 @@
   }
 
   function requireCoachWriteAccess() {
-    if (!isCoachReadOnlyMode()) {
-      return true;
+    if (isCoachReadOnlyMode()) {
+      alert("此帳號為唯讀權限，只能查看教練月曆，不能修改資料。");
+      return false;
     }
-    alert("此帳號為唯讀權限，只能查看教練月曆，不能修改資料。");
-    return false;
+    if (!cloudRosterResolvedForSession || !areCloudLessonsReady({ coachCode: activeCoachCode })) {
+      alert("雲端資料尚未載入完成，目前只能查看快取，不能修改。請保持網路連線後重試。");
+      return false;
+    }
+    return true;
   }
 
   function setSectionHiddenByElement(target, hidden) {
@@ -1167,7 +1188,7 @@
   // 頁面一打開常有三股寫入同時跑（日曆同步尾段 push 課表、billing 快照補種、
   // 手動上傳），全部並發打後端會互搶鎖 → LOCK_TIMEOUT。排隊後同一台裝置
   // 一次只送一個寫入，鎖競爭幾乎消失；剩餘的（跨裝置）由重試吸收。
-  const CLOUD_WRITE_ACTIONS = ["saveLessons", "saveLeaveRecord", "saveBillingProfile"];
+  const CLOUD_WRITE_ACTIONS = ["saveLessons", "saveLeaveRecord", "saveBillingProfile", "saveMakeupRequest", "saveCoachBlock"];
   let cloudWriteChain = Promise.resolve();
 
   function isRetryableCloudWriteError(error) {
@@ -1629,7 +1650,11 @@
       attendanceStatus: String(lesson.attendanceStatus || "scheduled"),
       charged: Boolean(lesson.charged),
       completedAt: lesson.completedAt || "",
-      updatedAt: lesson.updatedAt || lesson.completedAt || startAt || new Date().toISOString()
+      updatedAt: lesson.updatedAt || lesson.completedAt || startAt || new Date().toISOString(),
+      calendarEventId: normalizeCalendarEventId(lesson.calendarEventId || ""),
+      cancelledByCoachLeaveBlockId: String(lesson.cancelledByCoachLeaveBlockId || ""),
+      coachLeaveReason: String(lesson.coachLeaveReason || ""),
+      beforeCoachLeaveJson: lesson.beforeCoachLeave ? JSON.stringify(lesson.beforeCoachLeave) : ""
     };
   }
 
@@ -1857,80 +1882,9 @@
   // - 都沒有 → 跳過（沒登入時不該偷偷打 API）
   // 早期版本不 scope，會在「學生測試頁」這種共用 state 場景，把其他學生未同步的請假
   // 一併推上去、並在 notifyUser 統計裡把總數呈現給學生看，洩漏隔壁資料。
-  async function retryUnsyncedLocalLeaves(options = {}) {
-    const silent = Boolean(options && options.silent);
-    if (!getAppsScriptUrl()) {
-      if (!silent) {
-        addLog("[雲端請假補救] 未設定 Apps Script URL，跳過。");
-      }
-      return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
-    }
-    if (!activeStudentCode && !activeCoachCode) {
-      if (!silent) {
-        addLog("[雲端請假補救] 尚未登入學生或教練，跳過。");
-      }
-      return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
-    }
-    const candidates = (state.leaveRequests || []).filter((leave) => {
-      if (!leave || leave.revokedAt) return false;
-      if (String(leave.type || "normal") !== "normal") return false;
-      if (leave.cloudSyncedAt) return false;
-      if (activeStudentCode) {
-        return leave.studentCode === activeStudentCode;
-      }
-      return leave.coachCode === activeCoachCode;
-    });
-    if (!candidates.length) {
-      if (!silent) {
-        addLog("[雲端請假補救] 沒有需要補推的請假紀錄。");
-      }
-      return { tried: 0, succeeded: 0, failed: 0, completedPending: 0 };
-    }
-    let succeeded = 0;
-    let failed = 0;
-    let completedPending = 0;
-    for (const leave of candidates) {
-      const lesson = getLessonById(leave.lessonId);
-      const wasPending = Boolean(leave.pendingCloudSync);
-      try {
-        const ok = await pushCloudLeaveRecord(leave, lesson);
-        if (ok) {
-          leave.cloudSyncedAt = new Date().toISOString();
-          if (wasPending) {
-            // 新版 pending leave 推上去後，把當時被擋掉的 lesson 狀態 / GCal / Email 補完
-            delete leave.pendingCloudSync;
-            if (lesson) {
-              lesson.calendarOccupied = false;
-              lesson.attendanceStatus = "leave-normal";
-            }
-            await completePendingLeaveSideEffects(leave, lesson);
-            completedPending += 1;
-          }
-          succeeded += 1;
-          addLog(`[雲端請假補救] 已補推 ${leave.id}（${leave.studentCode} / ${lesson ? formatDateTime(lesson.startAt) : leave.lessonId}）${wasPending ? "（pending → 補完 GCal+Email）" : ""}。`);
-        } else {
-          failed += 1;
-          addLog(`[雲端請假補救] 補推回應 ok=false：${leave.id}`);
-        }
-      } catch (error) {
-        failed += 1;
-        addLog(`[雲端請假補救] 補推失敗：${leave.id} / ${String(error?.message || error)}`);
-      }
-    }
-    if (succeeded > 0 || failed > 0) {
-      saveState();
-    }
-    if (!silent) {
-      if (succeeded > 0) {
-        notifyUser(
-          `已補推 ${succeeded} 筆請假紀錄到雲端${completedPending ? `（其中 ${completedPending} 筆同時補完 Google 日曆與通知信）` : ""}。${failed ? `（${failed} 筆失敗）` : ""}`,
-          succeeded ? "success" : "warning"
-        );
-      } else if (failed > 0) {
-        notifyUser(`本機請假紀錄補推失敗（${failed} 筆），請查 console。`, "warning");
-      }
-    }
-    return { tried: candidates.length, succeeded, failed, completedPending };
+  async function retryUnsyncedLocalLeaves() {
+    // 雲端唯一來源後停用舊本機補推；避免舊裝置把過期請假重新寫回。
+    return { tried: 0, succeeded: 0, failed: 0, completedPending: 0, disabled: true };
   }
 
   // pendingCloudSync 的請假在雲端 push 成功後，把當時 atomic flow 沒做的 GCal 刪除
@@ -2080,7 +2034,6 @@
   // - coachflowDebug.findLesson(studentCode, dateKey)：快速撈某學生某日的 lesson record
   // - coachflowDebug.findActiveLeaves(studentCode)：列出該學生未取消的請假
   if (typeof window !== "undefined") {
-    window.retryUnsyncedLocalLeaves = retryUnsyncedLocalLeaves;
     window.revokeNormalLeave = revokeNormalLeave;
     window.applyNormalLeaveByCoach = applyNormalLeaveByCoach;
     window.restoreLessonToScheduled = restoreLessonToScheduledForDebug;
@@ -2109,6 +2062,11 @@
       return false;
     }
     const result = await callAppsScriptApi("saveLeaveRecord", { record });
+    if (result?.duplicate && result?.record && leave) {
+      leave.id = result.record.id || leave.id;
+      leave.submittedAt = result.record.submittedAt || leave.submittedAt;
+      leave.cloudDuplicateResolved = true;
+    }
     return result?.ok !== false;
   }
 
@@ -2123,8 +2081,14 @@
     }
     const records = (Array.isArray(result?.records) ? result.records : [])
       .filter((record) => isAfterTrackingDataReset(record.submittedAt || record.updatedAt));
-    let changed = false;
-    records.forEach((record) => {
+    const activeRecords = records.filter((record) => !String(record.revokedAt || "").trim());
+    // 雲端清單完整取代目前登入範圍；本機舊請假不可再補推或復活。
+    state.leaveRequests = (state.leaveRequests || []).filter((leave) => (
+      String(leave?.type || "normal") !== "normal" ||
+      !isLeaveInCloudSyncScope(leave, getLessonById(leave?.lessonId), payload)
+    ));
+    let changed = true;
+    activeRecords.forEach((record) => {
       if (applyCloudLeaveRecord(record)) {
         changed = true;
       }
@@ -2135,9 +2099,7 @@
     if (restoreOrphanedNormalLeaveLessons(payload).length) {
       changed = true;
     }
-    if (reconcileLocalLeaveRecordsWithCloud(records, payload)) {
-      changed = true;
-    }
+
     if (collapseDuplicateGoogleLessons(payload).length) {
       changed = true;
     }
@@ -2148,16 +2110,199 @@
     return changed;
   }
 
+  async function syncCloudMakeupRequests(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const syncScope = getCloudStateScope(scope);
+    const result = await callAppsScriptApi("listMakeupRequests", syncScope, "GET");
+    if (result?.ok === false || !Array.isArray(result?.requests)) {
+      throw new Error("雲端補課申請格式錯誤。");
+    }
+    const cloudRequests = result.requests
+      .filter((request) => isMakeupRequestInScope(request, syncScope))
+      .map(clonePlain);
+    const legacyLocalRequests = (state.makeupRequests || [])
+      .filter((request) => isMakeupRequestInScope(request, syncScope));
+    if (!cloudRequests.length && legacyLocalRequests.length) {
+      state.legacyLocalMakeupRequests = (state.legacyLocalMakeupRequests || []).concat(
+        legacyLocalRequests.map((request) => ({ ...clonePlain(request), archivedAt: new Date().toISOString() }))
+      );
+      addLog("[雲端切換] 已封存 " + legacyLocalRequests.length + " 筆舊本機補課資料，不會自動回寫雲端。");
+    }
+    state.makeupRequests = (state.makeupRequests || [])
+      .filter((request) => !isMakeupRequestInScope(request, syncScope))
+      .concat(cloudRequests);
+    ensureMakeupCodes();
+    saveState();
+    return true;
+  }
+
+  async function saveMakeupRequestRecordToCloud(request) {
+    if (!request?.id || !request?.studentCode || !request?.coachCode) {
+      return false;
+    }
+    request.updatedAt = new Date().toISOString();
+    const result = await callAppsScriptApi("saveMakeupRequest", { request: clonePlain(request) });
+    if (result?.ok === false || result?.ignored) {
+      return false;
+    }
+    if (result?.request) {
+      Object.assign(request, result.request);
+    }
+    return true;
+  }
+
+  async function syncCloudCoachBlocks(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const syncScope = getCloudStateScope(scope);
+    if (!syncScope.coachCode) {
+      return false;
+    }
+    const result = await callAppsScriptApi("listCoachBlocks", { coachCode: syncScope.coachCode }, "GET");
+    if (result?.ok === false || !Array.isArray(result?.blocks)) {
+      throw new Error("雲端教練停課格式錯誤。");
+    }
+    const cloudBlocks = result.blocks
+      .filter((block) => isCoachBlockInScope(block, syncScope) && !String(block.revokedAt || "").trim())
+      .map(clonePlain);
+    const legacyLocalBlocks = (state.coachBlocks || [])
+      .filter((block) => isCoachBlockInScope(block, syncScope));
+    if (!cloudBlocks.length && legacyLocalBlocks.length) {
+      state.legacyLocalCoachBlocks = (state.legacyLocalCoachBlocks || []).concat(
+        legacyLocalBlocks.map((block) => ({ ...clonePlain(block), archivedAt: new Date().toISOString() }))
+      );
+      addLog("[雲端切換] 已封存 " + legacyLocalBlocks.length + " 筆舊本機教練停課資料，不會自動回寫雲端。");
+    }
+    state.coachBlocks = (state.coachBlocks || [])
+      .filter((block) => !isCoachBlockInScope(block, syncScope))
+      .concat(cloudBlocks);
+    saveState();
+    return true;
+  }
+
+  async function saveCoachBlockToCloud(block) {
+    if (!block?.id || !block?.coachCode) {
+      return false;
+    }
+    block.updatedAt = new Date().toISOString();
+    const result = await callAppsScriptApi("saveCoachBlock", { block: clonePlain(block) });
+    return result?.ok !== false && !result?.ignored;
+  }
+
+  async function syncCloudOperationalState(scope = {}) {
+    let changed = await syncCloudMakeupRequests(scope);
+    changed = await syncCloudCoachBlocks(scope) || changed;
+    return changed;
+  }
   // 把本機完整課表（tracking-start 之後）推上雲端 Lessons 分頁。
   // 後端 saveLessons 是差量 upsert by id，重複 push 安全。分批 100 筆避免單次
   // payload 過大。後端未部署（Unsupported action）時 graceful 回 false，呼叫端
   // 退回現有 local/snapshot 兩來源，零行為退化。
   // 回傳：成功時為已 push 的課堂數；後端未支援/回 ok:false 時為 false。
+  function getCloudLessonReadyKey(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    if (syncScope.studentCode) {
+      return "student:" + syncScope.coachCode + "|" + syncScope.studentCode;
+    }
+    if (syncScope.coachCode) {
+      return "coach:" + syncScope.coachCode;
+    }
+    return "";
+  }
+
+  function markCloudLessonsReady(scope = {}) {
+    const key = getCloudLessonReadyKey(scope);
+    if (key) {
+      cloudLessonReadyScopes.add(key);
+    }
+  }
+
+  function areCloudLessonsReady(scope = {}) {
+    const syncScope = getCloudStateScope(scope);
+    const key = getCloudLessonReadyKey(syncScope);
+    if (key && cloudLessonReadyScopes.has(key)) {
+      return true;
+    }
+    return Boolean(
+      syncScope.coachCode &&
+      cloudLessonReadyScopes.has("coach:" + syncScope.coachCode)
+    );
+  }
+
+  function parseCloudLessonBoolean(value) {
+    return value === true || String(value || "").trim().toLowerCase() === "true";
+  }
+
+  function normalizeCloudLessonForState(lesson) {
+    if (!lesson || !lesson.id) {
+      return null;
+    }
+    const startTime = new Date(lesson.startAt || "").getTime();
+    if (!Number.isFinite(startTime)) {
+      return null;
+    }
+    let beforeCoachLeave;
+    try {
+      beforeCoachLeave = lesson.beforeCoachLeaveJson
+        ? JSON.parse(String(lesson.beforeCoachLeaveJson))
+        : undefined;
+    } catch (error) {
+      beforeCoachLeave = undefined;
+    }
+    return {
+      id: String(lesson.id),
+      studentCode: normalizeParticipantCode(lesson.studentCode),
+      coachCode: normalizeParticipantCode(lesson.coachCode),
+      startAt: new Date(startTime).toISOString(),
+      sourceType: String(lesson.sourceType || "REGULAR"),
+      calendarEventId: normalizeCalendarEventId(lesson.calendarEventId || ""),
+      calendarOccupied: parseCloudLessonBoolean(lesson.calendarOccupied),
+      attendanceStatus: String(lesson.attendanceStatus || "scheduled"),
+      charged: parseCloudLessonBoolean(lesson.charged),
+      completedAt: String(lesson.completedAt || ""),
+      updatedAt: String(lesson.updatedAt || lesson.completedAt || lesson.startAt || ""),
+      cancelledByCoachLeaveBlockId: String(lesson.cancelledByCoachLeaveBlockId || ""),
+      coachLeaveReason: String(lesson.coachLeaveReason || ""),
+      ...(beforeCoachLeave ? { beforeCoachLeave } : {})
+    };
+  }
+
+  async function syncCloudLessons(scope = {}) {
+    if (!getAppsScriptUrl()) {
+      return false;
+    }
+    const syncScope = getCloudStateScope(scope);
+    if (!syncScope.coachCode && !syncScope.studentCode) {
+      return false;
+    }
+    const result = await callAppsScriptApi("listLessons", syncScope, "GET");
+    if (result?.ok === false || !Array.isArray(result?.lessons)) {
+      throw new Error("雲端課表格式錯誤。");
+    }
+    const cloudLessons = result.lessons
+      .map(normalizeCloudLessonForState)
+      .filter((lesson) => lesson && isLessonInScope(lesson, syncScope));
+    const outsideScope = (state.lessons || []).filter((lesson) => !isLessonInScope(lesson, syncScope));
+    state.lessons = outsideScope.concat(cloudLessons);
+    // 舊裝置留下的補償任務不可在載入後直接執行；需要的任務會由本次同步重新建立。
+    state.compensationTasks = (state.compensationTasks || [])
+      .filter((task) => !isCompensationTaskInScope(task, syncScope));
+    markCloudLessonsReady(syncScope);
+    saveState();
+    return true;
+  }
   async function pushCloudLessons(scope = {}) {
     if (!getAppsScriptUrl()) {
       return false;
     }
     const syncScope = getCloudStateScope(scope);
+    if (!areCloudLessonsReady(syncScope)) {
+      console.warn("Skip cloud lesson upload before authoritative cloud load.", syncScope);
+      return false;
+    }
     const lessons = (state.lessons || [])
       .filter((lesson) => (
         lesson &&
@@ -2175,7 +2320,7 @@
     try {
       for (let i = 0; i < lessons.length; i += batchSize) {
         const batch = lessons.slice(i, i + batchSize);
-        const result = await callAppsScriptApi("saveLessons", { lessons: batch });
+        const result = await callAppsScriptApi("saveLessons", { lessons: batch, authoritativeClient: true });
         if (result?.ok === false) {
           return false;
         }
@@ -2713,15 +2858,17 @@
   }
 
   function renderCloudSnapshotControls() {
-    const hasCoach = Boolean(activeCoachCode);
     [el.coachCloudUploadBtn, el.coachCloudDownloadBtn].filter(Boolean).forEach((button) => {
-      button.disabled = !hasCoach || isCoachReadOnlyMode() || isUploadingCloudSnapshot;
+      button.hidden = true;
+      button.disabled = true;
     });
     if (el.coachCloudSyncText) {
-      const updatedText = state.cloudSnapshotUpdatedAt
-        ? `雲端資料最後同步：${formatDateTime(state.cloudSnapshotUpdatedAt)}`
-        : "尚未把這台電腦的請假系統資料上傳到雲端。";
-      el.coachCloudSyncText.textContent = hasCoach ? updatedText : "請先登入教練代碼。";
+      el.coachCloudSyncText.textContent = areCloudLessonsReady({
+        coachCode: activeCoachCode,
+        studentCode: activeStudentCode
+      })
+        ? "目前資料來自雲端，手機與電腦共用同一份資料。"
+        : "尚未完成雲端載入，目前只能查看快取。";
     }
   }
 
@@ -2878,11 +3025,21 @@
     }
     lesson.updatedAt = new Date().toISOString();
     state.lessons.push(lesson);
+    const lessonCloudSaved = await pushCloudLessons({
+      coachCode: activeCoachCode,
+      studentCode
+    }).catch(() => false);
+    if (lessonCloudSaved === false) {
+      state.lessons = state.lessons.filter((item) => item !== lesson);
+      saveState();
+      renderAll();
+      notifyUser("新增課程未完成：雲端同步失敗，請確認網路後重試。", "warning");
+      return;
+    }
     addLog(`教練 ${activeCoachCode} 手動新增學生 ${studentCode} 之上課：${formatDateTime(lesson.startAt)}（${alreadyAttended ? "已上完、立即扣堂" : "未來課程、不扣堂"}）。`);
     saveState();
     renderAll();
     // 完整課表雲端化：手動新增的課同步推上雲，主系統即時看得到。
-    pushCloudLessonsQuietly({ coachCode: activeCoachCode, studentCode });
     notifyUser(`已建立 ${student.name || studentCode} 的上課（${formatDateTime(lesson.startAt)}），正在同步 Google 日曆...`, "info");
 
     // 同步建 GCal 事件。非 strict：失敗會走 compensation 任務排隊重試，本機 lesson 仍保留
@@ -2908,97 +3065,17 @@
   }
 
   async function uploadLocalLeaveStateToCloud() {
-    if (!activeCoachCode) {
-      alert("請先載入教練資料。");
-      return;
-    }
-    try {
-      await syncCloudBillingProfiles({ coachCode: activeCoachCode, studentCode: "" });
-      renderBillingPanels();
-    } catch (error) {
-      console.warn("Cloud billing pre-confirm sync failed:", error);
-    }
-    const snapshot = buildLeaveStateSnapshot({ coachCode: activeCoachCode, studentCode: "" });
-    const confirmed = window.confirm(
-      [
-        "要把這台電腦目前的請假系統資料上傳到雲端嗎？",
-        "",
-        `課程：${snapshot.counts.lessons} 筆`,
-        `請假：${snapshot.counts.leaveRequests} 筆`,
-        `補課：${snapshot.counts.makeupRequests} 筆`,
-        `學生：${snapshot.counts.students} 位`,
-        "",
-        "上傳後，手機和其他電腦會以這份雲端資料為準。"
-      ].join("\n")
-    );
-    if (!confirmed) {
-      return;
-    }
-
-    isUploadingCloudSnapshot = true;
-    const uploadButtonText = el.coachCloudUploadBtn?.textContent || "";
-    if (el.coachCloudUploadBtn) {
-      el.coachCloudUploadBtn.disabled = true;
-      el.coachCloudUploadBtn.textContent = "上傳中...";
-    }
-    try {
-      notifyUser("正在把這台電腦的請假系統資料同步到雲端...", "info");
-      try {
-        await syncCloudBillingProfiles({ coachCode: activeCoachCode, studentCode: "" });
-      } catch (error) {
-        console.warn("Cloud billing pre-upload sync failed:", error);
-      }
-      const counts = await pushScopedCloudRecords({ coachCode: activeCoachCode, studentCode: "" });
-      const saved = await saveLeaveStateSnapshotToCloud({ coachCode: activeCoachCode, studentCode: "" }, { force: true });
-      if (!saved) {
-        notifyUser("雲端快照端點尚未更新，請先重新部署 Apps Script 後再按一次。", "warning");
-        return;
-      }
-      renderAll();
-      notifyUser(`已上傳到雲端：請假 ${counts.leaveCount} 筆、扣課資料 ${counts.billingCount} 位、完整課表 ${counts.lessonsPushed} 堂，完整快照已更新。`, "success");
-    } catch (error) {
-      notifyUser(`雲端同步失敗：${String(error?.message || error)}`, "warning");
-    } finally {
-      isUploadingCloudSnapshot = false;
-      if (el.coachCloudUploadBtn) {
-        el.coachCloudUploadBtn.disabled = false;
-        el.coachCloudUploadBtn.textContent = uploadButtonText || "把這台電腦資料上傳到雲端";
-      }
-      renderCloudSnapshotControls();
-    }
+    notifyUser("本機整包上傳已停用；系統會直接更新雲端單筆資料。", "info");
+    return refreshCloudSessionDataFromCurrentSession(true);
   }
 
   async function downloadCloudLeaveStateToLocal() {
-    if (!activeCoachCode) {
-      alert("請先載入教練資料。");
-      return;
-    }
-    const confirmed = window.confirm("要用雲端請假系統資料覆蓋這台裝置目前的本機資料嗎？");
-    if (!confirmed) {
-      return;
-    }
-    const downloadButtonText = el.coachCloudDownloadBtn?.textContent || "";
-    if (el.coachCloudDownloadBtn) {
-      el.coachCloudDownloadBtn.disabled = true;
-      el.coachCloudDownloadBtn.textContent = "載入中...";
-    }
-    try {
-      const changed = await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
-      if (changed) {
-        renderAll();
-        notifyUser("已用雲端請假系統資料更新這台裝置。", "success");
-      } else {
-        notifyUser("目前沒有可套用的雲端請假系統資料。", "info");
-      }
-    } catch (error) {
-      notifyUser(`雲端載入失敗：${String(error?.message || error)}`, "warning");
-    } finally {
-      if (el.coachCloudDownloadBtn) {
-        el.coachCloudDownloadBtn.disabled = false;
-        el.coachCloudDownloadBtn.textContent = downloadButtonText || "從雲端重新載入";
-      }
-      renderCloudSnapshotControls();
-    }
+    const changed = await refreshCloudSessionDataFromCurrentSession(true);
+    notifyUser(
+      changed ? "已從雲端重新載入資料。" : "雲端資料目前沒有變更。",
+      changed ? "success" : "info"
+    );
+    return changed;
   }
 
   function getStudentBillingUpdatedAt(student) {
@@ -3635,8 +3712,8 @@
     const payload = rawPayload && typeof rawPayload === "object" && rawPayload.data && typeof rawPayload.data === "object"
       ? rawPayload.data
       : rawPayload;
-    const sourceStudents = Array.isArray(payload?.students) ? payload.students : [];
-    const sourceCoaches = Array.isArray(payload?.coaches) ? payload.coaches : [];
+    const sourceStudents = payload?.student ? [payload.student] : (Array.isArray(payload?.students) ? payload.students : []);
+    const sourceCoaches = payload?.coach ? [payload.coach] : (Array.isArray(payload?.coaches) ? payload.coaches : []);
     if (!sourceStudents.length && !sourceCoaches.length) {
       return false;
     }
@@ -3721,6 +3798,42 @@
     return changed;
   }
 
+  function replaceCoachflowRosterFromCloudPayload(rawPayload, sourceLabel) {
+    const payload = rawPayload && typeof rawPayload === "object" && rawPayload.data && typeof rawPayload.data === "object"
+      ? rawPayload.data
+      : rawPayload;
+    const hasStudent = Boolean(payload?.student) || (Array.isArray(payload?.students) && payload.students.length > 0);
+    const hasCoach = Boolean(payload?.coach) || (Array.isArray(payload?.coaches) && payload.coaches.length > 0);
+    if (!hasStudent && !hasCoach) {
+      return false;
+    }
+    state.students = [];
+    state.coaches = [];
+    syncCoachflowRosterFromPayload(payload, sourceLabel);
+    ensureParticipantEmails();
+    ensureStudentBillingProfiles();
+    cloudRosterResolvedForSession = true;
+    saveState();
+    return true;
+  }
+
+  async function resolveCoachflowRosterFromCloud(role, accessInput) {
+    cloudRosterResolvedForSession = false;
+    if (!getCoachflowAppsScriptUrl()) {
+      throw new Error("未設定雲端資料來源。");
+    }
+    const roleName = String(role || "").toLowerCase();
+    const access = normalizeParticipantCode(accessInput);
+    if (!access || (roleName !== "student" && roleName !== "coach")) {
+      throw new Error("缺少有效的登入代碼。");
+    }
+    const action = roleName === "student" ? "resolveStudentAccess" : "resolveCoachAccess";
+    const payload = await callCoachflowApi(action, { access }, "GET");
+    if (!replaceCoachflowRosterFromCloudPayload(payload, "雲端 CoachFlow")) {
+      throw new Error("雲端沒有回傳可用的學生或教練資料。");
+    }
+    return payload;
+  }
   function syncCoachflowRosterFromLocalState() {
     try {
       const raw = localStorage.getItem("coachflow-v2-state");
@@ -6495,37 +6608,23 @@
     if (!request?.studentCode || !request?.coachCode) {
       return false;
     }
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const saved = await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, reason);
+    try {
+      const saved = await saveMakeupRequestRecordToCloud(request);
       if (saved) {
-        const verified = await verifyMakeupRequestSavedToCloud(request).catch((error) => {
-          console.warn("Makeup cloud verification failed:", error);
-          return false;
-        });
-        if (verified) {
-          request.cloudSyncStatus = "synced";
-          request.cloudVerifiedAt = new Date().toISOString();
-          request.cloudSyncErrorAt = "";
-          saveState();
-          return true;
-        }
-        addLog(`[雲端同步] ${request.code || request.id} 已送出保存但雲端尚未驗證，準備重試。`);
+        request.cloudSyncStatus = "synced";
+        request.cloudVerifiedAt = new Date().toISOString();
+        request.cloudSyncErrorAt = "";
+        saveState();
+        return true;
       }
-      if (attempt < 2) {
-        await pullLeaveStateSnapshotFromCloud({
-          coachCode: request.coachCode,
-          studentCode: request.studentCode
-        }).catch((error) => {
-          console.warn("Makeup cloud retry refresh failed:", error);
-        });
-      }
+    } catch (error) {
+      addLog("[雲端同步] " + (request.code || request.id) + " 補課資料寫入失敗：" + String(error?.message || error));
     }
-    request.cloudSyncStatus = "pending";
+    request.cloudSyncStatus = "failed";
     request.cloudSyncErrorAt = new Date().toISOString();
     saveState();
     return false;
   }
-
   function shouldSendMakeupPendingNotice(request) {
     return Boolean(
       request &&
@@ -6629,6 +6728,10 @@
   }
 
   async function applyNormalLeaveImpl(lessonId) {
+    if (!areCloudLessonsReady({ coachCode: activeCoachCode, studentCode: activeStudentCode })) {
+      alert("雲端課表尚未載入完成，請保持網路連線後重試。");
+      return;
+    }
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.studentCode !== activeStudentCode) {
       alert("找不到課程，或你沒有權限操作。");
@@ -6704,11 +6807,12 @@
     }
 
     if (!cloudOk) {
-      addLog(`[雲端請假] 上傳失敗，本機已暫存 pending 待重試：${leaveRecord.id}${cloudErrorMessage ? ` / ${cloudErrorMessage}` : "（Apps Script 回應 ok=false）"}`);
+      state.leaveRequests = state.leaveRequests.filter((leave) => leave !== leaveRecord);
+      addLog("[雲端請假] 上傳失敗，未建立本機待同步資料：" + leaveRecord.id + (cloudErrorMessage ? " / " + cloudErrorMessage : "（Apps Script 回應 ok=false）"));
       saveState();
       renderAll();
       notifyUser(
-        `請假尚未成立：雲端同步失敗${cloudErrorMessage ? `（${cloudErrorMessage}）` : ""}。系統會在你下次打開請假系統或重新整理時自動重試；如急著請假，請聯絡教練協助代為請假。`,
+        "請假尚未成立：雲端同步失敗" + (cloudErrorMessage ? "（" + cloudErrorMessage + "）" : "") + "。請確認網路後重新送出；如急著請假，請聯絡教練協助。",
         "warning"
       );
       return;
@@ -6796,6 +6900,10 @@
     if (!requireCoachWriteAccess()) {
       return;
     }
+    if (!areCloudLessonsReady({ coachCode: activeCoachCode })) {
+      alert("雲端課表尚未載入完成，請保持網路連線後重試。");
+      return;
+    }
     const lesson = getLessonById(lessonId);
     if (!lesson || lesson.coachCode !== activeCoachCode) {
       alert("找不到課程。");
@@ -6869,11 +6977,12 @@
     }
 
     if (!cloudOk) {
-      addLog(`[雲端請假] 教練代請假上傳失敗，本機已暫存 pending 待重試：${leaveRecord.id}${cloudErrorMessage ? ` / ${cloudErrorMessage}` : "（Apps Script 回應 ok=false）"}`);
+      state.leaveRequests = state.leaveRequests.filter((leave) => leave !== leaveRecord);
+      addLog("[雲端請假] 教練代請假上傳失敗，未建立本機待同步資料：" + leaveRecord.id + (cloudErrorMessage ? " / " + cloudErrorMessage : "（Apps Script 回應 ok=false）"));
       saveState();
       renderAll();
       notifyUser(
-        `代 ${studentName} 請假尚未成立：雲端同步失敗${cloudErrorMessage ? `（${cloudErrorMessage}）` : ""}。系統會在下次刷新或聚焦時自動重試，或可手動點頂部紅 banner 立即重試。`,
+        "代 " + studentName + " 請假尚未成立：雲端同步失敗" + (cloudErrorMessage ? "（" + cloudErrorMessage + "）" : "") + "。請確認網路後重新送出。",
         "warning"
       );
       return;
@@ -7017,6 +7126,10 @@
       return;
     }
 
+    for (const request of state.makeupRequests.filter((item) => item.leaveId === leave.id && item.resolvedAt === nowIso)) {
+      await saveMakeupRequestToCloud(request, "leave_cancelled_by_student");
+    }
+
     await tryCreateCalendarEventForLesson(lesson, "student_cancel_leave", false);
 
     addLog(`學生 ${activeStudentCode} 已取消課程 ${lesson.id} 的請假。`);
@@ -7145,6 +7258,14 @@
       endAt,
       reason
     };
+    const cloudBlockSaved = await saveCoachBlockToCloud(block).catch((error) => {
+      addLog("[雲端同步] 教練停課寫入失敗：" + String(error?.message || error));
+      return false;
+    });
+    if (!cloudBlockSaved) {
+      notifyUser("教練請假時段尚未成立：雲端同步失敗，請確認網路後重試。", "warning");
+      return;
+    }
     state.coachBlocks.push(block);
 
     const impactedLessons = state.lessons.filter(
@@ -7179,6 +7300,9 @@
       request.resolvedAt = new Date().toISOString();
       request.rejectReason = "教練請假時段重疊，無法安排此補課時段。";
     });
+    for (const request of impactedPendingRequests) {
+      await saveMakeupRequestToCloud(request, "makeup_auto_rejected_by_coach_leave");
+    }
 
     for (const lesson of impactedLessons) {
       await tryDeleteCalendarEventForLesson(lesson, "coach_leave_block", false);
@@ -7211,6 +7335,7 @@
     }
 
     addLog(`教練 ${activeCoachCode} 新增請假時段 ${formatDateTime(startAt)}-${getTimeText(endAt)}，影響課程 ${impactedLessons.length} 堂、退回待審 ${impactedPendingRequests.length} 筆。`);
+    await pushCloudLessons({ coachCode: activeCoachCode });
     saveState();
     renderAll();
     notifyUser(`教練請假時段已新增，影響課程 ${impactedLessons.length} 堂。`, "success");
@@ -7222,6 +7347,12 @@
     }
     const block = (state.coachBlocks || []).find((item) => item.id === blockId);
     if (!block || block.coachCode !== activeCoachCode) {
+      return;
+    }
+    const revokedBlock = { ...block, revokedAt: new Date().toISOString() };
+    const cloudBlockSaved = await saveCoachBlockToCloud(revokedBlock).catch(() => false);
+    if (!cloudBlockSaved) {
+      notifyUser("移除教練請假時段未完成：雲端同步失敗，請確認網路後重試。", "warning");
       return;
     }
     state.coachBlocks = (state.coachBlocks || []).filter((item) => item.id !== blockId);
@@ -7256,6 +7387,7 @@
       );
     }
     addLog(`教練 ${activeCoachCode} 移除請假時段 ${formatDateTime(block.startAt)}-${getTimeText(block.endAt || block.startAt)}。`);
+    await pushCloudLessons({ coachCode: activeCoachCode });
     saveState();
     renderAll();
     notifyUser("教練請假時段已移除，原受影響課程已還原。", "success");
@@ -7263,6 +7395,10 @@
 
   async function submitMakeupRequest() {
     if (isSubmittingMakeupRequest) {
+      return;
+    }
+    if (!cloudRosterResolvedForSession || !areCloudLessonsReady({ coachCode: activeCoachCode, studentCode: activeStudentCode })) {
+      alert("雲端資料尚未載入完成，目前不能送出補課申請。請保持網路連線後重試。");
       return;
     }
     if (!el.makeupLeaveSelect || !el.makeupSlotSelect) {
@@ -7321,11 +7457,10 @@
       notifyUser("正在把補課申請同步到雲端...", "info");
       const initialCloudSaved = await saveMakeupRequestToCloud(request, "makeup_request_created");
       if (!initialCloudSaved) {
-        request.emailNoticeStatus = "waiting-cloud";
-        request.emailNoticeQueuedAt = new Date().toISOString();
+        state.makeupRequests = state.makeupRequests.filter((item) => item !== request);
         saveState();
         renderAll();
-        notifyUser("補課申請尚未完成：雲端還沒有確認收到，所以待審 Email 不會寄出。請保持網路連線並重新開啟學生端，系統會自動補同步。", "warning");
+        notifyUser("補課申請尚未成立：雲端同步失敗。請確認網路後重新送出。", "warning");
         return;
       }
       const emailStateChanged = await sendMakeupPendingNotice(request);
@@ -7353,11 +7488,20 @@
       alert("找不到待審申請，或你沒有權限。");
       return;
     }
+    const previousResolvedAt = request.resolvedAt || "";
     request.status = "cancelled";
     request.resolvedAt = new Date().toISOString();
-    addLog(`學生 ${request.studentCode} 取消補課申請 ${request.id}。`);
+    const cloudSaved = await saveMakeupRequestToCloud(request, "makeup_request_cancelled");
+    if (!cloudSaved) {
+      request.status = "pending";
+      request.resolvedAt = previousResolvedAt;
+      saveState();
+      renderAll();
+      notifyUser("取消補課申請未完成：雲端同步失敗，請確認網路後重試。", "warning");
+      return;
+    }
+    addLog("學生 " + request.studentCode + " 取消補課申請 " + request.id + "。");
     saveState();
-    await saveStudentScopedStateToCloud(request.studentCode, request.coachCode, "makeup_request_cancelled");
     renderAll();
     notifyUser("補課申請已取消，正在寄送通知...", "info");
     await trySendEmailNotice(
@@ -7369,7 +7513,7 @@
         coachCode: request.coachCode,
         startAt: request.startAt
       },
-      `補課申請取消通知 ${request.code || request.id}`
+      "補課申請取消通知 " + (request.code || request.id)
     );
     notifyUser("補課申請取消流程已完成。", "success");
   }
@@ -7448,6 +7592,10 @@
       return;
     }
 
+    for (const request of state.makeupRequests.filter((item) => item.leaveId === leave.id && item.resolvedAt === nowIso)) {
+      await saveMakeupRequestToCloud(request, "leave_revoked_by_coach");
+    }
+
     await tryCreateCalendarEventForLesson(lesson, "coach_revoke_leave", false);
 
     addLog(`教練 ${activeCoachCode} 已取消課程 ${lesson.id} 的請假。`);
@@ -7514,9 +7662,16 @@
       return false;
     });
     if (!cloudSyncedApproval) {
-      notifyUser("補課已核准（Google 日曆已建立），但雲端同步未完成。系統會自動重試；學生通知信暫緩寄送。", "warning");
+      request.status = "pending";
+      request.resolvedAt = "";
+      state.lessons = state.lessons.filter((lesson) => lesson !== newLesson);
+      await tryDeleteCalendarEventForLesson(newLesson, "makeup_approval_cloud_rollback", false);
+      saveState();
+      renderAll();
+      notifyUser("補課核准未完成：雲端同步失敗，已撤回剛建立的日曆課程，請重試。", "warning");
       return;
     }
+    await pushCloudLessons({ coachCode: request.coachCode, studentCode: request.studentCode });
 
     await trySendEmailNotice(
       "makeup_approved",
@@ -7557,7 +7712,12 @@
       return false;
     });
     if (!cloudSyncedReject) {
-      notifyUser("補課已退回，但雲端同步未完成。系統會自動重試；學生通知信暫緩寄送。", "warning");
+      request.status = "pending";
+      request.resolvedAt = "";
+      request.rejectReason = "";
+      saveState();
+      renderAll();
+      notifyUser("補課退回未完成：雲端同步失敗，已恢復待審狀態，請重試。", "warning");
       return;
     }
 
@@ -7576,7 +7736,7 @@
     notifyUser("補課退回流程已完成。", "success");
   }
 
-  function markLessonStatus(lessonId, statusType) {
+  async function markLessonStatus(lessonId, statusType) {
     if (!requireCoachWriteAccess()) {
       return;
     }
@@ -7607,6 +7767,9 @@
       }
     }
     const wasCharged = Boolean(lesson.charged);
+    const previousStatus = lesson.attendanceStatus;
+    const previousCharged = lesson.charged;
+    const previousUpdatedAt = lesson.updatedAt || "";
     lesson.attendanceStatus = target.attendanceStatus;
     lesson.charged = target.charged;
     lesson.updatedAt = new Date().toISOString();
@@ -7616,7 +7779,16 @@
     // 完整課表雲端化最關鍵的接入點：臨時請假/未到課/重大急事/重置這四種狀態
     // 只改 lesson 內部欄位、不碰 Google 日曆，光看日曆永遠算不準扣堂。一定要把
     // 改完的 lesson 推上雲，主系統才能用權威算法即時重算正確的「本期已扣」。
-    pushCloudLessonsQuietly({ coachCode: lesson.coachCode, studentCode: lesson.studentCode });
+    const cloudSaved = await pushCloudLessons({ coachCode: lesson.coachCode, studentCode: lesson.studentCode }).catch(() => false);
+    if (cloudSaved === false) {
+      lesson.attendanceStatus = previousStatus;
+      lesson.charged = previousCharged;
+      lesson.updatedAt = previousUpdatedAt;
+      saveState();
+      renderAll();
+      notifyUser("課程狀態未更新：雲端同步失敗，請確認網路後重試。", "warning");
+      return;
+    }
     notifyUser(`課程狀態已更新：${getStatusPill(target.attendanceStatus).replace(/<[^>]+>/g, "")}。`, "success");
     if (!wasCharged && target.charged) {
       maybeSendChargeReminder(lesson.studentCode, "coach_mark_status").catch((error) => {
@@ -9389,42 +9561,19 @@
       return false;
     }
     lastCloudSessionRefreshAt = now;
-
+    const scope = {
+      coachCode: activeCoachCode,
+      studentCode: activeStudentCode
+    };
     let changed = false;
-    // 先補推任何 pending 請假，確保後續 cloud read 看到的是最新狀態，也讓 banner
-    // 在使用者切回分頁時就能消掉。silent 模式不彈 notifyUser，避免每 45 秒打擾使用者；
-    // banner 持續可見已足以提示。
     try {
-      const retryResult = await retryUnsyncedLocalLeaves({ silent: true });
-      if (retryResult && retryResult.succeeded > 0) {
-        changed = true;
-      }
+      changed = await syncCloudLessons(scope) || changed;
+      changed = await syncCloudLeaveRecords(scope) || changed;
+      changed = await syncCloudOperationalState(scope) || changed;
+      changed = await syncCloudBillingProfiles(scope) || changed;
     } catch (error) {
-      console.warn("Pending leave retry on session refresh failed:", error);
-    }
-    try {
-      changed = await pullLeaveStateSnapshotFromCloud({
-        coachCode: activeCoachCode,
-        studentCode: activeStudentCode
-      }) || changed;
-    } catch (error) {
-      console.warn("Cloud leave snapshot refresh failed:", error);
-    }
-    try {
-      changed = await syncCloudLeaveRecords({
-        coachCode: activeCoachCode,
-        studentCode: activeStudentCode
-      }) || changed;
-    } catch (error) {
-      console.warn("Cloud leave session refresh failed:", error);
-    }
-    try {
-      changed = await syncCloudBillingProfiles({
-        coachCode: activeCoachCode,
-        studentCode: activeStudentCode
-      }) || changed;
-    } catch (error) {
-      console.warn("Cloud billing session refresh failed:", error);
+      console.warn("Authoritative cloud refresh failed:", error);
+      return false;
     }
 
     try {
@@ -9440,22 +9589,14 @@
     }
 
     try {
-      changed = await resolvePendingDeleteCompensationTasksFromGoogle({
-        coachCode: activeCoachCode,
-        studentCode: activeStudentCode
-      }) || changed;
+      changed = await resolvePendingDeleteCompensationTasksFromGoogle(scope) || changed;
     } catch (error) {
       console.warn("Delete compensation cleanup failed:", error);
     }
 
-    if (activeStudentCode && activeCoachCode && hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
-      const makeupCloudSaved = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_session_makeup_sync");
-      changed = makeupCloudSaved || changed;
-      if (makeupCloudSaved) {
-        changed = await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode) || changed;
-      }
+    if (activeStudentCode) {
+      changed = await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode) || changed;
     }
-
     if (changed) {
       renderAll();
     }
@@ -9485,7 +9626,7 @@
         el.pendingLeaveRetryBtn.disabled = true;
         el.pendingLeaveRetryBtn.textContent = "重試中...";
         try {
-          await retryUnsyncedLocalLeaves();
+          await refreshCloudSessionDataFromCurrentSession(true);
         } catch (error) {
           notifyUser(`重試失敗：${String(error?.message || error)}`, "warning");
         } finally {
@@ -9497,55 +9638,31 @@
     }
     if (el.studentLoginBtn) {
       el.studentLoginBtn.addEventListener("click", async () => {
-        await syncCoachflowRosterFromCloud();
-        syncCoachflowRosterFromLocalState();
-        const loaded = activateStudentSession(el.studentCode?.value, el.studentCoachCode?.value, false);
-        if (loaded) {
-          notifyUser("學生資料已載入，正在同步 Google 日曆與請假紀錄...", "info");
-          // 救援：把本機已有但雲端可能因配額失敗而沒收到的請假紀錄重新推一次。
-          // saveLeaveRecord 端是 upsert by id，安全可重跑。
-          try {
-            await retryUnsyncedLocalLeaves();
-          } catch (error) {
-            console.warn("Retry unsynced leaves failed on student login:", error);
+        const studentAccess = normalizeParticipantCode(el.studentCode?.value);
+        if (!studentAccess) {
+          alert("請輸入學生代碼。");
+          return;
+        }
+        notifyUser("正在從雲端驗證學生資料與課表...", "info");
+        try {
+          await resolveCoachflowRosterFromCloud("student", studentAccess);
+          const loaded = activateStudentSession(studentAccess, "", false);
+          if (!loaded) {
+            return;
           }
-          let leaveChanged = false;
-          let cloudLeaveFailed = false;
-          try {
-            leaveChanged = await pullLeaveStateSnapshotFromCloud({ studentCode: activeStudentCode, coachCode: activeCoachCode }) || leaveChanged;
-            leaveChanged = await syncCloudLeaveRecords({ studentCode: activeStudentCode, coachCode: activeCoachCode }) || leaveChanged;
-          } catch (error) {
-            console.warn("Cloud leave sync failed for student login:", error);
-            cloudLeaveFailed = true;
-          }
-          let billingChanged = false;
-          try {
-            billingChanged = await syncCloudBillingProfiles({ studentCode: activeStudentCode, coachCode: activeCoachCode });
-          } catch (error) {
-            console.warn("Cloud billing sync failed for student login:", error);
-          }
-          let calendarChanged = false;
-          try {
-            calendarChanged = await syncStudentCalendarEventsFromGoogle();
-          } catch (error) {
-            console.warn("Student Google calendar sync failed for student login:", error);
-          }
-          let makeupCloudSaved = false;
-          if (hasStudentMakeupRequestsForCloudSync(activeStudentCode)) {
-            makeupCloudSaved = await saveStudentScopedStateToCloud(activeStudentCode, activeCoachCode, "student_login_makeup_sync");
-          }
-          let makeupNoticeChanged = false;
-          if (makeupCloudSaved) {
-            makeupNoticeChanged = await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode);
-          }
-          if (leaveChanged || billingChanged || calendarChanged || makeupCloudSaved || makeupNoticeChanged) {
-            renderAll();
-          }
-          if (cloudLeaveFailed) {
-            notifyUser("學生資料已載入，但雲端請假紀錄同步失敗，請稍後再試。", "warning");
-          } else {
-            notifyUser("學生資料已更新完成，可以查看今日上課與請假狀態。", "success");
-          }
+          const scope = { studentCode: activeStudentCode, coachCode: activeCoachCode };
+          await syncCloudLessons(scope);
+          await syncCloudLeaveRecords(scope);
+          await syncCloudOperationalState(scope);
+          await syncCloudBillingProfiles(scope);
+          await syncStudentCalendarEventsFromGoogle();
+          await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode);
+          renderAll();
+          notifyUser("學生資料已從雲端更新完成，可以查看課程與請假狀態。", "success");
+        } catch (error) {
+          console.warn("Student authoritative cloud login failed:", error);
+          renderAll();
+          notifyUser("學生資料載入失敗：" + String(error?.message || error) + "。請確認網路與登入代碼後重試。", "warning");
         }
       });
     }
@@ -9554,66 +9671,40 @@
       el.coachLoginBtn.addEventListener("click", async () => {
         const coachCodeInput = el.coachCode?.value;
         const readOnlyLogin = isReadOnlyLoginCode(coachCodeInput);
-        syncCoachflowRosterFromLocalState();
-        const loaded = activateCoachSession(coachCodeInput, false);
-        if (loaded && isCoachReadOnlyMode()) {
-          setCoachLoginPromptVisibility(true);
-        }
-        if (!loaded) {
+        const coachAccess = readOnlyLogin
+          ? normalizeParticipantCode(resolveReadOnlyCoachCode())
+          : normalizeParticipantCode(coachCodeInput);
+        if (!coachAccess) {
+          alert("請輸入教練代碼。");
           return;
         }
-        notifyUser("教練資料已載入，正在同步雲端資料與 Google 日曆...", "info");
-        const syncFromCloud = async () => {
-          const cloudChanged = await syncCoachflowRosterFromCloud();
-          const localChanged = syncCoachflowRosterFromLocalState();
-          let leaveChanged = false;
-          try {
-            leaveChanged = await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode }) || leaveChanged;
-            leaveChanged = await syncCloudLeaveRecords({ coachCode: activeCoachCode }) || leaveChanged;
-          } catch (error) {
-            console.warn("Cloud leave sync failed for coach login:", error);
-          }
-          let billingChanged = false;
-          try {
-            billingChanged = await syncCloudBillingProfiles({ coachCode: activeCoachCode });
-          } catch (error) {
-            console.warn("Cloud billing sync failed for coach login:", error);
-          }
-          if (cloudChanged || localChanged || leaveChanged || billingChanged) {
-            renderAll();
-          }
-          return Boolean(cloudChanged || localChanged || leaveChanged || billingChanged);
-        };
-        if (readOnlyLogin) {
-          syncReadOnlyCoachCalendarFromGoogle(activeCoachCode)
-            .then((changed) => {
-              if (changed) {
-                renderAll();
-              }
-            })
-            .catch((error) => {
-              console.warn("Read-only Google calendar sync failed:", error);
-              setUiStatus("唯讀月曆目前無法同步 Google，請稍後重新整理。");
-            });
-          syncFromCloud().catch((error) => {
-            console.warn("CoachFlow roster sync failed via read-only login:", error);
-          });
-          return;
-        }
-        await syncFromCloud();
+        notifyUser("正在從雲端驗證教練資料與課表...", "info");
         try {
-          const calendarChanged = await syncCoachCalendarEventsFromGoogle({ showStatus: true });
-          const compensationCleaned = await resolvePendingDeleteCompensationTasksFromGoogle({ coachCode: activeCoachCode });
-          if (calendarChanged || compensationCleaned) {
-            renderAll();
+          await resolveCoachflowRosterFromCloud("coach", coachAccess);
+          const loaded = activateCoachSession(readOnlyLogin ? coachCodeInput : coachAccess, false);
+          if (!loaded) {
+            return;
           }
-          notifyUser("教練資料與 Google 日曆同步完成。", "success");
+          if (isCoachReadOnlyMode()) {
+            setCoachLoginPromptVisibility(true);
+          }
+          const scope = { coachCode: activeCoachCode, studentCode: "" };
+          await syncCloudLessons(scope);
+          await syncCloudLeaveRecords(scope);
+          await syncCloudOperationalState(scope);
+          await syncCloudBillingProfiles(scope);
+          if (readOnlyLogin) {
+            await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
+          } else {
+            await syncCoachCalendarEventsFromGoogle({ showStatus: true });
+            await resolvePendingDeleteCompensationTasksFromGoogle({ coachCode: activeCoachCode });
+          }
+          renderAll();
+          notifyUser("教練資料已從雲端更新完成。", "success");
         } catch (error) {
-          console.warn("Coach Google calendar sync failed for coach login:", error);
-          if (el.coachCalendarSyncText) {
-            el.coachCalendarSyncText.textContent = "自動同步 Google 日曆失敗，請稍後再試或手動同步。";
-          }
-          notifyUser("教練資料已載入，但 Google 日曆同步失敗。", "warning");
+          console.warn("Coach authoritative cloud login failed:", error);
+          renderAll();
+          notifyUser("教練資料載入失敗：" + String(error?.message || error) + "。請確認網路與登入代碼後重試。", "warning");
         }
       });
     }
@@ -9968,8 +10059,7 @@
       el.coachReviewRefreshBtn.addEventListener("click", async () => {
         if (activeCoachCode) {
           try {
-            await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
-            await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+            await refreshCloudSessionDataFromCurrentSession(true);
           } catch (error) {
             console.warn("Coach pending makeup refresh failed:", error);
             notifyUser("待審清單雲端重新整理失敗，請稍後再試。", "warning");
@@ -9988,8 +10078,7 @@
         el.coachStudentLeaveRefreshBtn.disabled = true;
         el.coachStudentLeaveRefreshBtn.textContent = "同步中…";
         try {
-          await pullLeaveStateSnapshotFromCloud({ coachCode: activeCoachCode });
-          await syncCloudLeaveRecords({ coachCode: activeCoachCode });
+          await refreshCloudSessionDataFromCurrentSession(true);
           renderAll();
           notifyUser("學生請假紀錄已從雲端重新整理。", "success");
         } catch (error) {
@@ -10320,180 +10409,71 @@
   }
 
   async function bootstrap() {
-    collapseDuplicateGoogleLessons();
     ensureMakeupCodes();
-    ensureLessonCalendarEventIds();
     ensureParticipantEmails();
     ensureStudentBillingProfiles();
     resetAllTrackingDataOnce();
     purgePreResetTrackingDataOnce();
     resetImportedChargedCountsOnce();
     restoreAutoRemovedLocalLessonsOnce();
-    syncCoachflowRosterFromLocalState();
-
-    const cloudSyncPromise = (async () => {
-      const syncedFromCloud = await syncCoachflowRosterFromCloud();
-      const syncedFromLocal = syncCoachflowRosterFromLocalState();
-      let billingSynced = false;
-      try {
-        billingSynced = await syncCloudBillingProfiles();
-      } catch (error) {
-        console.warn("Cloud billing sync failed during bootstrap roster sync:", error);
-      }
-      return Boolean(syncedFromCloud || syncedFromLocal || billingSynced);
-    })();
 
     const sessionPrefill = applySessionPrefillFromUrl();
-    const hasPrefillValue = Boolean(sessionPrefill.studentCode || sessionPrefill.coachCode);
     const shouldAutoLoginFromPrefill = Boolean(
       sessionPrefill.autoLoginRequested &&
       sessionPrefill.hasActionablePrefill
     );
-    const shouldForceProfileFromUrl = hasPrefillValue &&
-      shouldAutoLoginFromPrefill &&
-      String(sessionPrefill.from || "").toLowerCase().startsWith("coachflow");
-    if (shouldForceProfileFromUrl) {
-      const fallbackCoachCode = normalizeParticipantCode(
-        sessionPrefill.coachCode ||
-        getStudentByCode(sessionPrefill.studentCode)?.coachCode ||
-        state.coaches[0]?.code ||
-        "CH001"
-      );
-      if (fallbackCoachCode) {
-        ensureCoachProfile(fallbackCoachCode);
-      }
-      if (sessionPrefill.studentCode) {
-        ensureStudentProfile(sessionPrefill.studentCode, fallbackCoachCode || "CH001", { silentMode: true });
-      }
-      if (sessionPrefill.coachCode) {
-        ensureCoachProfile(sessionPrefill.coachCode);
-      }
-      ensureLessonCalendarEventIds();
-      ensureParticipantEmails();
-      ensureStudentBillingProfiles();
-      saveState();
-    }
     bindEvents();
     saveState();
 
     let autoStudentLoaded = false;
     let autoCoachLoaded = false;
-
     if (shouldAutoLoginFromPrefill) {
-      if (sessionPrefill.studentCode) {
-        autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, sessionPrefill.coachCode, true);
-      }
-      if (!autoStudentLoaded && sessionPrefill.coachCode) {
-        autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
-      }
-      if (!autoStudentLoaded && !autoCoachLoaded) {
-        await new Promise((resolve) => setTimeout(resolve, 250));
+      try {
         if (sessionPrefill.studentCode) {
-          autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, sessionPrefill.coachCode, true);
-        }
-        if (!autoStudentLoaded && sessionPrefill.coachCode) {
+          await resolveCoachflowRosterFromCloud("student", sessionPrefill.studentCode);
+          autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, "", true);
+        } else if (sessionPrefill.coachCode) {
+          const readOnlyLogin = isReadOnlyLoginCode(sessionPrefill.coachCode);
+          const coachAccess = readOnlyLogin
+            ? normalizeParticipantCode(resolveReadOnlyCoachCode())
+            : normalizeParticipantCode(sessionPrefill.coachCode);
+          await resolveCoachflowRosterFromCloud("coach", coachAccess);
           autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
         }
+
+        if (autoStudentLoaded || autoCoachLoaded) {
+          const scope = {
+            studentCode: activeStudentCode,
+            coachCode: activeCoachCode
+          };
+          await syncCloudLessons(scope);
+          await syncCloudLeaveRecords(scope);
+          await syncCloudOperationalState(scope);
+          await syncCloudBillingProfiles(scope);
+          if (autoStudentLoaded) {
+            await syncStudentCalendarEventsFromGoogle();
+          } else if (activeCoachReadOnly) {
+            await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
+          } else {
+            await syncCoachCalendarEventsFromGoogle({ showStatus: true });
+            await resolvePendingDeleteCompensationTasksFromGoogle(scope);
+          }
+        }
+      } catch (error) {
+        console.warn("Cloud-only auto login failed:", error);
+        notifyUser("目前無法連上雲端；畫面只顯示上次快取，請勿據此送出請假。", "warning");
       }
-    } else if (!hasPrefillValue) {
-      autoStudentLoaded = el.studentCode && el.studentCoachCode
-        ? activateStudentSession(el.studentCode.value, el.studentCoachCode.value, true)
-        : false;
-      autoCoachLoaded = !autoStudentLoaded && el.coachCode
-        ? activateCoachSession(el.coachCode.value, true)
-        : false;
     }
 
-    const shouldHideCoachLoginPrompt = Boolean(autoCoachLoaded);
-    const shouldHideStudentLoginPrompt = Boolean(autoStudentLoaded);
-    setStudentLoginPromptVisibility(shouldHideStudentLoginPrompt);
-    setCoachLoginPromptVisibility(shouldHideCoachLoginPrompt);
+    setStudentLoginPromptVisibility(Boolean(autoStudentLoaded));
+    setCoachLoginPromptVisibility(Boolean(autoCoachLoaded));
     emitLeavePrefillDebug("bootstrap-auto-login", {
       mergedStudentCode: sessionPrefill.studentCode,
       mergedCoachCode: sessionPrefill.coachCode,
       activateStudentSessionResult: autoStudentLoaded,
       activateCoachSessionResult: autoCoachLoaded
     });
-
-    if (!autoStudentLoaded && !autoCoachLoaded) {
-      renderAll();
-    }
-
-    try {
-      const cloudSyncChanged = await cloudSyncPromise;
-      let cloudLeaveSynced = false;
-      let cloudBillingSynced = false;
-      if ((autoStudentLoaded || autoCoachLoaded) && (activeStudentCode || activeCoachCode)) {
-        try {
-          cloudLeaveSynced = await pullLeaveStateSnapshotFromCloud({
-            studentCode: activeStudentCode,
-            coachCode: activeCoachCode
-          }) || cloudLeaveSynced;
-          cloudLeaveSynced = await syncCloudLeaveRecords({
-            studentCode: activeStudentCode,
-            coachCode: activeCoachCode
-          }) || cloudLeaveSynced;
-        } catch (error) {
-          console.warn("Cloud leave sync failed during bootstrap:", error);
-        }
-        try {
-          cloudBillingSynced = await syncCloudBillingProfiles({
-            studentCode: activeStudentCode,
-            coachCode: activeCoachCode
-          });
-        } catch (error) {
-          console.warn("Cloud billing sync failed during bootstrap:", error);
-        }
-      }
-      let studentCalendarSynced = false;
-      if (autoStudentLoaded && activeStudentCode) {
-        studentCalendarSynced = await syncStudentCalendarEventsFromGoogle();
-      }
-      let readOnlyCalendarSynced = false;
-      if (autoCoachLoaded && activeCoachReadOnly && activeCoachCode) {
-        readOnlyCalendarSynced = await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
-      }
-      let coachCalendarSynced = false;
-      if (autoCoachLoaded && !activeCoachReadOnly && activeCoachCode) {
-        coachCalendarSynced = await syncCoachCalendarEventsFromGoogle({ showStatus: true });
-      }
-      let deleteCompensationCleaned = false;
-      if (autoStudentLoaded || autoCoachLoaded) {
-        deleteCompensationCleaned = await resolvePendingDeleteCompensationTasksFromGoogle({
-          studentCode: activeStudentCode,
-          coachCode: activeCoachCode
-        });
-      }
-      if (cloudSyncChanged) {
-        if (studentLoginPromptHidden && el.studentCode && activeStudentCode && el.studentCode.value !== activeStudentCode) {
-          el.studentCode.value = activeStudentCode;
-        }
-        if (coachLoginPromptHidden && el.coachCode && activeCoachCode && el.coachCode.value !== activeCoachCode) {
-          el.coachCode.value = activeCoachCode;
-        }
-        renderAll();
-      }
-      if (studentCalendarSynced && !cloudSyncChanged) {
-        renderAll();
-      }
-      if (cloudLeaveSynced && !cloudSyncChanged && !studentCalendarSynced) {
-        renderAll();
-      }
-      if (cloudBillingSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced) {
-        renderAll();
-      }
-      if (readOnlyCalendarSynced && !cloudSyncChanged) {
-        renderAll();
-      }
-      if (coachCalendarSynced && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !cloudBillingSynced && !readOnlyCalendarSynced) {
-        renderAll();
-      }
-      if (deleteCompensationCleaned && !cloudSyncChanged && !studentCalendarSynced && !cloudLeaveSynced && !cloudBillingSynced && !readOnlyCalendarSynced && !coachCalendarSynced) {
-        renderAll();
-      }
-    } catch (error) {
-      console.warn("CoachFlow cloud sync completed with error:", error);
-    }
+    renderAll();
   }
 
   bootstrap();

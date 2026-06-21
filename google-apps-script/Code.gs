@@ -6,7 +6,9 @@ const SHEETS = {
   workoutLogs: "WorkoutLogs",
   leaveRecords: "LeaveRecords",
   billingProfiles: "BillingProfiles",
-  lessons: "Lessons"
+  lessons: "Lessons",
+  makeupRequests: "MakeupRequests",
+  coachBlocks: "CoachBlocks"
 };
 const APP_TIME_ZONE = "Asia/Taipei";
 
@@ -148,6 +150,39 @@ const SCHEMA = {
     "attendanceStatus",
     "charged",
     "completedAt",
+    "updatedAt",
+    "calendarEventId",
+    "cancelledByCoachLeaveBlockId",
+    "coachLeaveReason",
+    "beforeCoachLeaveJson"
+  ],
+  MakeupRequests: [
+    "id",
+    "code",
+    "leaveId",
+    "lessonId",
+    "studentCode",
+    "coachCode",
+    "status",
+    "pendingAt",
+    "resolvedAt",
+    "startAt",
+    "rejectReason",
+    "emailNoticeStatus",
+    "emailNoticeAt",
+    "cloudSyncStatus",
+    "cloudVerifiedAt",
+    "createdAt",
+    "updatedAt"
+  ],
+  CoachBlocks: [
+    "id",
+    "coachCode",
+    "startAt",
+    "endAt",
+    "reason",
+    "revokedAt",
+    "createdAt",
     "updatedAt"
   ]
 };
@@ -196,6 +231,12 @@ function doGet(e) {
 
       case "listLessons":
         return jsonResponse_(listLessons_(e && e.parameter ? e.parameter : {}));
+
+      case "listMakeupRequests":
+        return jsonResponse_(listMakeupRequests_(e && e.parameter ? e.parameter : {}));
+
+      case "listCoachBlocks":
+        return jsonResponse_(listCoachBlocks_(e && e.parameter ? e.parameter : {}));
 
       case "getLeaveStateSnapshot":
         return jsonResponse_(getLeaveStateSnapshot_(e && e.parameter ? e.parameter : {}));
@@ -382,6 +423,20 @@ function doPost(e) {
         requireLessonsWriteAccess_(payload);
         return jsonResponse_(saveLessons_(payload));
 
+      case "listMakeupRequests":
+        return jsonResponse_(listMakeupRequests_(payload));
+
+      case "saveMakeupRequest":
+        requireLeaveScopedWriteAccess_(payload, (payload.request || payload).coachCode, (payload.request || payload).studentCode);
+        return jsonResponse_(saveMakeupRequest_(payload));
+
+      case "listCoachBlocks":
+        return jsonResponse_(listCoachBlocks_(payload));
+
+      case "saveCoachBlock":
+        requireLeaveScopedWriteAccess_(payload, (payload.block || payload).coachCode, "");
+        return jsonResponse_(saveCoachBlock_(payload));
+
       case "getLeaveStateSnapshot":
         return jsonResponse_(getLeaveStateSnapshot_(payload));
 
@@ -392,7 +447,7 @@ function doPost(e) {
       default:
         return jsonResponse_({
           ok: false,
-          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/listLessons/saveLessons/getLeaveStateSnapshot/saveLeaveStateSnapshot/sendEmail."
+          message: "Unsupported action. Use bootstrap/ping/checkEvent/listEvents/createEvent/updateEvent/deleteSingleEvent/listLeaveRecords/saveLeaveRecord/listBillingProfiles/saveBillingProfile/listLessons/saveLessons/listMakeupRequests/saveMakeupRequest/listCoachBlocks/saveCoachBlock/getLeaveStateSnapshot/saveLeaveStateSnapshot/sendEmail."
         });
     }
   } catch (error) {
@@ -433,7 +488,11 @@ function shouldEnsureSheetsForAction_(action) {
     "saveBillingProfile",
     // 完整課表雲端化：listLessons/saveLessons 走 Lessons 分頁，確保分頁存在再操作
     "listLessons",
-    "saveLessons"
+    "saveLessons",
+    "listMakeupRequests",
+    "saveMakeupRequest",
+    "listCoachBlocks",
+    "saveCoachBlock"
   ];
   return sheetActions.indexOf(normalized) !== -1;
 }
@@ -2034,6 +2093,27 @@ function saveLeaveRecord_(payload) {
   return withScriptLock_(function () {
     const records = getLeaveRecords_();
     const recordKey = getLeaveRecordKey_(record);
+    const recordLessonKey = safeString_(record.lessonKey, "") ||
+      lessonCloudKey_(record.studentCode, record.coachCode, record.lessonStartAt);
+    if (!safeString_(record.revokedAt, "") && String(record.type || "normal") === "normal" && recordLessonKey) {
+      const duplicateActive = records.filter(function(item) {
+        const itemLessonKey = safeString_(item.lessonKey, "") ||
+          lessonCloudKey_(item.studentCode, item.coachCode, item.lessonStartAt);
+        return getLeaveRecordKey_(item) !== recordKey &&
+          !safeString_(item.revokedAt, "") &&
+          String(item.type || "normal") === "normal" &&
+          itemLessonKey === recordLessonKey;
+      })[0];
+      if (duplicateActive) {
+        return {
+          ok: true,
+          action: "saveLeaveRecord",
+          record: duplicateActive,
+          replaced: false,
+          duplicate: true
+        };
+      }
+    }
     let replaced = false;
     const nextRecords = records.map(function(item) {
       if (getLeaveRecordKey_(item) === recordKey) {
@@ -2276,6 +2356,169 @@ function setBillingProfiles_(profiles) {
   }
 }
 
+
+// ====================================================================
+// 補課申請與教練停課：雲端唯一來源
+// ====================================================================
+
+function normalizeMakeupRequest_(request) {
+  request = request || {};
+  const allowed = {
+    pending: true,
+    approved: true,
+    rejected: true,
+    cancelled: true,
+    expired: true
+  };
+  const status = safeString_(request.status, "pending").toLowerCase();
+  return {
+    id: safeString_(request.id, ""),
+    code: safeString_(request.code, ""),
+    leaveId: safeString_(request.leaveId, ""),
+    lessonId: safeString_(request.lessonId, ""),
+    studentCode: normalizeCode_(request.studentCode),
+    coachCode: normalizeCode_(request.coachCode),
+    status: allowed[status] ? status : "pending",
+    pendingAt: safeString_(request.pendingAt, ""),
+    resolvedAt: safeString_(request.resolvedAt, ""),
+    startAt: safeString_(request.startAt, ""),
+    rejectReason: safeString_(request.rejectReason, ""),
+    emailNoticeStatus: safeString_(request.emailNoticeStatus, ""),
+    emailNoticeAt: safeString_(request.emailNoticeAt || request.emailNoticeSentAt || request.emailNoticeQueuedAt, ""),
+    cloudSyncStatus: safeString_(request.cloudSyncStatus, ""),
+    cloudVerifiedAt: safeString_(request.cloudVerifiedAt, ""),
+    createdAt: safeString_(request.createdAt, ""),
+    updatedAt: safeString_(request.updatedAt, "")
+  };
+}
+
+function getMakeupRequests_() {
+  return readTable_(SHEETS.makeupRequests).map(normalizeMakeupRequest_);
+}
+
+function listMakeupRequests_(payload) {
+  const coachCode = normalizeCode_(payload.coachCode);
+  const studentCode = normalizeCode_(payload.studentCode);
+  const requests = getMakeupRequests_().filter(function(request) {
+    return (!coachCode || request.coachCode === coachCode) &&
+      (!studentCode || request.studentCode === studentCode);
+  }).sort(function(a, b) {
+    return new Date(b.pendingAt || b.createdAt || 0) - new Date(a.pendingAt || a.createdAt || 0);
+  });
+  return {
+    ok: true,
+    action: "listMakeupRequests",
+    count: requests.length,
+    requests: requests
+  };
+}
+
+function saveMakeupRequest_(payload) {
+  const request = normalizeMakeupRequest_(payload.request || payload);
+  if (!request.id || !request.studentCode || !request.coachCode) {
+    return {
+      ok: false,
+      action: "saveMakeupRequest",
+      message: "Missing makeup request id/studentCode/coachCode."
+    };
+  }
+  return withScriptLock_(function() {
+    const requests = getMakeupRequests_();
+    const existing = requests.filter(function(item) { return item.id === request.id; })[0] || null;
+    const finalStatuses = { approved: true, rejected: true, cancelled: true, expired: true };
+    if (existing) {
+      const incomingTime = new Date(request.updatedAt || request.resolvedAt || request.pendingAt || 0).getTime();
+      const existingTime = new Date(existing.updatedAt || existing.resolvedAt || existing.pendingAt || 0).getTime();
+      if ((finalStatuses[existing.status] && request.status === "pending") ||
+        (Number.isFinite(incomingTime) && Number.isFinite(existingTime) && incomingTime + 2000 < existingTime)) {
+        return {
+          ok: true,
+          action: "saveMakeupRequest",
+          request: existing,
+          ignored: true
+        };
+      }
+    }
+    const now = nowIso_();
+    request.createdAt = existing && existing.createdAt || request.createdAt || now;
+    request.updatedAt = now;
+    upsertRow_(SHEETS.makeupRequests, "id", request);
+    return {
+      ok: true,
+      action: "saveMakeupRequest",
+      request: request,
+      replaced: Boolean(existing),
+      ignored: false
+    };
+  });
+}
+
+function normalizeCoachBlock_(block) {
+  block = block || {};
+  return {
+    id: safeString_(block.id, ""),
+    coachCode: normalizeCode_(block.coachCode),
+    startAt: safeString_(block.startAt, ""),
+    endAt: safeString_(block.endAt, ""),
+    reason: safeString_(block.reason, ""),
+    revokedAt: safeString_(block.revokedAt, ""),
+    createdAt: safeString_(block.createdAt, ""),
+    updatedAt: safeString_(block.updatedAt, "")
+  };
+}
+
+function getCoachBlocks_() {
+  return readTable_(SHEETS.coachBlocks).map(normalizeCoachBlock_);
+}
+
+function listCoachBlocks_(payload) {
+  const coachCode = normalizeCode_(payload.coachCode);
+  const blocks = getCoachBlocks_().filter(function(block) {
+    return !coachCode || block.coachCode === coachCode;
+  }).sort(function(a, b) {
+    return new Date(b.startAt || b.createdAt || 0) - new Date(a.startAt || a.createdAt || 0);
+  });
+  return {
+    ok: true,
+    action: "listCoachBlocks",
+    count: blocks.length,
+    blocks: blocks
+  };
+}
+
+function saveCoachBlock_(payload) {
+  const block = normalizeCoachBlock_(payload.block || payload);
+  if (!block.id || !block.coachCode) {
+    return {
+      ok: false,
+      action: "saveCoachBlock",
+      message: "Missing coach block id/coachCode."
+    };
+  }
+  return withScriptLock_(function() {
+    const blocks = getCoachBlocks_();
+    const existing = blocks.filter(function(item) { return item.id === block.id; })[0] || null;
+    if (existing && existing.revokedAt && !block.revokedAt) {
+      return {
+        ok: true,
+        action: "saveCoachBlock",
+        block: existing,
+        ignored: true
+      };
+    }
+    const now = nowIso_();
+    block.createdAt = existing && existing.createdAt || block.createdAt || now;
+    block.updatedAt = now;
+    upsertRow_(SHEETS.coachBlocks, "id", block);
+    return {
+      ok: true,
+      action: "saveCoachBlock",
+      block: block,
+      replaced: Boolean(existing),
+      ignored: false
+    };
+  });
+}
 function cleanupLeaveTestData_(payload) {
   const coachCode = normalizeCode_(payload && payload.coachCode);
   if (!coachCode) {
@@ -2377,7 +2620,11 @@ function normalizeLessonRow_(row) {
     attendanceStatus: safeString_(row.attendanceStatus, "scheduled"),
     charged: normalizeLessonBoolean_(row.charged),
     completedAt: safeString_(row.completedAt, ""),
-    updatedAt: safeString_(row.updatedAt, "")
+    updatedAt: safeString_(row.updatedAt, ""),
+    calendarEventId: safeString_(row.calendarEventId, ""),
+    cancelledByCoachLeaveBlockId: safeString_(row.cancelledByCoachLeaveBlockId, ""),
+    coachLeaveReason: safeString_(row.coachLeaveReason, ""),
+    beforeCoachLeaveJson: safeString_(row.beforeCoachLeaveJson, "")
   };
 }
 
@@ -2427,6 +2674,8 @@ function listLessons_(payload) {
 // 避免落後裝置用過期狀態覆寫較新的扣堂/請假結果（對齊 saveBillingProfile_）。
 function saveLessons_(payload) {
   const incoming = Array.isArray(payload.lessons) ? payload.lessons : [];
+  const authoritativeClient = payload.authoritativeClient === true ||
+    String(payload.authoritativeClient || "").toLowerCase() === "true";
   const normalizedIncoming = incoming
     .map(normalizeLessonRow_)
     .filter(function(lesson) {
@@ -2468,7 +2717,14 @@ function saveLessons_(payload) {
         ignored += 1;
         return;
       }
-      existing[existingIndex] = lesson;
+      existing[existingIndex] = authoritativeClient
+        ? lesson
+        : Object.assign({}, lesson, {
+          calendarEventId: current.calendarEventId || "",
+          cancelledByCoachLeaveBlockId: current.cancelledByCoachLeaveBlockId || "",
+          coachLeaveReason: current.coachLeaveReason || "",
+          beforeCoachLeaveJson: current.beforeCoachLeaveJson || ""
+        });
       updated += 1;
     });
 
@@ -2485,6 +2741,135 @@ function saveLessons_(payload) {
   });
 }
 
+// ====================================================================
+// 重複課堂盤點／一次性清理（只供 Apps Script 編輯器手動執行）
+// ====================================================================
+
+function getLessonDuplicateGroups_(lessons) {
+  const grouped = {};
+  const singles = [];
+  (lessons || []).forEach(function(lesson) {
+    const key = lessonCloudKey_(lesson.studentCode, lesson.coachCode, lesson.startAt);
+    if (!key) {
+      singles.push([lesson]);
+      return;
+    }
+    grouped[key] = grouped[key] || [];
+    grouped[key].push(lesson);
+  });
+  return Object.keys(grouped).map(function(key) {
+    return { key: key, lessons: grouped[key] };
+  }).concat(singles.map(function(items) {
+    return { key: "", lessons: items };
+  }));
+}
+
+function getLessonDedupScore_(lesson, activeLeaveLessonIds) {
+  let score = 0;
+  if (activeLeaveLessonIds[String(lesson.id || "")]) score += 10000;
+  if (String(lesson.sourceType || "") !== "DUPLICATE") score += 1000;
+  if (String(lesson.attendanceStatus || "") === "leave-normal") score += 500;
+  if (normalizeLessonBoolean_(lesson.charged)) score += 200;
+  if (normalizeLessonBoolean_(lesson.calendarOccupied)) score += 100;
+  if (safeString_(lesson.calendarEventId, "")) score += 50;
+  return score;
+}
+
+function auditDuplicateLessons() {
+  ensureSheets_();
+  const lessons = getLessons_();
+  const groups = getLessonDuplicateGroups_(lessons).filter(function(group) {
+    return group.key && group.lessons.length > 1;
+  });
+  const report = {
+    ok: true,
+    totalLessons: lessons.length,
+    duplicateGroups: groups.length,
+    duplicateRows: groups.reduce(function(total, group) { return total + group.lessons.length; }, 0),
+    removableRows: groups.reduce(function(total, group) { return total + group.lessons.length - 1; }, 0)
+  };
+  Logger.log("[lesson-audit] " + JSON.stringify(report));
+  return report;
+}
+
+function cleanupDuplicateLessons() {
+  ensureSheets_();
+  return withScriptLock_(function() {
+    const lessons = getLessons_();
+    const leaveRecords = getLeaveRecords_();
+    const activeLeaveLessonIds = {};
+    const activeLeaveKeys = {};
+    leaveRecords.forEach(function(record) {
+      if (safeString_(record.revokedAt, "") || String(record.type || "normal") !== "normal") {
+        return;
+      }
+      if (record.lessonId) activeLeaveLessonIds[String(record.lessonId)] = true;
+      const key = safeString_(record.lessonKey, "") ||
+        lessonCloudKey_(record.studentCode, record.coachCode, record.lessonStartAt);
+      if (key) activeLeaveKeys[key] = true;
+    });
+
+    const replacementIds = {};
+    const cleaned = [];
+    let duplicateGroups = 0;
+    let removedLessons = 0;
+    getLessonDuplicateGroups_(lessons).forEach(function(group) {
+      if (!group.key || group.lessons.length < 2) {
+        cleaned.push.apply(cleaned, group.lessons);
+        return;
+      }
+      duplicateGroups += 1;
+      const sorted = group.lessons.slice().sort(function(left, right) {
+        const scoreDifference = getLessonDedupScore_(right, activeLeaveLessonIds) -
+          getLessonDedupScore_(left, activeLeaveLessonIds);
+        if (scoreDifference) return scoreDifference;
+        const timeDifference = new Date(right.updatedAt || 0).getTime() -
+          new Date(left.updatedAt || 0).getTime();
+        if (Number.isFinite(timeDifference) && timeDifference) return timeDifference;
+        return String(left.id || "").localeCompare(String(right.id || ""));
+      });
+      const winner = sorted[0];
+      sorted.slice(1).forEach(function(loser) {
+        replacementIds[String(loser.id || "")] = String(winner.id || "");
+        if (!winner.calendarEventId && loser.calendarEventId) winner.calendarEventId = loser.calendarEventId;
+        removedLessons += 1;
+      });
+      if (activeLeaveKeys[group.key]) {
+        winner.attendanceStatus = "leave-normal";
+        winner.calendarOccupied = false;
+        winner.charged = false;
+        winner.updatedAt = nowIso_();
+      }
+      cleaned.push(winner);
+    });
+
+    let repointedLeaveRecords = 0;
+    leaveRecords.forEach(function(record) {
+      const replacementId = replacementIds[String(record.lessonId || "")];
+      if (replacementId) {
+        record.lessonId = replacementId;
+        record.lessonKey = lessonCloudKey_(record.studentCode, record.coachCode, record.lessonStartAt);
+        record.updatedAt = nowIso_();
+        repointedLeaveRecords += 1;
+      }
+    });
+
+    if (removedLessons) {
+      setLessons_(cleaned);
+      setLeaveRecords_(leaveRecords);
+    }
+    const report = {
+      ok: true,
+      before: lessons.length,
+      after: cleaned.length,
+      duplicateGroups: duplicateGroups,
+      removedLessons: removedLessons,
+      repointedLeaveRecords: repointedLeaveRecords
+    };
+    Logger.log("[lesson-cleanup] " + JSON.stringify(report));
+    return report;
+  });
+}
 // ====================================================================
 // 雲端自動整理排程（時間觸發器）
 //
