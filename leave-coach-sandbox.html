@@ -7,7 +7,7 @@
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="CoachFlow教練">
-  <link rel="manifest" href="coachflow.webmanifest?v=20260621-1105">
+  <link rel="manifest" href="coachflow.webmanifest?v=20260621-1745">
   <link rel="icon" href="coachflow-coach-icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="coachflow-coach-icon-192.png">
   <title>CoachFlow 請假系統測試版（教練）</title>
@@ -588,7 +588,7 @@
     <div class="banner">教練頁：輸入教練代碼可管理請假；輸入 read-only 只能查看教練月曆。</div>
     <h1>請假 / 補課系統（教練）</h1>
     <p class="sub">輸入 read-only 會載入 Monster Chang 的唯讀月曆，不會顯示任何修改功能。</p>
-    <div class="operation-status" id="ui-status-text" role="status" aria-live="polite">系統待命，登入後會自動同步 Google 日曆。</div>
+    <div class="operation-status" id="ui-status-text" role="status" aria-live="polite">系統待命，登入後會載入完整雲端資料。</div>
     <div class="pending-leave-banner" id="pending-leave-banner" role="alert" aria-live="assertive" hidden>
       <span class="pending-leave-text" id="pending-leave-text"></span>
       <button type="button" id="pending-leave-retry-btn">立即重試</button>
@@ -600,7 +600,7 @@
       </div>
       <div class="install-actions">
         <button class="primary" id="coach-install-btn" type="button" hidden>安裝</button>
-        <a href="install.html?v=20260621-1105&source=leave-coach">安裝說明</a>
+        <a href="install.html?v=20260621-1745&source=leave-coach">安裝說明</a>
       </div>
     </div>
 
@@ -835,10 +835,10 @@
     </div>
   </div>
 
-  <script src="config.js?v=20260621-1105"></script>
-  <script src="leave-sandbox.js?v=20260621-1105"></script>
+  <script src="config.js?v=20260621-1745"></script>
+  <script src="leave-sandbox.js?v=20260621-1745"></script>
   <script>
-    const coachPwaVersion = "20260621-1105";
+    const coachPwaVersion = "20260621-1745";
     let coachInstallPrompt = null;
     const coachInstallStrip = document.getElementById("coach-install-strip");
     const coachInstallBtn = document.getElementById("coach-install-btn");

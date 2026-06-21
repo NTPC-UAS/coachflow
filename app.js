@@ -126,7 +126,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260621-1105";
+const PUBLIC_APP_VERSION = "20260621-1745";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -4096,22 +4096,7 @@ function getLocalLeaveChargeStartBaselineAt(studentProfile, leaveState) {
   if (Number.isFinite(new Date(explicitBaseline || "").getTime())) {
     return explicitBaseline;
   }
-  if (toNonNegativeInteger(studentProfile?.chargeStartCount, 0) <= 0) {
-    return "";
-  }
-  const fallbackBaseline = String(studentProfile?.billingUpdatedAt || "").trim();
-  if (!Number.isFinite(new Date(fallbackBaseline || "").getTime())) {
-    return "";
-  }
-  if (!isManualLeaveBillingBaselineSource(studentProfile?.billingUpdatedBy || "", leaveState)) {
-    return "";
-  }
-  const fallbackTime = new Date(fallbackBaseline).getTime();
-  const paymentTime = new Date(studentProfile?.paymentConfirmedAt || "").getTime();
-  if (Number.isFinite(paymentTime) && Math.abs(fallbackTime - paymentTime) <= 5000) {
-    return "";
-  }
-  return fallbackBaseline;
+  return "";
 }
 
 function isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leaveState) {

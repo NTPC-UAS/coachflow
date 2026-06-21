@@ -145,6 +145,9 @@
   let activeCoachReadOnly = false;
   let lastCloudBillingRefreshAt = 0;
   let lastCloudSessionRefreshAt = 0;
+  let cloudSessionRefreshPromise = null;
+  let dataRenderBatchDepth = 0;
+  let dataRenderPending = false;
   let cloudSnapshotUploadTimer = 0;
   let isApplyingCloudSnapshot = false;
   let isUploadingCloudSnapshot = false;
@@ -1087,7 +1090,9 @@
     closeCoachReviewModal();
     renderAll();
     setStudentLoginPromptVisibility(true);
-    setUiStatus(`學生 ${student.name || studentCode} 已載入，可直接點月曆。`);
+    setUiStatus(dataRenderBatchDepth > 0
+      ? "正在載入完整雲端資料，完成後會一次顯示。"
+      : `學生 ${student.name || studentCode} 已載入，可直接點月曆。`);
     return true;
   }
 
@@ -1111,7 +1116,9 @@
     renderAll();
     updateCoachReadOnlyUi();
     setCoachLoginPromptVisibility(true);
-    setUiStatus(`教練 ${coach.name || coachCode} 已載入${activeCoachReadOnly ? "（唯讀）" : ""}。`);
+    setUiStatus(dataRenderBatchDepth > 0
+      ? "正在載入完整雲端資料，完成後會一次顯示。"
+      : `教練 ${coach.name || coachCode} 已載入${activeCoachReadOnly ? "（唯讀）" : ""}。`);
     return true;
   }
 
@@ -3120,20 +3127,7 @@
     if (hasValidDateValue(explicitBaseline)) {
       return explicitBaseline;
     }
-    if (toNonNegativeInt(student?.chargeStartCount, 0) <= 0) {
-      return "";
-    }
-    const fallbackBaseline = String(student?.billingUpdatedAt || "").trim();
-    const fallbackBy = normalizeParticipantCode(student?.billingUpdatedBy || "");
-    if (!isManualChargeStartFallbackSource(fallbackBy) || !hasValidDateValue(fallbackBaseline)) {
-      return "";
-    }
-    const fallbackTime = new Date(fallbackBaseline).getTime();
-    const paymentTime = new Date(student?.paymentConfirmedAt || "").getTime();
-    if (Number.isFinite(paymentTime) && Math.abs(fallbackTime - paymentTime) <= 5000) {
-      return "";
-    }
-    return fallbackBaseline;
+    return "";
   }
 
   function getChargeStartBaselineBy(student) {
@@ -3449,7 +3443,13 @@
       return false;
     }
     try {
-      const result = await callAppsScriptApi("saveBillingProfile", { profile });
+      const result = await callAppsScriptApi("saveBillingProfile", {
+        coachCode: profile.coachCode,
+        studentCode: profile.studentCode,
+        authoritativeClient: true,
+        billingWriteProtocol: 2,
+        profile
+      });
       if (result?.profile) {
         applyCloudBillingProfile(result.profile);
       }
@@ -3458,26 +3458,7 @@
       if (!isUnsupportedAppsScriptAction(error, "saveBillingProfile")) {
         throw error;
       }
-      const existingResult = await callAppsScriptApi("listLeaveRecords", {
-        coachCode: profile.coachCode,
-        studentCode: profile.studentCode
-      }, "GET");
-      const existingProfile = (Array.isArray(existingResult?.records) ? existingResult.records : [])
-        .map(extractCloudBillingProfile)
-        .filter(Boolean)
-        .sort((a, b) => new Date(getCloudBillingTimestamp(b) || 0) - new Date(getCloudBillingTimestamp(a) || 0))[0];
-      const existingTime = new Date(getCloudBillingTimestamp(existingProfile) || "").getTime();
-      const incomingTime = new Date(getCloudBillingTimestamp(profile) || "").getTime();
-      if (Number.isFinite(existingTime) && Number.isFinite(incomingTime) && existingTime > incomingTime + 2000) {
-        applyCloudBillingProfile(existingProfile);
-        return false;
-      }
-      const record = buildCloudBillingRecord(student, triggerSource);
-      if (!record) {
-        return false;
-      }
-      const fallbackResult = await callAppsScriptApi("saveLeaveRecord", { record });
-      return fallbackResult?.ok !== false;
+      return false;
     }
   }
 
@@ -3511,24 +3492,24 @@
       return false;
     }
     const profiles = await listCloudBillingProfiles(scope);
+    const allowedStudentCodes = new Set(
+      getScopedBillingStudents(scope)
+        .map((student) => normalizeParticipantCode(student?.code))
+        .filter(Boolean)
+    );
+    const scopedProfiles = profiles.filter((profile) => (
+      allowedStudentCodes.has(normalizeParticipantCode(profile?.studentCode || profile?.code))
+    ));
     let changed = false;
-    profiles.forEach((profile) => {
+    scopedProfiles.forEach((profile) => {
       if (applyCloudBillingProfile(profile)) {
         changed = true;
       }
     });
     if (changed) {
-      addLog(`[同步] 已同步 ${profiles.length} 筆學生繳費資料。`);
+      addLog(`[同步] 已同步 ${scopedProfiles.length} 筆學生繳費資料。`);
       saveState();
     }
-    const hasBillingScope = Boolean(
-      normalizeParticipantCode(scope.coachCode || activeCoachCode || "") ||
-      normalizeParticipantCode(scope.studentCode || activeStudentCode || "")
-    );
-    if (hasBillingScope) {
-      await seedMissingCloudBillingProfiles(profiles, scope);
-    }
-    renderBillingPanels();
     return changed;
   }
 
@@ -5016,7 +4997,6 @@
           console.error("billing reminder failed:", error);
         });
       });
-      repushBillingForAutoCompletedStudents(completionStats, "student_calendar_auto_complete");
       // 完整課表雲端化：日曆同步後（含自動扣堂、移除暫存課）把完整課表推上雲保鮮。
       pushCloudLessonsQuietly({ coachCode: activeCoachCode, studentCode: activeStudentCode });
     }
@@ -5125,7 +5105,6 @@
           console.error("billing reminder failed:", error);
         });
       });
-      repushBillingForAutoCompletedStudents(completionStats, "coach_calendar_auto_complete");
       // 完整課表雲端化：教練端日曆同步後把整個 coach scope 的完整課表推上雲保鮮。
       pushCloudLessonsQuietly({ coachCode });
     }
@@ -9300,8 +9279,12 @@
     if (!el.studentOverviewTable) {
       return;
     }
+    if (!activeCoachCode) {
+      el.studentOverviewTable.innerHTML = '<tbody><tr><td colspan="4">請先登入教練，系統會在完整雲端資料載入後顯示。</td></tr></tbody>';
+      return;
+    }
     const students = getVisibleChargeStudents()
-      .filter((student) => !activeCoachCode || student.coachCode === activeCoachCode)
+      .filter((student) => student.coachCode === activeCoachCode)
       .sort((a, b) => String(a.name || a.code).localeCompare(String(b.name || b.code), "zh-Hant"));
     const rows = students.map((student) => {
       const stats = getStudentChargeStats(student.code);
@@ -9330,6 +9313,10 @@
   }
 
   function renderBillingPanels() {
+    if (dataRenderBatchDepth > 0) {
+      dataRenderPending = true;
+      return;
+    }
     renderStudentOverviewPanel();
     renderChargePanel();
   }
@@ -9338,7 +9325,17 @@
     if (!el.chargeStudentSelect || !el.chargeMetricsBox || !el.chargeLedgerTable) {
       return;
     }
-    const visibleStudents = getVisibleChargeStudents();
+    if (!activeCoachCode) {
+      selectedChargeStudentCode = "";
+      el.chargeStudentSelect.innerHTML = '<option value="">請先登入教練</option>';
+      el.chargeStudentSelect.disabled = true;
+      el.chargeMetricsBox.innerHTML = "";
+      el.chargeLedgerTable.innerHTML = '<tbody><tr><td>請先登入教練。</td></tr></tbody>';
+      return;
+    }
+    el.chargeStudentSelect.disabled = false;
+    const visibleStudents = getVisibleChargeStudents()
+      .filter((student) => student.coachCode === activeCoachCode);
     if (!selectedChargeStudentCode || !visibleStudents.some((student) => student.code === selectedChargeStudentCode)) {
       selectedChargeStudentCode = visibleStudents[0]?.code || "";
     }
@@ -9492,6 +9489,10 @@
   }
 
   function renderAll() {
+    if (dataRenderBatchDepth > 0) {
+      dataRenderPending = true;
+      return;
+    }
     expirePendingRequests();
     renderSessionTexts();
     renderStudentLessons();
@@ -9510,6 +9511,55 @@
     updateCoachReadOnlyUi();
     renderPendingSyncBanner();
     populateManualLessonStudentSelect();
+  }
+
+  function beginDataRenderBatch() {
+    dataRenderBatchDepth += 1;
+  }
+
+  function endDataRenderBatch() {
+    dataRenderBatchDepth = Math.max(0, dataRenderBatchDepth - 1);
+    if (dataRenderBatchDepth === 0 && dataRenderPending) {
+      dataRenderPending = false;
+      renderAll();
+    }
+  }
+
+  function captureSessionDataSnapshot() {
+    return {
+      state: clonePlain(state),
+      activeStudentCode,
+      activeCoachCode,
+      activeCoachReadOnly,
+      selectedChargeStudentCode,
+      cloudRosterResolvedForSession,
+      readyScopes: Array.from(cloudLessonReadyScopes)
+    };
+  }
+
+  function restoreSessionDataSnapshot(snapshot) {
+    state = clonePlain(snapshot.state);
+    activeStudentCode = snapshot.activeStudentCode;
+    activeCoachCode = snapshot.activeCoachCode;
+    activeCoachReadOnly = snapshot.activeCoachReadOnly;
+    selectedChargeStudentCode = snapshot.selectedChargeStudentCode;
+    cloudRosterResolvedForSession = snapshot.cloudRosterResolvedForSession;
+    cloudLessonReadyScopes.clear();
+    (snapshot.readyScopes || []).forEach((scopeKey) => cloudLessonReadyScopes.add(scopeKey));
+    dataRenderPending = true;
+  }
+
+  async function runAtomicDataRefresh(work) {
+    const snapshot = captureSessionDataSnapshot();
+    beginDataRenderBatch();
+    try {
+      return await work();
+    } catch (error) {
+      restoreSessionDataSnapshot(snapshot);
+      throw error;
+    } finally {
+      endDataRenderBatch();
+    }
   }
 
   function loadSlotsForSelectedLeave() {
@@ -9555,7 +9605,19 @@
     return changed;
   }
 
-  async function refreshCloudSessionDataFromCurrentSession(force = false) {
+  function refreshCloudSessionDataFromCurrentSession(force = false) {
+    if (cloudSessionRefreshPromise) {
+      return cloudSessionRefreshPromise;
+    }
+    cloudSessionRefreshPromise = runAtomicDataRefresh(
+      () => refreshCloudSessionDataFromCurrentSessionImpl(force)
+    ).finally(() => {
+      cloudSessionRefreshPromise = null;
+    });
+    return cloudSessionRefreshPromise;
+  }
+
+  async function refreshCloudSessionDataFromCurrentSessionImpl(force = false) {
     if (!activeCoachCode && !activeStudentCode) {
       return false;
     }
@@ -9576,19 +9638,7 @@
       changed = await syncCloudBillingProfiles(scope) || changed;
     } catch (error) {
       console.warn("Authoritative cloud refresh failed:", error);
-      return false;
-    }
-
-    try {
-      if (activeStudentCode) {
-        changed = await syncStudentCalendarEventsFromGoogle() || changed;
-      } else if (activeCoachCode && activeCoachReadOnly) {
-        changed = await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode) || changed;
-      } else if (activeCoachCode) {
-        changed = await syncCoachCalendarEventsFromGoogle({ showStatus: false }) || changed;
-      }
-    } catch (error) {
-      console.warn("Google calendar session refresh failed:", error);
+      throw error;
     }
 
     try {
@@ -9648,19 +9698,19 @@
         }
         notifyUser("正在從雲端驗證學生資料與課表...", "info");
         try {
-          await resolveCoachflowRosterFromCloud("student", studentAccess);
-          const loaded = activateStudentSession(studentAccess, "", false);
-          if (!loaded) {
-            return;
-          }
-          const scope = { studentCode: activeStudentCode, coachCode: activeCoachCode };
-          await syncCloudLessons(scope);
-          await syncCloudLeaveRecords(scope);
-          await syncCloudOperationalState(scope);
-          await syncCloudBillingProfiles(scope);
-          await syncStudentCalendarEventsFromGoogle();
-          await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode);
-          renderAll();
+          await runAtomicDataRefresh(async () => {
+            await resolveCoachflowRosterFromCloud("student", studentAccess);
+            const loaded = activateStudentSession(studentAccess, "", false);
+            if (!loaded) {
+              throw new Error("Unable to activate student session.");
+            }
+            const scope = { studentCode: activeStudentCode, coachCode: activeCoachCode };
+            await syncCloudLessons(scope);
+            await syncCloudLeaveRecords(scope);
+            await syncCloudOperationalState(scope);
+            await syncCloudBillingProfiles(scope);
+            await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode);
+          });
           notifyUser("學生資料已從雲端更新完成，可以查看課程與請假狀態。", "success");
         } catch (error) {
           console.warn("Student authoritative cloud login failed:", error);
@@ -9683,26 +9733,21 @@
         }
         notifyUser("正在從雲端驗證教練資料與課表...", "info");
         try {
-          await resolveCoachflowRosterFromCloud("coach", coachAccess);
-          const loaded = activateCoachSession(readOnlyLogin ? coachCodeInput : coachAccess, false);
-          if (!loaded) {
-            return;
-          }
-          if (isCoachReadOnlyMode()) {
-            setCoachLoginPromptVisibility(true);
-          }
-          const scope = { coachCode: activeCoachCode, studentCode: "" };
-          await syncCloudLessons(scope);
-          await syncCloudLeaveRecords(scope);
-          await syncCloudOperationalState(scope);
-          await syncCloudBillingProfiles(scope);
-          if (readOnlyLogin) {
-            await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
-          } else {
-            await syncCoachCalendarEventsFromGoogle({ showStatus: true });
-            await resolvePendingDeleteCompensationTasksFromGoogle({ coachCode: activeCoachCode });
-          }
-          renderAll();
+          await runAtomicDataRefresh(async () => {
+            await resolveCoachflowRosterFromCloud("coach", coachAccess);
+            const loaded = activateCoachSession(readOnlyLogin ? coachCodeInput : coachAccess, false);
+            if (!loaded) {
+              throw new Error("Unable to activate coach session.");
+            }
+            if (isCoachReadOnlyMode()) {
+              setCoachLoginPromptVisibility(true);
+            }
+            const scope = { coachCode: activeCoachCode, studentCode: "" };
+            await syncCloudLessons(scope);
+            await syncCloudLeaveRecords(scope);
+            await syncCloudOperationalState(scope);
+            await syncCloudBillingProfiles(scope);
+          });
           notifyUser("教練資料已從雲端更新完成。", "success");
         } catch (error) {
           console.warn("Coach authoritative cloud login failed:", error);
@@ -10432,36 +10477,30 @@
     let autoCoachLoaded = false;
     if (shouldAutoLoginFromPrefill) {
       try {
-        if (sessionPrefill.studentCode) {
-          await resolveCoachflowRosterFromCloud("student", sessionPrefill.studentCode);
-          autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, "", true);
-        } else if (sessionPrefill.coachCode) {
-          const readOnlyLogin = isReadOnlyLoginCode(sessionPrefill.coachCode);
-          const coachAccess = readOnlyLogin
-            ? normalizeParticipantCode(resolveReadOnlyCoachCode())
-            : normalizeParticipantCode(sessionPrefill.coachCode);
-          await resolveCoachflowRosterFromCloud("coach", coachAccess);
-          autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
-        }
-
-        if (autoStudentLoaded || autoCoachLoaded) {
-          const scope = {
-            studentCode: activeStudentCode,
-            coachCode: activeCoachCode
-          };
-          await syncCloudLessons(scope);
-          await syncCloudLeaveRecords(scope);
-          await syncCloudOperationalState(scope);
-          await syncCloudBillingProfiles(scope);
-          if (autoStudentLoaded) {
-            await syncStudentCalendarEventsFromGoogle();
-          } else if (activeCoachReadOnly) {
-            await syncReadOnlyCoachCalendarFromGoogle(activeCoachCode);
-          } else {
-            await syncCoachCalendarEventsFromGoogle({ showStatus: true });
-            await resolvePendingDeleteCompensationTasksFromGoogle(scope);
+        await runAtomicDataRefresh(async () => {
+          if (sessionPrefill.studentCode) {
+            await resolveCoachflowRosterFromCloud("student", sessionPrefill.studentCode);
+            autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, "", true);
+          } else if (sessionPrefill.coachCode) {
+            const readOnlyLogin = isReadOnlyLoginCode(sessionPrefill.coachCode);
+            const coachAccess = readOnlyLogin
+              ? normalizeParticipantCode(resolveReadOnlyCoachCode())
+              : normalizeParticipantCode(sessionPrefill.coachCode);
+            await resolveCoachflowRosterFromCloud("coach", coachAccess);
+            autoCoachLoaded = activateCoachSession(sessionPrefill.coachCode, true);
           }
-        }
+
+          if (autoStudentLoaded || autoCoachLoaded) {
+            const scope = {
+              studentCode: activeStudentCode,
+              coachCode: activeCoachCode
+            };
+            await syncCloudLessons(scope);
+            await syncCloudLeaveRecords(scope);
+            await syncCloudOperationalState(scope);
+            await syncCloudBillingProfiles(scope);
+          }
+        });
       } catch (error) {
         console.warn("Cloud-only auto login failed:", error);
         notifyUser("目前無法連上雲端；畫面只顯示上次快取，請勿據此送出請假。", "warning");

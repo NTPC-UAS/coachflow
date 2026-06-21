@@ -398,6 +398,9 @@ function doPost(e) {
         return jsonResponse_(listLeaveRecords_(payload));
 
       case "saveLeaveRecord":
+        if (String(((payload.record || payload).type) || "").trim() === "billing-profile") {
+          requireAuthoritativeBillingClient_(payload);
+        }
         requireLeaveRecordWriteAccess_(payload);
         return jsonResponse_(saveLeaveRecord_(payload));
 
@@ -409,6 +412,7 @@ function doPost(e) {
           looksLikeTestParticipantName_((payload.profile || payload).studentName)) {
           return jsonResponse_(testPollutionRejection_("saveBillingProfile"));
         }
+        requireAuthoritativeBillingClient_(payload);
         requireBillingProfileWriteAccess_(payload);
         return jsonResponse_(saveBillingProfile_(payload));
 
@@ -1421,6 +1425,18 @@ function requireLeaveScopedWriteAccess_(payload, coachCode, studentCode) {
 function requireLeaveRecordWriteAccess_(payload) {
   const record = payload && (payload.record || payload) || {};
   return requireLeaveScopedWriteAccess_(payload, record.coachCode, record.studentCode);
+}
+
+function requireAuthoritativeBillingClient_(payload) {
+  const authoritative = payload && (
+    payload.authoritativeClient === true ||
+    String(payload.authoritativeClient || "").toLowerCase() === "true"
+  );
+  const protocol = Number(payload && payload.billingWriteProtocol || 0);
+  if (!authoritative || protocol < 2) {
+    throw new Error("CLIENT_UPGRADE_REQUIRED: refresh the leave system before changing billing data.");
+  }
+  return true;
 }
 
 function requireBillingProfileWriteAccess_(payload) {
