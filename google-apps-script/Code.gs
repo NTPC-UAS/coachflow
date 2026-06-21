@@ -644,10 +644,16 @@ function resolveStudentAccessResponse_(accessValue) {
 }
 
 function ensureSheets_() {
-  const spreadsheet = getCoachflowSpreadsheet_();
-  Object.keys(SCHEMA).forEach(function(sheetName) {
-    ensureSheet_(spreadsheet, sheetName, SCHEMA[sheetName]);
-  });
+  const lock = LockService.getScriptLock();
+  lock.waitLock(30000);
+  try {
+    const spreadsheet = getCoachflowSpreadsheet_();
+    Object.keys(SCHEMA).forEach(function(sheetName) {
+      ensureSheet_(spreadsheet, sheetName, SCHEMA[sheetName]);
+    });
+  } finally {
+    lock.releaseLock();
+  }
 }
 
 function getCoachflowSpreadsheet_() {
