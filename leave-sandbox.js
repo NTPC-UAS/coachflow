@@ -3329,11 +3329,6 @@
 
     const cloudUpdatedAt = getCloudBillingTimestamp(profile);
     const localUpdatedAt = getStudentBillingUpdatedAt(student);
-    const cloudTime = new Date(cloudUpdatedAt || "").getTime();
-    const localTime = new Date(localUpdatedAt || "").getTime();
-    if (Number.isFinite(cloudTime) && Number.isFinite(localTime) && cloudTime + 2000 < localTime) {
-      return false;
-    }
 
     // 用 emailUpdatedAt timestamp 判斷誰新誰舊。雲端新就用雲端、本地新就保留本地。
     // 之前無條件「雲端非 undefined 就覆蓋」會把使用者剛輸入但 push 失敗的 email
