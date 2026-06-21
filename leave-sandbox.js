@@ -3528,6 +3528,7 @@
     if (hasBillingScope) {
       await seedMissingCloudBillingProfiles(profiles, scope);
     }
+    renderBillingPanels();
     return changed;
   }
 
