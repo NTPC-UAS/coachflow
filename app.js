@@ -126,7 +126,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260621-1745";
+const PUBLIC_APP_VERSION = "20260627-1045";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -4123,20 +4123,6 @@ function isLocalLeaveLessonAfterChargeStartBaseline(lesson, studentProfile, leav
   return lessonTime >= baselineDayStartTime;
 }
 
-function getChargedCountAfterLastPaidCycle(chargedLessons, studentProfile) {
-  if (String(studentProfile?.paymentStatus || "").trim().toLowerCase() !== "paid") {
-    return undefined;
-  }
-  const confirmedTime = new Date(studentProfile?.paymentConfirmedAt || "").getTime();
-  if (!Number.isFinite(confirmedTime) || confirmedTime <= 0) {
-    return undefined;
-  }
-  return (Array.isArray(chargedLessons) ? chargedLessons : []).filter((lesson) => {
-    const lessonTime = new Date(lesson?.startAt || "").getTime();
-    return Number.isFinite(lessonTime) && lessonTime > confirmedTime;
-  }).length;
-}
-
 function getLocalLeaveBillingSummary(student, assignedCoach) {
   const leaveState = readLeaveSandboxLocalState();
   if (!leaveState) {
@@ -4166,7 +4152,6 @@ function getLocalLeaveBillingSummary(student, assignedCoach) {
     return null;
   }
   const totalChargedCount = startCount + chargedLessons.length;
-  const cycleChargedCount = getChargedCountAfterLastPaidCycle(chargedLessons, studentProfile);
   const lessonTimes = chargedLessons.flatMap((lesson) => [lesson?.completedAt, lesson?.updatedAt, lesson?.startAt]);
   const updatedTime = Math.max(
     getBillingProfileTime(studentProfile || {}),
@@ -4179,8 +4164,7 @@ function getLocalLeaveBillingSummary(student, assignedCoach) {
     source: "local",
     updatedTime,
     systemChargedCount: chargedLessons.length,
-    chargeStartCount: startCount,
-    cycleChargedCount
+    chargeStartCount: startCount
   });
 }
 
@@ -4256,10 +4240,7 @@ function getLeaveBillingSummaryFromProfile(rawProfile) {
   if (hasNumericValue(rawProfile?.totalChargedCount)) {
     return buildLeaveBillingCycleSummary(rawProfile.totalChargedCount, step, {
       source: "cloud",
-      updatedTime: getBillingProfileTime(rawProfile),
-      cycleChargedCount: hasNumericValue(rawProfile?.currentCycleChargedCount)
-        ? toNonNegativeInteger(rawProfile.currentCycleChargedCount, 0)
-        : undefined
+      updatedTime: getBillingProfileTime(rawProfile)
     });
   } else if (hasNumericValue(rawProfile?.currentCycleChargedCount)) {
     const currentCycleChargedCount = Math.min(step, toNonNegativeInteger(rawProfile.currentCycleChargedCount, 0));
@@ -4419,7 +4400,6 @@ async function fetchCloudLessonsBillingSummary(student, assignedCoach, latestPro
     return null;
   }
   const totalChargedCount = startCount + chargedLessons.length;
-  const cycleChargedCount = getChargedCountAfterLastPaidCycle(chargedLessons, studentProfile);
   const lessonTimes = chargedLessons.flatMap((lesson) => [lesson?.completedAt, lesson?.updatedAt, lesson?.startAt]);
   const updatedTime = Math.max(
     getBillingProfileTime(studentProfile || {}),
@@ -4432,8 +4412,7 @@ async function fetchCloudLessonsBillingSummary(student, assignedCoach, latestPro
     source: "cloud-lessons",
     updatedTime,
     systemChargedCount: chargedLessons.length,
-    chargeStartCount: startCount,
-    cycleChargedCount
+    chargeStartCount: startCount
   });
 }
 

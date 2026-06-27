@@ -6084,13 +6084,10 @@
     const paidThroughCount = storedPaidQuotaCount || (storedStatus === "paid" || totalChargedCount > 0 ? activeQuotaCount : 0);
     const chargedLessonsList = Array.isArray(stats?.chargedLessons) ? stats.chargedLessons : [];
     const confirmedTime = new Date(student?.paymentConfirmedAt || 0).getTime();
-    const hasPaidCycleBoundary = storedStatus === "paid" && Number.isFinite(confirmedTime) && confirmedTime > 0;
-    const cycleChargedCount = hasPaidCycleBoundary
-      ? chargedLessonsList.filter((lesson) => {
-        const lessonTime = new Date(lesson?.startAt || "").getTime();
-        return Number.isFinite(lessonTime) && lessonTime > confirmedTime;
-      }).length
-      : totalChargedCount;
+    // 畫面上的「本期已扣 / 第幾堂」是收費週期內的堂數位置，應由累積扣堂數
+    // 取 4 堂循環得出；教練按「確認匯款」只代表這個收費門檻已處理，不應把
+    // 顯示堂數歸零。例：張昀 2026-06-27 累積第 7 堂，畫面應顯示第 3 堂。
+    const cycleChargedCount = totalChargedCount;
     const cycleRemainder = cycleChargedCount % CHARGE_REMINDER_STEP;
     const currentCycleChargedCount = cycleChargedCount <= 0
       ? 0
@@ -6100,8 +6097,8 @@
       : CHARGE_REMINDER_STEP - currentCycleChargedCount;
     const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
     const coveredPaymentDueCount = storedPaidQuotaCount || (storedStatus === "paid" ? activeQuotaCount : 0);
-    // 規則：cycle 結束點（currentCycle 達 step）翻未繳費。教練按確認匯款可清掉
-    // 這個提醒——下個 cycle 結束時會再翻一次（per-cycle 提醒）。
+    // 規則：cycle 結束點（currentCycle 達 step）才可能翻未繳費；若「已繳到」
+    // 已涵蓋該門檻，或教練在最近扣堂後已確認匯款，就不再重複催款。
     //
     // Cycle 是否「已被確認」用 paymentConfirmedAt 跟「最近一堂被計入扣堂的課」
     // 的 startAt 比：
@@ -6110,17 +6107,18 @@
     // 學生上下一堂課後，「最近扣堂課」會更新到那堂、再次晚於 confirmedAt，
     // 下個 cycle 結束時自動翻未繳。
     //
-    // 不再依賴 paidThroughCount 判斷：舊版按確認匯款會把 paidThroughCount 自動
-    // 推到下個 cycle ceiling，副作用是下個 cycle 結束時系統認為「還在已繳區
-    // 間」、不翻未繳，教練漏收一輪（朱朱、朱朱媽媽案例）。
+    // 下一個 cycle 結束時若 paidThroughCount 沒覆蓋新的門檻，仍會再翻未繳。
     // stats.chargedLessons 已按 startAt 降序排序；[0] 就是最近被計入扣堂的課
     const lastChargedLesson = chargedLessonsList[0];
     const lastChargedLessonTime = lastChargedLesson ? new Date(lastChargedLesson.startAt).getTime() : 0;
+    const cycleAckedByPaidQuota = lastCompletedPaymentDueCount > 0
+      && coveredPaymentDueCount >= lastCompletedPaymentDueCount;
     const cycleAckedByCoach = Number.isFinite(confirmedTime)
       && confirmedTime > 0
       && (!Number.isFinite(lastChargedLessonTime) || lastChargedLessonTime <= 0 || confirmedTime > lastChargedLessonTime);
     const isPaymentDue = totalChargedCount > 0
       && currentCycleChargedCount === CHARGE_REMINDER_STEP
+      && !cycleAckedByPaidQuota
       && !cycleAckedByCoach;
     const overduePaymentDueCount = isPaymentDue ? lastCompletedPaymentDueCount : 0;
     const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
