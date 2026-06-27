@@ -126,7 +126,7 @@ const IS_LEAVE_SANDBOX_ENABLED = LEAVE_SANDBOX_CONFIG.enabled !== false;
 const LEAVE_SANDBOX_COACH_PAGE = String(LEAVE_SANDBOX_CONFIG.coachPage || "leave-coach-sandbox.html").trim();
 const LEAVE_SANDBOX_STUDENT_PAGE = String(LEAVE_SANDBOX_CONFIG.studentPage || "leave-student-sandbox.html").trim();
 
-const PUBLIC_APP_VERSION = "20260627-1045";
+const PUBLIC_APP_VERSION = "20260627-1115";
 const APP_TIME_ZONE = "Asia/Taipei";
 const LEAVE_PREFILL_STORAGE_KEY = "coachflow-leave-prefill";
 const LEAVE_SANDBOX_STORAGE_KEY = "coachflow-leave-sandbox-v1";
@@ -340,7 +340,34 @@ function looksLikeAutomatedTestParticipant(value) {
   if (!text) {
     return false;
   }
-  return /grader|workflow|測試|週末|流程|學員|student|weekend|wf\d*|wflow|grd|grade|sync|eval|wknd|wkend|test|qa/i.test(text);
+  return /grader|workflow|測試|週末|流程|學員|student|weekend|wf\d*|\bw\d+\b|wflow|grd|grade|sync|eval|wknd|wkend|test|qa|reviewer|rating|localcoach|flow\s*coach|coach\s*flow|coach\s*[awx]|friday/i.test(text);
+}
+
+function looksLikeInjectedPayload(value) {
+  return /https?:\/\/|localhost|127\.0\.0\.1|javascript:|localStorage|location\.reload|<script|<\/|[<>]/i
+    .test(String(value === null || value === undefined ? "" : value).trim());
+}
+
+function getProductionCoachAccessCodes() {
+  const configuredCodes = Array.isArray(window.APP_CONFIG?.productionCoachAccessCodes)
+    ? window.APP_CONFIG.productionCoachAccessCodes
+    : [];
+  const calendarCodes = window.APP_CONFIG?.coachCalendarIds && typeof window.APP_CONFIG.coachCalendarIds === "object"
+    ? Object.keys(window.APP_CONFIG.coachCalendarIds)
+    : [];
+  return new Set(
+    [...configuredCodes, ...calendarCodes]
+      .map((code) => normalizeAccessInput(code))
+      .filter(Boolean)
+  );
+}
+
+function isProductionCoach(record) {
+  const allowedCodes = getProductionCoachAccessCodes();
+  if (!allowedCodes.size) {
+    return true;
+  }
+  return allowedCodes.has(normalizeAccessInput(record?.accessCode || record?.access_code || ""));
 }
 
 function looksLikeAutomatedTestProgramCode(value) {
@@ -350,7 +377,10 @@ function looksLikeAutomatedTestProgramCode(value) {
 function isUsableCoach(record) {
   return !!String(record?.id || "").trim()
     && !!String(record?.name || "").trim()
-    && !looksLikeAutomatedTestParticipant(record?.name);
+    && !looksLikeAutomatedTestParticipant(record?.name)
+    && !looksLikeAutomatedTestParticipant(record?.accessCode || record?.access_code || "")
+    && !looksLikeInjectedPayload(record?.name)
+    && isProductionCoach(record);
 }
 
 function normalizeCloudStudent(row, index = 0) {

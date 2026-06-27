@@ -7,6 +7,7 @@ window.APP_CONFIG = {
   coachCalendarIds: {
     MO001: "tp15vijlf0p2se3o6j9c4qdvks@group.calendar.google.com"
   },
+  productionCoachAccessCodes: ["MO001"],
   calendarStudentAliases: {
     "宇含": "ST013",
     "宇涵": "ST013",

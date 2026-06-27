@@ -1,4 +1,4 @@
-const COACHFLOW_PWA_VERSION = "20260627-1045";
+const COACHFLOW_PWA_VERSION = "20260627-1115";
 const CACHE_NAME = `coachflow-system-${COACHFLOW_PWA_VERSION}`;
 const CORE_ASSETS = [
   "./",

@@ -536,7 +536,7 @@ function buildCoachBootstrap_(coachId) {
     ok: true,
     mode: "coach",
     coach: activeCoach,
-    coaches: coaches,
+    coaches: activeCoach ? [activeCoach] : [],
     students: students.filter(function(row) {
       return !coachId || row.primary_coach_id === coachId;
     }),
