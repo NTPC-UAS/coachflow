@@ -6463,7 +6463,7 @@
     const stats = getStudentChargeStats(student.code);
     const billingCycle = getStudentBillingCycle(stats);
     const nextPaidThrough = nextStatus === "paid"
-      ? getNextPaidQuotaCount(billingCycle.totalChargedCount)
+      ? getPaidQuotaCeiling(billingCycle.totalChargedCount)
       : billingCycle.paidThroughCount;
     student.paymentStatus = nextStatus;
     student.paymentNote = note;
