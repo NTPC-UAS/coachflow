@@ -468,7 +468,8 @@
       calendarEventId: `GCAL_${id}`,
       calendarOccupied: true,
       attendanceStatus: "scheduled",
-      charged: false
+      charged: false,
+      updatedAt: new Date().toISOString()
     };
   }
 
@@ -1480,7 +1481,7 @@
         lesson.calendarOccupied = false;
         lesson.attendanceStatus = "calendar-removed";
         lesson.charged = false;
-        lesson.updatedAt = nowIso;
+        lesson.updatedAt = getSafeLessonUpdatedAt(lesson, nowIso);
         duplicateIds.push(lesson.id);
       });
     });
@@ -1657,12 +1658,22 @@
       attendanceStatus: String(lesson.attendanceStatus || "scheduled"),
       charged: Boolean(lesson.charged),
       completedAt: lesson.completedAt || "",
-      updatedAt: lesson.updatedAt || lesson.completedAt || startAt || new Date().toISOString(),
+      updatedAt: lesson.updatedAt || lesson.completedAt || new Date().toISOString(),
       calendarEventId: normalizeCalendarEventId(lesson.calendarEventId || ""),
       cancelledByCoachLeaveBlockId: String(lesson.cancelledByCoachLeaveBlockId || ""),
       coachLeaveReason: String(lesson.coachLeaveReason || ""),
       beforeCoachLeaveJson: lesson.beforeCoachLeave ? JSON.stringify(lesson.beforeCoachLeave) : ""
     };
+  }
+
+  function getSafeLessonUpdatedAt(lesson, fallbackIso = new Date().toISOString()) {
+    const fallbackMs = new Date(fallbackIso || "").getTime();
+    const currentMs = new Date(lesson?.updatedAt || "").getTime();
+    const safeMs = Math.max(
+      Number.isFinite(fallbackMs) ? fallbackMs : Date.now(),
+      Number.isFinite(currentMs) ? currentMs + 3000 : 0
+    );
+    return new Date(safeMs).toISOString();
   }
 
   function findLessonForCloudLeaveRecord(record) {
@@ -1731,7 +1742,7 @@
       lesson.attendanceStatus = "scheduled";
       lesson.calendarOccupied = true;
       lesson.charged = false;
-      lesson.updatedAt = nowIso;
+      lesson.updatedAt = getSafeLessonUpdatedAt(lesson, nowIso);
       restoredLessonIds.push(lesson.id);
     });
     if (restoredLessonIds.length) {
@@ -3030,7 +3041,7 @@
       lesson.completedAt = new Date().toISOString();
       lesson.completedBy = activeCoachCode;
     }
-    lesson.updatedAt = new Date().toISOString();
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
     state.lessons.push(lesson);
     const lessonCloudSaved = await pushCloudLessons({
       coachCode: activeCoachCode,
@@ -4451,6 +4462,10 @@
       usedLessonIds.add(lesson.id);
       const beforeStartAt = String(lesson.startAt || "");
       const beforeEventId = normalizeCalendarEventId(lesson.calendarEventId);
+      const beforeCoachCode = lesson.coachCode;
+      const beforeStudentCode = lesson.studentCode;
+      const beforeCalendarOccupied = lesson.calendarOccupied;
+      const beforeAttendanceStatus = String(lesson.attendanceStatus || "");
       lesson.startAt = new Date(startAt).toISOString();
       lesson.coachCode = coachCode;
       lesson.studentCode = studentCode;
@@ -4464,6 +4479,16 @@
         delete lesson.calendarRemovedReason;
       }
       lesson.calendarEventId = eventId;
+      if (
+        beforeStartAt !== lesson.startAt ||
+        beforeEventId !== normalizeCalendarEventId(lesson.calendarEventId) ||
+        beforeCoachCode !== lesson.coachCode ||
+        beforeStudentCode !== lesson.studentCode ||
+        beforeCalendarOccupied !== lesson.calendarOccupied ||
+        beforeAttendanceStatus !== String(lesson.attendanceStatus || "")
+      ) {
+        lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
+      }
 
       if (beforeStartAt !== lesson.startAt) {
         updatedStart += 1;
@@ -5188,7 +5213,7 @@
     lesson.calendarRemovedReason = reason || "google_calendar_deleted";
     // 完整課表雲端化：removed 沒有 completedAt 可當 updatedAt fallback，明確補上時間戳，
     // 否則雲端這筆會 fallback 到舊的 startAt、被其他裝置 stale 的 scheduled push 蓋回去。
-    lesson.updatedAt = lesson.calendarRemovedAt;
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson, lesson.calendarRemovedAt);
     addLog(`[日曆同步] 已依 Google 日曆移除課程 ${lesson.id}（${formatDateTime(lesson.startAt)}）。`);
   }
 
@@ -6803,7 +6828,7 @@
     delete leaveRecord.pendingCloudSync;
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
-    lesson.updatedAt = new Date().toISOString();
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
     addLog(`[雲端請假] 已上傳請假紀錄 ${leaveRecord.id}。`);
     saveState();
     renderAll();
@@ -6973,7 +6998,7 @@
     delete leaveRecord.pendingCloudSync;
     lesson.calendarOccupied = false;
     lesson.attendanceStatus = "leave-normal";
-    lesson.updatedAt = new Date().toISOString();
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
     addLog(`[雲端請假] 已同步教練代請假 ${leaveRecord.id}。`);
     saveState();
     renderAll();
@@ -7074,7 +7099,7 @@
     lesson.attendanceStatus = "scheduled";
     lesson.calendarOccupied = true;
     lesson.charged = false;
-    lesson.updatedAt = nowIso;
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson, nowIso);
     notifyUser("正在取消請假並還原 Google 日曆課程...", "info");
 
     // 先確認雲端寫入，再做 calendar / email 等不可逆操作。
@@ -7542,7 +7567,7 @@
     lesson.attendanceStatus = "scheduled";
     lesson.calendarOccupied = true;
     lesson.charged = false;
-    lesson.updatedAt = nowIso;
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson, nowIso);
     notifyUser("正在取消請假...", "info");
 
     // 雲端確認後才做不可逆操作（calendar create + email），否則網路抖留 ghost 資料
@@ -7752,7 +7777,7 @@
     const previousUpdatedAt = lesson.updatedAt || "";
     lesson.attendanceStatus = target.attendanceStatus;
     lesson.charged = target.charged;
-    lesson.updatedAt = new Date().toISOString();
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
     addLog(`教練 ${lesson.coachCode} 將課程 ${lesson.id} 標記為 ${target.attendanceStatus}。`);
     saveState();
     renderAll();
