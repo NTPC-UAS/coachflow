@@ -1536,6 +1536,18 @@ function appendRows_(sheetName, rows) {
   sheet.getRange(sheet.getLastRow() + 1, 1, values.length, headers.length).setValues(values);
 }
 
+function replaceTableRows_(sheetName, rows) {
+  const sheet = getCoachflowSpreadsheet_().getSheetByName(sheetName);
+  const headers = SCHEMA[sheetName];
+  const lastRow = sheet.getLastRow();
+  if (lastRow > 1) {
+    sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
+  }
+  if (rows && rows.length) {
+    appendRows_(sheetName, rows);
+  }
+}
+
 function toCellValue_(value) {
   if (value === null || typeof value === "undefined") {
     return "";
@@ -2892,6 +2904,251 @@ function cleanupDuplicateLessons() {
     return report;
   });
 }
+
+function getProductionCoach_() {
+  const coaches = readTable_(SHEETS.coaches);
+  return coaches.filter(function(coach) {
+    return normalizeCode_(coach.access_code) === "MO001";
+  })[0] || coaches.filter(function(coach) {
+    return String(coach.coach_name || "").trim() === "Monster Chang";
+  })[0] || null;
+}
+
+function looksLikeHighConfidenceTestText_(value) {
+  const s = String(value === null || value === undefined ? "" : value).trim();
+  if (!s) {
+    return false;
+  }
+  if (
+    s.indexOf("\u6e2c\u8a66") !== -1 ||
+    s.indexOf("\u9a57\u8b49") !== -1 ||
+    s.indexOf("\u6d41\u7a0b") !== -1 ||
+    s.indexOf("\u9031\u672b") !== -1 ||
+    s.indexOf("\u5468\u672b") !== -1 ||
+    s.indexOf("\u6559\u7df4\u76f4\u5efa") !== -1
+  ) {
+    return true;
+  }
+  return /grader|workflow|weekend|wknd|wkend|wflow|test|qa|stud|sample|demo|eval|sync|offline|saturday|coach\s*[a-z0-9]*|wf\d*/i.test(s);
+}
+
+function looksLikeHighConfidenceTestCode_(value) {
+  const code = String(value === null || value === undefined ? "" : value).trim().toUpperCase();
+  if (!code) {
+    return false;
+  }
+  return /^(WF|WE|WK|WKM|WEND|QA|GRD|GRADE|TEST|SA|SAT|DEMO|WKND)/.test(code) ||
+    /TEST|QA|WF|WKND|WEEKEND|GRADER|FLOW|SYNC|EVAL|OFFLINE/.test(code);
+}
+
+function isProtectedProductionCoach_(coach, productionCoachId) {
+  return Boolean(
+    coach &&
+    (
+      String(coach.coach_id || "") === String(productionCoachId || "") ||
+      normalizeCode_(coach.access_code) === "MO001" ||
+      String(coach.coach_name || "").trim() === "Monster Chang"
+    )
+  );
+}
+
+function isHighConfidenceTestCoach_(coach, productionCoachId) {
+  if (!coach || isProtectedProductionCoach_(coach, productionCoachId)) {
+    return false;
+  }
+  return looksLikeHighConfidenceTestText_(coach.coach_name) ||
+    looksLikeHighConfidenceTestText_(coach.token) ||
+    looksLikeHighConfidenceTestCode_(coach.access_code);
+}
+
+function isHighConfidenceTestStudent_(student, coachById, testCoachIds, productionCoachId) {
+  if (!student) {
+    return false;
+  }
+  const coachId = String(student.primary_coach_id || "");
+  const coach = coachById[coachId] || {};
+  if (testCoachIds[coachId]) {
+    return true;
+  }
+  return looksLikeHighConfidenceTestText_(student.student_name) ||
+    looksLikeHighConfidenceTestText_(student.primary_coach_name) ||
+    looksLikeHighConfidenceTestCode_(student.access_code) ||
+    (!isProtectedProductionCoach_(coach, productionCoachId) && looksLikeHighConfidenceTestText_(student.token));
+}
+
+function isHighConfidenceTestProgram_(program, testCoachIds) {
+  if (!program) {
+    return false;
+  }
+  const coachId = String(program.coach_id || "");
+  const code = String(program.program_code || "").trim();
+  if (testCoachIds[coachId]) {
+    return true;
+  }
+  if (!/[A-Za-z]/.test(code)) {
+    return false;
+  }
+  return looksLikeHighConfidenceTestCode_(code) ||
+    looksLikeHighConfidenceTestText_(program.coach_name) ||
+    looksLikeHighConfidenceTestText_(program.title);
+}
+
+function mapByField_(rows, fieldName) {
+  const map = {};
+  (rows || []).forEach(function(row) {
+    const key = String(row && row[fieldName] || "");
+    if (key) {
+      map[key] = row;
+    }
+  });
+  return map;
+}
+
+function cleanupProductionTestPollution_() {
+  ensureSheets_();
+  return withScriptLock_(function() {
+    const productionCoach = getProductionCoach_();
+    const productionCoachId = productionCoach ? String(productionCoach.coach_id || "") : "";
+    const coaches = readTable_(SHEETS.coaches);
+    const coachById = mapByField_(coaches, "coach_id");
+    const testCoachIds = {};
+    const testCoachCodes = {};
+    const removedCoachNames = [];
+
+    coaches.forEach(function(coach) {
+      if (isHighConfidenceTestCoach_(coach, productionCoachId)) {
+        const coachId = String(coach.coach_id || "");
+        if (coachId) testCoachIds[coachId] = true;
+        const coachCode = normalizeCode_(coach.access_code);
+        if (coachCode) testCoachCodes[coachCode] = true;
+        removedCoachNames.push(String(coach.coach_name || coachCode || coachId));
+      }
+    });
+
+    const students = readTable_(SHEETS.students);
+    const testStudentIds = {};
+    const testStudentCodes = {};
+    const removedStudentNames = [];
+    students.forEach(function(student) {
+      if (isHighConfidenceTestStudent_(student, coachById, testCoachIds, productionCoachId)) {
+        const studentId = String(student.student_id || "");
+        if (studentId) testStudentIds[studentId] = true;
+        const studentCode = normalizeCode_(student.access_code);
+        if (studentCode) testStudentCodes[studentCode] = true;
+        removedStudentNames.push(String(student.student_name || studentCode || studentId));
+      }
+    });
+
+    const programs = readTable_(SHEETS.programs);
+    const testProgramIds = {};
+    programs.forEach(function(program) {
+      if (isHighConfidenceTestProgram_(program, testCoachIds)) {
+        const programId = String(program.program_id || "");
+        if (programId) testProgramIds[programId] = true;
+      }
+    });
+
+    const programItems = readTable_(SHEETS.programItems);
+    const workoutLogs = readTable_(SHEETS.workoutLogs);
+    const billingProfiles = getBillingProfiles_();
+    const lessons = getLessons_();
+    const leaveRecords = getLeaveRecords_();
+    const makeupRequests = getMakeupRequests_();
+    const coachBlocks = getCoachBlocks_();
+
+    const nextCoaches = coaches.filter(function(coach) {
+      return !testCoachIds[String(coach.coach_id || "")];
+    });
+    const nextStudents = students.filter(function(student) {
+      return !testStudentIds[String(student.student_id || "")];
+    });
+    const nextPrograms = programs.filter(function(program) {
+      return !testProgramIds[String(program.program_id || "")] &&
+        !testCoachIds[String(program.coach_id || "")];
+    });
+    const nextProgramItems = programItems.filter(function(item) {
+      return !testProgramIds[String(item.program_id || "")];
+    });
+    const nextWorkoutLogs = workoutLogs.filter(function(log) {
+      return !testStudentIds[String(log.student_id || "")] &&
+        !testProgramIds[String(log.program_id || "")] &&
+        !testCoachIds[String(log.coach_id || "")];
+    });
+    const nextBillingProfiles = billingProfiles.filter(function(profile) {
+      return !testStudentCodes[normalizeCode_(profile.studentCode)] &&
+        !testCoachCodes[normalizeCode_(profile.coachCode)];
+    });
+    const nextLessons = lessons.filter(function(lesson) {
+      return !testStudentCodes[normalizeCode_(lesson.studentCode)] &&
+        !testCoachCodes[normalizeCode_(lesson.coachCode)];
+    });
+    const nextLeaveRecords = leaveRecords.filter(function(record) {
+      return !testStudentCodes[normalizeCode_(record.studentCode)] &&
+        !testCoachCodes[normalizeCode_(record.coachCode)];
+    });
+    const nextMakeupRequests = makeupRequests.filter(function(request) {
+      return !testStudentCodes[normalizeCode_(request.studentCode)] &&
+        !testCoachCodes[normalizeCode_(request.coachCode)];
+    });
+    const nextCoachBlocks = coachBlocks.filter(function(block) {
+      return !testCoachCodes[normalizeCode_(block.coachCode)];
+    });
+
+    replaceTableRows_(SHEETS.coaches, nextCoaches);
+    replaceTableRows_(SHEETS.students, nextStudents);
+    replaceTableRows_(SHEETS.programs, nextPrograms);
+    replaceTableRows_(SHEETS.programItems, nextProgramItems);
+    replaceTableRows_(SHEETS.workoutLogs, nextWorkoutLogs);
+    setBillingProfiles_(nextBillingProfiles);
+    setLessons_(nextLessons);
+    setLeaveRecords_(nextLeaveRecords);
+    replaceTableRows_(SHEETS.makeupRequests, nextMakeupRequests);
+    replaceTableRows_(SHEETS.coachBlocks, nextCoachBlocks);
+
+    const report = {
+      ok: true,
+      action: "cleanupProductionTestPollution",
+      productionCoachId: productionCoachId,
+      removedCoaches: coaches.length - nextCoaches.length,
+      removedStudents: students.length - nextStudents.length,
+      removedPrograms: programs.length - nextPrograms.length,
+      removedProgramItems: programItems.length - nextProgramItems.length,
+      removedWorkoutLogs: workoutLogs.length - nextWorkoutLogs.length,
+      removedBillingProfiles: billingProfiles.length - nextBillingProfiles.length,
+      removedLessons: lessons.length - nextLessons.length,
+      removedLeaveRecords: leaveRecords.length - nextLeaveRecords.length,
+      removedMakeupRequests: makeupRequests.length - nextMakeupRequests.length,
+      removedCoachBlocks: coachBlocks.length - nextCoachBlocks.length,
+      removedCoachNames: removedCoachNames.slice(0, 20),
+      removedStudentNames: removedStudentNames.slice(0, 40),
+      ranAt: nowIso_()
+    };
+    PropertiesService.getScriptProperties().setProperty(
+      "COACHFLOW_LAST_DAILY_CLEANUP",
+      JSON.stringify(report).slice(0, 9000)
+    );
+    Logger.log("[daily-cleanup] " + JSON.stringify(report));
+    return report;
+  });
+}
+
+function dailyProductionDataCleanup() {
+  const cleanupReport = cleanupProductionTestPollution_();
+  const duplicateReport = cleanupDuplicateLessons();
+  const combined = {
+    ok: true,
+    action: "dailyProductionDataCleanup",
+    cleanup: cleanupReport,
+    duplicateLessons: duplicateReport,
+    ranAt: nowIso_()
+  };
+  PropertiesService.getScriptProperties().setProperty(
+    "COACHFLOW_LAST_DAILY_CLEANUP",
+    JSON.stringify(combined).slice(0, 9000)
+  );
+  Logger.log("[daily-cleanup-complete] " + JSON.stringify(combined));
+  return combined;
+}
 // ====================================================================
 // 雲端自動整理排程（時間觸發器）
 //
@@ -3030,6 +3287,25 @@ function setupCoachflowTriggers() {
   });
   ScriptApp.newTrigger(handler).timeBased().everyHours(1).create();
   Logger.log("[trigger] 已建立每小時排程 " + handler + "（移除舊觸發器 " + removed + " 個）。");
+}
+
+// Override the legacy trigger installer above. Apps Script uses the last
+// declaration with the same name, so this keeps old deployments compatible
+// while adding the daily cleanup trigger.
+function setupCoachflowTriggers() {
+  const hourlyHandler = "reconcileAndAutoCompleteLessons";
+  const dailyCleanupHandler = "dailyProductionDataCleanup";
+  let removed = 0;
+  ScriptApp.getProjectTriggers().forEach(function(trigger) {
+    const handler = trigger.getHandlerFunction();
+    if (handler === hourlyHandler || handler === dailyCleanupHandler) {
+      ScriptApp.deleteTrigger(trigger);
+      removed += 1;
+    }
+  });
+  ScriptApp.newTrigger(hourlyHandler).timeBased().everyHours(1).create();
+  ScriptApp.newTrigger(dailyCleanupHandler).timeBased().atHour(4).everyDays(1).create();
+  Logger.log("[trigger] Installed " + hourlyHandler + " hourly and " + dailyCleanupHandler + " daily at 04:00; removed " + removed + " old triggers.");
 }
 
 // === Snapshot 端點停用 ===
