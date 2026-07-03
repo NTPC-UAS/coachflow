@@ -2338,7 +2338,11 @@
     try {
       for (let i = 0; i < lessons.length; i += batchSize) {
         const batch = lessons.slice(i, i + batchSize);
-        const result = await callAppsScriptApi("saveLessons", { lessons: batch, authoritativeClient: true });
+        const result = await callAppsScriptApi("saveLessons", {
+          ...syncScope,
+          lessons: batch,
+          authoritativeClient: true
+        });
         if (result?.ok === false) {
           return false;
         }
@@ -2359,6 +2363,23 @@
     pushCloudLessons(scope).catch((error) => {
       console.warn("Cloud lessons push failed:", error);
     });
+  }
+
+  async function saveLessonToCloud(lesson) {
+    if (!getAppsScriptUrl() || !lesson?.id) {
+      return false;
+    }
+    const cloudLesson = normalizeLessonForCloud(lesson);
+    if (!cloudLesson) {
+      return false;
+    }
+    const result = await callAppsScriptApi("saveLessons", {
+      coachCode: cloudLesson.coachCode,
+      studentCode: cloudLesson.studentCode,
+      lessons: [cloudLesson],
+      authoritativeClient: true
+    });
+    return result?.ok !== false && result?.ignored !== 1;
   }
 
   function clonePlain(value) {
@@ -7882,6 +7903,7 @@
     // (2) 改本地（雲端 snapshot 會自動把新時間推上去）
     lesson.startAt = nextStartAt;
     lesson.calendarEventId = "";
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
     addLog(`教練 ${lesson.coachCode} 將課程 ${lesson.id} 由 ${formatDateTime(oldStartAt)} 調整為 ${formatDateTime(nextStartAt)}。`);
     saveState();
     renderAll();
@@ -7911,7 +7933,19 @@
       );
     }
 
-    // (4) 通知學生（不可逆，但已放在最後一步且雲端應已透過 snapshot 同步）
+    lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
+    const cloudSaved = await saveLessonToCloud(lesson).catch((error) => {
+      addLog(`[Cloud] 調整時間同步失敗 ${lesson.id}：${String(error?.message || error)}`);
+      return false;
+    });
+    if (!cloudSaved) {
+      notifyUser("調整時間已更新 Google 日曆，但雲端課表同步失敗；請先不要重複操作，稍後再重新整理確認。", "warning");
+      return;
+    }
+    saveState();
+    renderAll();
+
+    // (4) 通知學生（不可逆，但已確認雲端課表同步完成）
     try {
       await trySendEmailNotice(
         "lesson_rescheduled",
