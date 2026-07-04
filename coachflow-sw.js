@@ -1,4 +1,4 @@
-const COACHFLOW_PWA_VERSION = "20260704-ani-reschedule";
+const COACHFLOW_PWA_VERSION = "20260704-makeup-slots";
 const CACHE_NAME = `coachflow-system-${COACHFLOW_PWA_VERSION}`;
 const CORE_ASSETS = [
   "./",

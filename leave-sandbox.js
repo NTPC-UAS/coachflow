@@ -9619,7 +9619,22 @@
     }
   }
 
-  function loadSlotsForSelectedLeave() {
+  async function refreshMakeupAvailabilityForLeave(leave) {
+    if (!leave?.coachCode || !getAppsScriptUrl()) {
+      return false;
+    }
+    const scope = { coachCode: leave.coachCode };
+    let changed = false;
+    try {
+      changed = await syncCloudLessons(scope) || changed;
+      changed = await syncCloudOperationalState(scope) || changed;
+    } catch (error) {
+      console.warn("Refresh makeup availability failed:", error);
+    }
+    return changed;
+  }
+
+  async function loadSlotsForSelectedLeave() {
     if (!el.makeupLeaveSelect || !el.makeupSlotSelect || !el.slotWindowHint) {
       return;
     }
@@ -9633,6 +9648,9 @@
     if (!leave) {
       return;
     }
+    el.makeupSlotSelect.innerHTML = "<option value=''>正在載入雲端可補課時段...</option>";
+    el.slotWindowHint.textContent = "正在同步雲端課表，避免本機舊資料擋住補課時段。";
+    await refreshMakeupAvailabilityForLeave(leave);
     const slots = getCycleSlots(leave);
     el.makeupSlotSelect.innerHTML = `<option value="">請選擇時段</option>${slots.map((slot) => `<option value="${slot.startAt}">${formatDateTime(slot.startAt)}</option>`).join("")}`;
 
