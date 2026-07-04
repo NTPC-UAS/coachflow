@@ -1,1 +1,1 @@
-importScripts("./coachflow-sw.js?v=20260627-1115");
+importScripts("./coachflow-sw.js?v=20260704-ani-reschedule");
