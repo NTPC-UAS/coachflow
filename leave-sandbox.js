@@ -6142,9 +6142,9 @@
       ? 0
       : CHARGE_REMINDER_STEP - currentCycleChargedCount;
     const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
-    const coveredPaymentDueCount = storedPaidQuotaCount || (storedStatus === "paid" ? activeQuotaCount : 0);
-    // 規則：cycle 結束點（currentCycle 達 step）才可能翻未繳費；若「已繳到」
-    // 已涵蓋該門檻，或教練在最近扣堂後已確認匯款，就不再重複催款。
+    // 規則：cycle 結束點（currentCycle 達 step）一定要重新檢查繳費。
+    // 只有教練在最近一次扣堂之後確認過匯款，才維持已繳；舊的「已繳到」
+    // 額度不能擋住新一輪由第 3 堂進入第 4 堂時翻成未繳。
     //
     // Cycle 是否「已被確認」用 paymentConfirmedAt 跟「最近一堂被計入扣堂的課」
     // 的 startAt 比：
@@ -6157,14 +6157,11 @@
     // stats.chargedLessons 已按 startAt 降序排序；[0] 就是最近被計入扣堂的課
     const lastChargedLesson = chargedLessonsList[0];
     const lastChargedLessonTime = lastChargedLesson ? new Date(lastChargedLesson.startAt).getTime() : 0;
-    const cycleAckedByPaidQuota = lastCompletedPaymentDueCount > 0
-      && coveredPaymentDueCount >= lastCompletedPaymentDueCount;
     const cycleAckedByCoach = Number.isFinite(confirmedTime)
       && confirmedTime > 0
       && (!Number.isFinite(lastChargedLessonTime) || lastChargedLessonTime <= 0 || confirmedTime > lastChargedLessonTime);
     const isPaymentDue = totalChargedCount > 0
       && currentCycleChargedCount === CHARGE_REMINDER_STEP
-      && !cycleAckedByPaidQuota
       && !cycleAckedByCoach;
     const overduePaymentDueCount = isPaymentDue ? lastCompletedPaymentDueCount : 0;
     const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
