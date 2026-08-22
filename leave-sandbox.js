@@ -6142,27 +6142,37 @@
       ? 0
       : CHARGE_REMINDER_STEP - currentCycleChargedCount;
     const lastCompletedPaymentDueCount = Math.floor(totalChargedCount / CHARGE_REMINDER_STEP) * CHARGE_REMINDER_STEP;
-    // 規則：cycle 結束點（currentCycle 達 step）一定要重新檢查繳費。
-    // 只有教練在最近一次扣堂之後確認過匯款，才維持已繳；舊的「已繳到」
-    // 額度不能擋住新一輪由第 3 堂進入第 4 堂時翻成未繳。
+    // 找出「最近一個已完成繳費門檻」實際落在哪堂課。未繳狀態不能只在
+    // 第 4/4 堂當下成立；若教練尚未確認收款，下一堂顯示回到第 1/4 堂時仍須
+    // 保持未繳。舊版只檢查 currentCycleChargedCount === 4，因此第 5 堂一產生，
+    // isPaymentDue 就變回 false，畫面又採用舊的 paid 狀態。
     //
-    // Cycle 是否「已被確認」用 paymentConfirmedAt 跟「最近一堂被計入扣堂的課」
-    // 的 startAt 比：
-    //   - confirmedAt 晚於最近扣堂課 startAt → 這 cycle 已 ack → 不翻未繳
-    //   - confirmedAt 早於 → 這 cycle 還沒 ack → 翻未繳費
-    // 學生上下一堂課後，「最近扣堂課」會更新到那堂、再次晚於 confirmedAt，
-    // 下個 cycle 結束時自動翻未繳。
-    //
-    // 下一個 cycle 結束時若 paidThroughCount 沒覆蓋新的門檻，仍會再翻未繳。
-    // stats.chargedLessons 已按 startAt 降序排序；[0] 就是最近被計入扣堂的課
-    const lastChargedLesson = chargedLessonsList[0];
-    const lastChargedLessonTime = lastChargedLesson ? new Date(lastChargedLesson.startAt).getTime() : 0;
-    const cycleAckedByCoach = Number.isFinite(confirmedTime)
-      && confirmedTime > 0
-      && (!Number.isFinite(lastChargedLessonTime) || lastChargedLessonTime <= 0 || confirmedTime > lastChargedLessonTime);
-    const isPaymentDue = totalChargedCount > 0
-      && currentCycleChargedCount === CHARGE_REMINDER_STEP
-      && !cycleAckedByCoach;
+    // totalChargedCount 包含導入前堂數，chargedLessonsList 則只含系統內課程，
+    // 所以先扣掉 importedCount，取得門檻課在系統內課程中的 1-based 序號。
+    const completedMilestoneSystemOrdinal = lastCompletedPaymentDueCount - importedCount;
+    const chargedLessonsAscending = [...chargedLessonsList]
+      .sort((a, b) => new Date(a.startAt) - new Date(b.startAt));
+    const completedMilestoneLesson = completedMilestoneSystemOrdinal > 0
+      ? chargedLessonsAscending[completedMilestoneSystemOrdinal - 1]
+      : null;
+    const completedMilestoneLessonTime = completedMilestoneLesson
+      ? new Date(completedMilestoneLesson.startAt).getTime()
+      : 0;
+    const completedMilestoneAckedByCoach = Boolean(
+      completedMilestoneLesson &&
+      Number.isFinite(completedMilestoneLessonTime) &&
+      completedMilestoneLessonTime > 0 &&
+      Number.isFinite(confirmedTime) &&
+      confirmedTime > completedMilestoneLessonTime
+    );
+    const hasUnconfirmedCompletedMilestone = Boolean(
+      lastCompletedPaymentDueCount > 0 &&
+      completedMilestoneLesson &&
+      !completedMilestoneAckedByCoach
+    );
+    // 已經被標成未繳後，一律維持到教練明確儲存「已繳費」；同時用最近完成
+    // 的門檻課補強，避免第 4 堂當下雲端狀態尚未寫回就進入第 5 堂時誤回 paid。
+    const isPaymentDue = storedStatus === "unpaid" || hasUnconfirmedCompletedMilestone;
     const overduePaymentDueCount = isPaymentDue ? lastCompletedPaymentDueCount : 0;
     const nextPaymentDueCount = overduePaymentDueCount || lastCompletedPaymentDueCount + CHARGE_REMINDER_STEP;
     const effectivePaymentStatus = isPaymentDue ? "unpaid" : storedStatus;
@@ -6483,16 +6493,19 @@
     const nextPaidThrough = nextStatus === "paid"
       ? getPaidQuotaCeiling(billingCycle.totalChargedCount)
       : billingCycle.paidThroughCount;
+    const statusUpdatedBy = activeCoachCode || "SYSTEM";
     student.paymentStatus = nextStatus;
     student.paymentNote = note;
-    student.paymentConfirmedAt = new Date().toISOString();
-    student.paymentConfirmedBy = activeCoachCode || "SYSTEM";
     if (nextStatus === "paid") {
       student.paidThroughCount = nextPaidThrough;
+      // paymentConfirmedAt 的語意必須是「已確認收款」，不可在儲存未繳狀態時
+      // 也更新；否則未繳操作會被誤認為已確認該繳費門檻。
+      student.paymentConfirmedAt = new Date().toISOString();
+      student.paymentConfirmedBy = statusUpdatedBy;
     }
-    touchStudentBillingProfile(student, activeCoachCode || "SYSTEM");
+    touchStudentBillingProfile(student, statusUpdatedBy);
     addLog(
-      `[計費] ${student.code} 繳費狀態更新為 ${getPaymentStatusLabel(nextStatus)}（${student.paymentConfirmedBy}，已繳到第 ${nextStatus === "paid" ? nextPaidThrough : billingCycle.paidThroughCount} 堂）。`
+      `[計費] ${student.code} 繳費狀態更新為 ${getPaymentStatusLabel(nextStatus)}（${statusUpdatedBy}，已繳到第 ${nextStatus === "paid" ? nextPaidThrough : billingCycle.paidThroughCount} 堂）。`
     );
     saveState();
     renderBillingPanels();
