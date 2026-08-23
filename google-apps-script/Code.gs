@@ -2672,6 +2672,33 @@ function getLessons_() {
 function setLessons_(lessons) {
   const sheet = getCoachflowSpreadsheet_().getSheetByName(SHEETS.lessons);
   const headers = SCHEMA.Lessons;
+  // 任何整批寫回若突然只剩原本的 75% 以下（且一次少超過 20 堂），一律拒絕。
+  // 高水位存在 Script Properties，因此即使 Sheet 在寫入途中暫時被清空，仍能
+  // 擋住局部課表或不完整讀取把全體學生課程覆蓋掉。
+  const nextCount = Array.isArray(lessons) ? lessons.length : 0;
+  const currentCount = Math.max(0, sheet.getLastRow() - 1);
+  const props = PropertiesService.getScriptProperties();
+  const highWaterKey = "COACHFLOW_LESSON_COUNT_HIGH_WATER";
+  const storedHighWater = Math.max(0, Number(props.getProperty(highWaterKey) || 0));
+  const baseline = Math.max(currentCount, storedHighWater);
+  if (baseline >= 50 && nextCount + 20 < baseline && nextCount < Math.ceil(baseline * 0.75)) {
+    const report = {
+      blocked: true,
+      currentCount: currentCount,
+      highWaterCount: storedHighWater,
+      attemptedCount: nextCount,
+      ranAt: nowIso_()
+    };
+    props.setProperty("COACHFLOW_LAST_LESSON_REWRITE_BLOCK", JSON.stringify(report));
+    Logger.log("[lesson-rewrite-blocked] " + JSON.stringify(report));
+    throw new Error(
+      "LESSON_REWRITE_GUARD: refused to shrink Lessons from " + baseline +
+      " to " + nextCount + "."
+    );
+  }
+  if (nextCount > storedHighWater) {
+    props.setProperty(highWaterKey, String(nextCount));
+  }
   const lastRow = sheet.getLastRow();
   if (lastRow > 1) {
     sheet.getRange(2, 1, lastRow - 1, headers.length).clearContent();
