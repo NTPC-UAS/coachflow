@@ -10503,7 +10503,7 @@
     const hasUrlCoachCode = Boolean(coachCode);
     const hasStoredStudentPrefill = Boolean(storedPrefill?.studentCode);
     const hasStoredCoachPrefill = Boolean(storedPrefill?.coachCode);
-    const coachflowSessionStudentCode = isStudentPage ? "" : coachflowPrefill?.studentCode;
+    const coachflowSessionStudentCode = isStudentPage ? coachflowPrefill?.studentCode : "";
     const mergedStudentCode = normalizeParticipantCode(
       studentCode ||
       storedPrefill?.studentCode ||
@@ -10541,6 +10541,7 @@
     return {
       studentCode: mergedStudentCode,
       coachCode: mergedCoachCode,
+      pageRole: isStudentPage ? "student" : "coach",
       from: mergedFrom,
       autoLoginRequested: (autoLoginRequested || hasFallbackPrefill) && hasActionablePrefill,
       hasActionablePrefill
@@ -10569,10 +10570,10 @@
     if (shouldAutoLoginFromPrefill) {
       try {
         await runAtomicDataRefresh(async () => {
-          if (sessionPrefill.studentCode) {
+          if (sessionPrefill.pageRole === "student" && sessionPrefill.studentCode) {
             await resolveCoachflowRosterFromCloud("student", sessionPrefill.studentCode);
             autoStudentLoaded = activateStudentSession(sessionPrefill.studentCode, "", true);
-          } else if (sessionPrefill.coachCode) {
+          } else if (sessionPrefill.pageRole === "coach" && sessionPrefill.coachCode) {
             const readOnlyLogin = isReadOnlyLoginCode(sessionPrefill.coachCode);
             const coachAccess = readOnlyLogin
               ? normalizeParticipantCode(resolveReadOnlyCoachCode())

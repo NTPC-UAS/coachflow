@@ -1,4 +1,4 @@
-const COACHFLOW_PWA_VERSION = "20260830-cloud-timeout";
+const COACHFLOW_PWA_VERSION = "20260830-cloud-login";
 const CACHE_NAME = `coachflow-system-${COACHFLOW_PWA_VERSION}`;
 const CORE_ASSETS = [
   "./",
