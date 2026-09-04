@@ -10609,6 +10609,11 @@
             ]);
           }
         });
+        if (autoStudentLoaded) {
+          notifyUser("學生資料已從雲端更新完成，可以查看課程與請假狀態。", "success");
+        } else if (autoCoachLoaded) {
+          notifyUser("教練資料已從雲端更新完成。", "success");
+        }
       } catch (error) {
         console.warn("Cloud-only auto login failed:", error);
         notifyUser("目前無法連上雲端；畫面只顯示上次快取，請勿據此送出請假。", "warning");
