@@ -2211,9 +2211,11 @@
   }
 
   async function syncCloudOperationalState(scope = {}) {
-    let changed = await syncCloudMakeupRequests(scope);
-    changed = await syncCloudCoachBlocks(scope) || changed;
-    return changed;
+    const [makeupChanged, coachBlocksChanged] = await Promise.all([
+      syncCloudMakeupRequests(scope),
+      syncCloudCoachBlocks(scope)
+    ]);
+    return Boolean(makeupChanged || coachBlocksChanged);
   }
   // 把本機完整課表（tracking-start 之後）推上雲端 Lessons 分頁。
   // 後端 saveLessons 是差量 upsert by id，重複 push 安全。分批 100 筆避免單次
@@ -9718,9 +9720,14 @@
     let changed = false;
     try {
       changed = await syncCloudLessons(scope) || changed;
-      changed = await syncCloudLeaveRecords(scope) || changed;
-      changed = await syncCloudOperationalState(scope) || changed;
-      changed = await syncCloudBillingProfiles(scope) || changed;
+      // 請假必須等 Lessons 套用後才對齊；其餘三組資料彼此獨立，可平行讀取。
+      // Apps Script 偶爾單一讀取需 20 秒，改為平行後不再累加成一分多鐘。
+      const [leaveChanged, operationalChanged, billingChanged] = await Promise.all([
+        syncCloudLeaveRecords(scope),
+        syncCloudOperationalState(scope),
+        syncCloudBillingProfiles(scope)
+      ]);
+      changed = Boolean(changed || leaveChanged || operationalChanged || billingChanged);
     } catch (error) {
       console.warn("Authoritative cloud refresh failed:", error);
       throw error;
@@ -9794,9 +9801,11 @@
             // visibilitychange 在登入途中再啟動一組相同請求，拖慢 Apps Script。
             lastCloudSessionRefreshAt = Date.now();
             await syncCloudLessons(scope);
-            await syncCloudLeaveRecords(scope);
-            await syncCloudOperationalState(scope);
-            await syncCloudBillingProfiles(scope);
+            await Promise.all([
+              syncCloudLeaveRecords(scope),
+              syncCloudOperationalState(scope),
+              syncCloudBillingProfiles(scope)
+            ]);
             await sendQueuedMakeupPendingNoticesForStudent(activeStudentCode);
           });
           notifyUser("學生資料已從雲端更新完成，可以查看課程與請假狀態。", "success");
@@ -9835,9 +9844,11 @@
             // 在同一時間重複讀取整份課表。
             lastCloudSessionRefreshAt = Date.now();
             await syncCloudLessons(scope);
-            await syncCloudLeaveRecords(scope);
-            await syncCloudOperationalState(scope);
-            await syncCloudBillingProfiles(scope);
+            await Promise.all([
+              syncCloudLeaveRecords(scope),
+              syncCloudOperationalState(scope),
+              syncCloudBillingProfiles(scope)
+            ]);
           });
           notifyUser("教練資料已從雲端更新完成。", "success");
         } catch (error) {
@@ -10591,9 +10602,11 @@
             // 同時再發出另一批雲端讀取。
             lastCloudSessionRefreshAt = Date.now();
             await syncCloudLessons(scope);
-            await syncCloudLeaveRecords(scope);
-            await syncCloudOperationalState(scope);
-            await syncCloudBillingProfiles(scope);
+            await Promise.all([
+              syncCloudLeaveRecords(scope),
+              syncCloudOperationalState(scope),
+              syncCloudBillingProfiles(scope)
+            ]);
           }
         });
       } catch (error) {
