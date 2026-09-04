@@ -9790,6 +9790,9 @@
               throw new Error("Unable to activate student session.");
             }
             const scope = { studentCode: activeStudentCode, coachCode: activeCoachCode };
+            // 登入流程本身已在做完整雲端同步。先更新節流時間，避免視窗 focus /
+            // visibilitychange 在登入途中再啟動一組相同請求，拖慢 Apps Script。
+            lastCloudSessionRefreshAt = Date.now();
             await syncCloudLessons(scope);
             await syncCloudLeaveRecords(scope);
             await syncCloudOperationalState(scope);
@@ -9828,6 +9831,9 @@
               setCoachLoginPromptVisibility(true);
             }
             const scope = { coachCode: activeCoachCode, studentCode: "" };
+            // 登入流程本身已在做完整雲端同步；阻止 focus / visibilitychange
+            // 在同一時間重複讀取整份課表。
+            lastCloudSessionRefreshAt = Date.now();
             await syncCloudLessons(scope);
             await syncCloudLeaveRecords(scope);
             await syncCloudOperationalState(scope);
@@ -10580,6 +10586,9 @@
               studentCode: activeStudentCode,
               coachCode: activeCoachCode
             };
+            // 自動登入已包含完整同步；標記本次同步時間，避免頁面顯示或取得焦點時
+            // 同時再發出另一批雲端讀取。
+            lastCloudSessionRefreshAt = Date.now();
             await syncCloudLessons(scope);
             await syncCloudLeaveRecords(scope);
             await syncCloudOperationalState(scope);

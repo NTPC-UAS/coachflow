@@ -5,7 +5,7 @@ window.APP_CONFIG = {
   coachflowAppsScriptUrl: "https://script.google.com/macros/s/AKfycbxuQXrFJ_pEBZ2Bh7miRjRHw1Bg6mNa-3RYnmoq-wbTdpLZaTpWjmCyGe4W5wsKfgQqKw/exec",
   defaultNotifyEmail: "hsnu115023@gmail.com",
   publicBaseUrl: "https://ntpc-uas.github.io/coachflow/",
-  requestTimeoutMs: 12000,
+  requestTimeoutMs: 60000,
   leaveSandbox: {
     enabled: true,
     coachPage: "leave-coach-sandbox.html",

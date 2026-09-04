@@ -1,4 +1,4 @@
-const COACHFLOW_PWA_VERSION = "20260704-makeup-slots";
+const COACHFLOW_PWA_VERSION = "20260830-cloud-timeout";
 const CACHE_NAME = `coachflow-system-${COACHFLOW_PWA_VERSION}`;
 const CORE_ASSETS = [
   "./",

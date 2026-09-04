@@ -36,7 +36,9 @@ window.APP_CONFIG = {
     "宇含"
   ],
   publicBaseUrl: "https://ntpc-uas.github.io/coachflow/",
-  requestTimeoutMs: 12000,
+  // Google Apps Script 偶爾需要 20~30 秒才能讀完整課表；12 秒會把仍在
+  // 正常處理的請求誤判為失敗，導致教練端顯示「雲端更新失敗」。
+  requestTimeoutMs: 60000,
   leaveSandbox: {
     enabled: true,
     coachPage: "leave-coach-sandbox.html",
