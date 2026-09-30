@@ -1,1 +1,1 @@
-importScripts("./coachflow-sw.js?v=20260830-cloud-sync3");
+importScripts("./coachflow-sw.js?v=20261001-october-sync");

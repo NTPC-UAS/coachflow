@@ -2323,10 +2323,16 @@
       console.warn("Skip cloud lesson upload before authoritative cloud load.", syncScope);
       return false;
     }
+    const requestedLessonIds = new Set(
+      (Array.isArray(scope.lessonIds) ? scope.lessonIds : [])
+        .map((id) => String(id || "").trim())
+        .filter(Boolean)
+    );
     const lessons = (state.lessons || [])
       .filter((lesson) => (
         lesson &&
         isLessonAfterBillingTrackingStart(lesson) &&
+        (!requestedLessonIds.size || requestedLessonIds.has(String(lesson.id || "").trim())) &&
         (!syncScope.coachCode || normalizeParticipantCode(lesson.coachCode) === syncScope.coachCode) &&
         (!syncScope.studentCode || normalizeParticipantCode(lesson.studentCode) === syncScope.studentCode)
       ))
@@ -2335,7 +2341,10 @@
     if (!lessons.length) {
       return 0;
     }
-    const batchSize = 100;
+    // Apps Script 的 Lessons 寫入會持有資料鎖；一次 80~100 筆在目前資料量下可能
+    // 超過六分鐘執行上限，整批回滾，造成新月份只存在瀏覽器記憶體、重新整理後消失。
+    // 10 筆一批可穩定在前端 60 秒逾時內完成，也不會長時間擋住其他裝置讀取。
+    const batchSize = 10;
     let pushed = 0;
     try {
       for (let i = 0; i < lessons.length; i += batchSize) {
@@ -4399,6 +4408,7 @@
       }
     });
 
+    const changedLessonIds = new Set();
     let matchedEvents = 0;
     let updatedStart = 0;
     let relinkedEventId = 0;
@@ -4480,6 +4490,7 @@
         lesson.sourceType = "GOOGLE_CALENDAR";
         state.lessons.push(lesson);
         createdLessons += 1;
+        changedLessonIds.add(lesson.id);
       }
 
       usedLessonIds.add(lesson.id);
@@ -4511,6 +4522,7 @@
         beforeAttendanceStatus !== String(lesson.attendanceStatus || "")
       ) {
         lesson.updatedAt = getSafeLessonUpdatedAt(lesson);
+        changedLessonIds.add(lesson.id);
       }
 
       if (beforeStartAt !== lesson.startAt) {
@@ -4523,6 +4535,7 @@
     });
 
     const collapsedDuplicateLessonIds = collapseDuplicateGoogleLessons({ coachCode });
+    collapsedDuplicateLessonIds.forEach((id) => changedLessonIds.add(id));
 
     return {
       totalEvents: sortedEvents.length,
@@ -4536,6 +4549,7 @@
       skippedMakeupClaimed,
       skippedDuplicateEvent,
       collapsedDuplicateLessonIds,
+      changedLessonIds: Array.from(changedLessonIds),
       matchedLessonIds: Array.from(usedLessonIds)
     };
   }
@@ -5090,6 +5104,7 @@
     let totalRemovedPlaceholders = 0;
     let syncedAny = false;
     let cloudLeaveChanged = false;
+    const lessonIdsToPush = new Set();
 
     for (const monthStart of monthStarts) {
       const monthRange = getMonthSyncRange(monthStart);
@@ -5101,6 +5116,7 @@
         });
         const events = Array.isArray(listResult?.events) ? listResult.events : [];
         const stats = alignCoachLessonsWithGoogleEvents(coachCode, events);
+        (stats.changedLessonIds || []).forEach((id) => lessonIdsToPush.add(id));
         const matchedLessonIds = new Set(Array.isArray(stats.matchedLessonIds) ? stats.matchedLessonIds : []);
         const meta = getMonthMeta(monthStart);
         const monthPrefix = `${String(meta.year).padStart(4, "0")}-${String(meta.month).padStart(2, "0")}-`;
@@ -5115,6 +5131,7 @@
           ))
           .forEach((lesson) => {
             markLessonRemovedByCalendar(lesson, "coach_google_auto_sync");
+            lessonIdsToPush.add(lesson.id);
             totalRemovedPlaceholders += 1;
           });
         totalEvents += stats.totalEvents;
@@ -5140,6 +5157,7 @@
         coachCode,
         sourceLabel: "教練端日曆同步"
       });
+      (completionStats.lessonIds || []).forEach((id) => lessonIdsToPush.add(id));
       saveState();
       const completedText = completionStats.count ? `，已上課扣堂 ${completionStats.count} 堂` : "";
       const summary = `已自動同步 Google 日曆：抓到 ${totalEvents} 筆，匹配 ${totalMatched} 筆，新增 ${totalCreated} 筆，移除暫存課 ${totalRemovedPlaceholders} 筆${completedText}。`;
@@ -5153,8 +5171,11 @@
           console.error("billing reminder failed:", error);
         });
       });
-      // 完整課表雲端化：教練端日曆同步後把整個 coach scope 的完整課表推上雲保鮮。
-      pushCloudLessonsQuietly({ coachCode });
+      // 日曆同步只上傳本輪新增或異動的課程。舊做法每次重傳教練全部 500+ 堂，
+      // Apps Script 會在大批寫入時超時，正是跨月課程重新整理後消失的根因。
+      if (lessonIdsToPush.size) {
+        pushCloudLessonsQuietly({ coachCode, lessonIds: Array.from(lessonIdsToPush) });
+      }
     }
     return syncedAny || cloudLeaveChanged;
   }
@@ -8041,6 +8062,7 @@
     return {
       changed: affectedLessons.length > 0,
       count: affectedLessons.length,
+      lessonIds: affectedLessons.map((lesson) => lesson.id),
       studentCodes: Array.from(affectedStudents)
     };
   }
